@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use assistant_agent::{route, Intent, KokoroProvider, PhraseChunker, VoxtypeProvider};
+use assistant_agent::{is_filler, route, Intent, KokoroProvider, PhraseChunker, VoxtypeProvider};
 use assistant_audio::{
     f32_24k_to_i16_16k, record_until, record_until_vad, AudioEngine, EnergyVad,
 };
@@ -396,6 +396,10 @@ impl App {
             | "hypr.fullscreen"
             | "hypr.layout"
             | "hypr.window_close"
+            | "hypr.scratchpad"
+            | "hypr.scratchpad_move"
+            | "hypr.float"
+            | "hypr.split"
             | "bluetooth.toggle"
             | "toggle.dnd"
             | "toggle.idle"
@@ -444,6 +448,12 @@ impl App {
                 return self.run_desktop(tool, spoken, omarchy, timing).await;
             }
             Intent::Chat => {}
+        }
+
+        if is_filler(user_text) && self.history.lock().await.is_empty() {
+            tracing::info!(transcript = %user_text, "ignoring filler");
+            self.emit_state(AssistantState::Idle).await;
+            return Ok(());
         }
 
         timing.route_done = Some(Instant::now());

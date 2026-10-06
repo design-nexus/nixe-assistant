@@ -149,6 +149,26 @@ pub fn builtin_tools() -> Vec<ToolSpec> {
             description: "Close the focused window".into(),
         },
         ToolSpec {
+            name: "hypr.scratchpad".into(),
+            permission: Permission::Safe,
+            description: "Toggle the scratchpad".into(),
+        },
+        ToolSpec {
+            name: "hypr.scratchpad_move".into(),
+            permission: Permission::Safe,
+            description: "Move the focused window to the scratchpad".into(),
+        },
+        ToolSpec {
+            name: "hypr.float".into(),
+            permission: Permission::Safe,
+            description: "Toggle window floating".into(),
+        },
+        ToolSpec {
+            name: "hypr.split".into(),
+            permission: Permission::Safe,
+            description: "Toggle the window split".into(),
+        },
+        ToolSpec {
             name: "toggle.touchpad".into(),
             permission: Permission::Safe,
             description: "Toggle the touchpad".into(),

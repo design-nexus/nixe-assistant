@@ -40,6 +40,16 @@ pub fn route(text: &str) -> Intent {
     Intent::Chat
 }
 
+const FILLER: &[&str] = &[
+    "yeah", "yes", "yep", "yup", "ok", "okay", "um", "uh", "hmm", "huh", "ah", "oh", "mhm",
+];
+
+/// Backchannel that should not start a new chat when there is no conversation yet.
+pub fn is_filler(text: &str) -> bool {
+    let key = preprocess(text);
+    FILLER.iter().any(|p| *p == key)
+}
+
 fn exact_command(key: &str) -> Option<Intent> {
     for (phrases, tool, spoken, omarchy) in TABLE {
         if phrases.iter().any(|p| *p == key) {
@@ -254,6 +264,13 @@ fn looks_like_command(key: &str) -> bool {
         "touchpad",
         "discord",
         "screensaver",
+        "obsidian",
+        "chatgpt",
+        "strata",
+        "scratchpad",
+        "incognito",
+        "omawrite",
+        "passwords",
     ];
     STARTS.iter().any(|p| key == p.trim() || key.starts_with(p))
         || key.split_whitespace().any(looks_like_workspace)
@@ -312,6 +329,18 @@ const VOCAB: &[&str] = &[
     "file",
     "manager",
     "nautilus",
+    "strata",
+    "obsidian",
+    "chatgpt",
+    "music",
+    "scratchpad",
+    "floating",
+    "float",
+    "split",
+    "incognito",
+    "private",
+    "passwords",
+    "omawrite",
     "bluetooth",
     "mute",
     "unmute",
@@ -594,11 +623,35 @@ const TABLE: &[(&[&str], &str, &str, &[&str])] = &[
             "open files",
             "open file manager",
             "open the file manager",
-            "open nautilus",
+            "open strata",
         ],
         "app.launch",
         "Opening files.",
+        &["exec", "env", "GSK_RENDERER=gl", "/usr/bin/strata"],
+    ),
+    (
+        &["open nautilus", "launch nautilus"],
+        "app.launch",
+        "Opening Nautilus.",
         &["launch", "nautilus"],
+    ),
+    (
+        &["open obsidian", "launch obsidian", "obsidian"],
+        "app.launch",
+        "Opening Obsidian.",
+        &["exec", "obsidian"],
+    ),
+    (
+        &["open chatgpt", "launch chatgpt", "chatgpt"],
+        "app.launch",
+        "Opening ChatGPT.",
+        &["exec", "chatgpt"],
+    ),
+    (
+        &["open music", "launch music"],
+        "app.launch",
+        "Opening Spotify.",
+        &["launch", "spotify"],
     ),
     (
         &[
@@ -890,6 +943,85 @@ const TABLE: &[(&[&str], &str, &str, &[&str])] = &[
         "Opening Discord.",
         &["launch", "discord", "community"],
     ),
+    (
+        &[
+            "toggle scratchpad",
+            "scratchpad",
+            "show scratchpad",
+            "hide scratchpad",
+            "open scratchpad",
+        ],
+        "hypr.scratchpad",
+        "Toggling the scratchpad.",
+        &[
+            "hyprctl",
+            "eval",
+            r#"hl.dispatch(hl.dsp.workspace.toggle_special("scratchpad"))"#,
+        ],
+    ),
+    (
+        &[
+            "move to scratchpad",
+            "send to scratchpad",
+            "scratch this window",
+        ],
+        "hypr.scratchpad_move",
+        "Moving to the scratchpad.",
+        &[
+            "hyprctl",
+            "eval",
+            r#"hl.dispatch(hl.dsp.window.move({ workspace = "special:scratchpad", follow = false }))"#,
+        ],
+    ),
+    (
+        &[
+            "toggle floating",
+            "float the window",
+            "tile the window",
+            "toggle float",
+        ],
+        "hypr.float",
+        "Toggling floating.",
+        &[
+            "hyprctl",
+            "eval",
+            r#"hl.dispatch(hl.dsp.window.float({ action = "toggle" }))"#,
+        ],
+    ),
+    (
+        &["toggle split", "toggle the split"],
+        "hypr.split",
+        "Toggling the split.",
+        &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.layout("togglesplit"))"#],
+    ),
+    (
+        &[
+            "open 1password",
+            "open one password",
+            "open passwords",
+            "passwords",
+        ],
+        "app.launch",
+        "Opening 1Password.",
+        &["launch", "1password"],
+    ),
+    (
+        &["open omawrite", "launch omawrite", "omawrite"],
+        "app.launch",
+        "Opening Omawrite.",
+        &["exec", "omawrite"],
+    ),
+    (
+        &[
+            "private browser",
+            "open private browser",
+            "incognito",
+            "open incognito",
+        ],
+        "app.launch",
+        "Opening a private browser.",
+        &["launch", "browser", "--private"],
+    ),
 ];
 
 fn normalize(raw: &str) -> String {
@@ -943,6 +1075,10 @@ mod tests {
         assert_eq!(tool("mute"), Some("audio.mute"));
         assert_eq!(tool("open the browser"), Some("app.launch"));
         assert_eq!(tool("open a terminal"), Some("app.launch"));
+        match route("open terminal") {
+            Intent::Desktop { omarchy, .. } => assert_eq!(omarchy, &["launch", "terminal"]),
+            other => panic!("{other:?}"),
+        }
         assert_eq!(tool("brighter"), Some("display.brightness_up"));
         assert_eq!(tool("next wallpaper"), Some("theme.bg_next"));
         assert_eq!(tool("go to workspace 3"), Some("hypr.workspace"));
@@ -950,6 +1086,17 @@ mod tests {
         assert_eq!(tool("go to workspace 8"), None);
         assert_eq!(tool("workspace 6"), None);
         assert_eq!(tool("open files"), Some("app.launch"));
+        match route("open files") {
+            Intent::Desktop { omarchy, .. } => {
+                assert_eq!(omarchy[0], "exec");
+                assert!(omarchy.iter().any(|a| *a == "/usr/bin/strata"));
+            }
+            other => panic!("{other:?}"),
+        }
+        match route("open nautilus") {
+            Intent::Desktop { omarchy, .. } => assert_eq!(omarchy, &["launch", "nautilus"]),
+            other => panic!("{other:?}"),
+        }
         assert_eq!(tool("make the screen brighter"), Some("display.brightness_up"));
         assert_eq!(tool("switch workspace 2"), Some("hypr.workspace"));
         assert_eq!(tool("go to workspace one"), Some("hypr.workspace"));
@@ -1015,7 +1162,20 @@ mod tests {
         assert_eq!(tool("keyboard brighter"), Some("display.keyboard_up"));
         assert_eq!(tool("change theme"), Some("theme.switcher"));
         assert_eq!(tool("open discord"), Some("app.launch"));
+        assert_eq!(tool("open obsidian"), Some("app.launch"));
+        assert_eq!(tool("open chatgpt"), Some("app.launch"));
+        assert_eq!(tool("open music"), Some("app.launch"));
         assert_eq!(tool("capture text"), Some("capture.text"));
+        assert_eq!(tool("toggle scratchpad"), Some("hypr.scratchpad"));
+        assert_eq!(tool("move to scratchpad"), Some("hypr.scratchpad_move"));
+        assert_eq!(tool("toggle floating"), Some("hypr.float"));
+        assert_eq!(tool("toggle split"), Some("hypr.split"));
+        assert_eq!(tool("open passwords"), Some("app.launch"));
+        assert_eq!(tool("open omawrite"), Some("app.launch"));
+        assert_eq!(tool("private browser"), Some("app.launch"));
         assert_eq!(tool("close"), None);
+        assert!(is_filler("Yeah."));
+        assert!(is_filler("ok"));
+        assert!(!is_filler("lock the screen"));
     }
 }
