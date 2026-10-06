@@ -27,6 +27,9 @@ fi
 if [[ ! -f "$cfg_dir/apps.toml" ]]; then
   install -m 0644 "$root/config/apps.toml" "$cfg_dir/apps.toml"
 fi
+if [[ ! -f "$cfg_dir/commands.toml" ]]; then
+  install -m 0644 "$root/config/commands.toml" "$cfg_dir/commands.toml"
+fi
 if [[ ! -f "$cfg_dir/voxtype-parakeet.toml" ]]; then
   install -m 0644 "$root/config/voxtype-parakeet.toml" "$cfg_dir/voxtype-parakeet.toml"
 fi
@@ -52,4 +55,4 @@ fi
 echo "Nyx is installed. Hold Alt+Space to talk."
 echo "logs: journalctl --user -u omarchy-assistantd -f"
 echo "status: omarchy-assistant status"
-echo "HUD: $root/scripts/hud.sh"
+echo "HUD: systemctl --user status omarchy-assistant-hud"

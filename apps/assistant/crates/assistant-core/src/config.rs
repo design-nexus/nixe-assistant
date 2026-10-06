@@ -14,6 +14,7 @@ pub struct Config {
     pub audio: AudioCfg,
     pub barge_in: BargeInCfg,
     pub wake_word: WakeWordCfg,
+    pub clock: ClockCfg,
     pub ui: UiCfg,
     pub permissions: PermissionsCfg,
 }
@@ -29,6 +30,7 @@ impl Default for Config {
             audio: AudioCfg::default(),
             barge_in: BargeInCfg::default(),
             wake_word: WakeWordCfg::default(),
+            clock: ClockCfg::default(),
             ui: UiCfg::default(),
             permissions: PermissionsCfg::default(),
         }
@@ -40,6 +42,8 @@ impl Default for Config {
 pub struct AssistantCfg {
     pub name: String,
     pub mode: String,
+    #[serde(default = "default_assistant_prompt")]
+    pub prompt: String,
 }
 
 impl Default for AssistantCfg {
@@ -47,8 +51,17 @@ impl Default for AssistantCfg {
         Self {
             name: "Nyx".into(),
             mode: "push-to-talk".into(),
+            prompt: default_assistant_prompt(),
         }
     }
+}
+
+fn default_assistant_prompt() -> String {
+    "You are {name}, a fast local voice assistant on Omarchy/Hyprland. \
+     Answer questions out loud in short spoken sentences. \
+     No markdown, no bullet lists, no code fences. \
+     Never claim you changed the computer."
+        .into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,6 +172,7 @@ pub struct BargeInCfg {
     pub grace_ms: u64,
     pub threshold: f32,
     pub hangover_ms: u64,
+    pub aec: bool,
 }
 
 impl Default for BargeInCfg {
@@ -168,6 +182,7 @@ impl Default for BargeInCfg {
             grace_ms: 500,
             threshold: 0.08,
             hangover_ms: 160,
+            aec: true,
         }
     }
 }
@@ -176,12 +191,202 @@ impl Default for BargeInCfg {
 #[serde(default)]
 pub struct WakeWordCfg {
     pub enabled: bool,
+    pub threshold: f32,
+    pub hangover_ms: u64,
+    pub start_confirm_frames: u32,
+    pub preroll_ms: u64,
+    pub min_ms: u64,
+    pub max_ms: u64,
+    pub hush_ms: u64,
+    pub prefixes: Vec<String>,
+    pub phrases: Vec<String>,
 }
 
 impl Default for WakeWordCfg {
     fn default() -> Self {
-        Self { enabled: false }
+        Self {
+            enabled: true,
+            threshold: 0.003,
+            hangover_ms: 500,
+            start_confirm_frames: 4,
+            preroll_ms: 500,
+            min_ms: 400,
+            max_ms: 10_000,
+            hush_ms: 1_200,
+            prefixes: vec!["hey".into(), "ok".into(), "okay".into()],
+            phrases: vec![
+                "nyx".into(),
+                "nix".into(),
+                "nicks".into(),
+                "nick".into(),
+                "niks".into(),
+                "nics".into(),
+                "nyks".into(),
+                "next".into(),
+                "six".into(),
+                "neks".into(),
+                "некс".into(),
+                "никс".into(),
+            ],
+        }
     }
+}
+
+impl WakeWordCfg {
+    pub fn phrase_list(&self, name: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let n = name.trim().to_lowercase();
+        if !n.is_empty() {
+            out.push(n);
+        }
+        for p in &self.phrases {
+            let p = p.trim().to_lowercase();
+            if !p.is_empty() && !out.iter().any(|x| x == &p) {
+                out.push(p);
+            }
+        }
+        out
+    }
+
+    pub fn prefix_list(&self) -> Vec<String> {
+        self.prefixes
+            .iter()
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ClockCfg {
+    pub enabled: bool,
+    pub inject_prompt: bool,
+    pub time_format: String,
+    pub date_format: String,
+    pub time_template: String,
+    pub date_template: String,
+    pub prompt: String,
+    pub time_phrases: Vec<String>,
+    pub date_phrases: Vec<String>,
+    pub strip_tails: Vec<String>,
+}
+
+impl Default for ClockCfg {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            inject_prompt: true,
+            time_format: "%-I:%M %p".into(),
+            date_format: "%A, %B %-d".into(),
+            time_template: "It's {time}.".into(),
+            date_template: "It's {date}.".into(),
+            prompt: "The current local time is {time}. Today's date is {date}. Use these when asked the time or date.".into(),
+            time_phrases: vec![
+                "what time is it".into(),
+                "whats the time".into(),
+                "what is the time".into(),
+                "tell me the time".into(),
+                "tell me what time it is".into(),
+                "current time".into(),
+                "whats the current time".into(),
+                "what is the current time".into(),
+                "what time".into(),
+                "got the time".into(),
+                "do you have the time".into(),
+                "time is it".into(),
+            ],
+            date_phrases: vec![
+                "whats the date".into(),
+                "what is the date".into(),
+                "what day is it".into(),
+                "whats today".into(),
+                "what is today".into(),
+                "whats todays date".into(),
+                "what is todays date".into(),
+                "tell me the date".into(),
+                "what date is it".into(),
+            ],
+            strip_tails: vec![
+                "please".into(),
+                "now".into(),
+                "right now".into(),
+                "for me".into(),
+            ],
+        }
+    }
+}
+
+impl ClockCfg {
+    pub fn format_time(&self) -> String {
+        chrono::Local::now()
+            .format(&self.time_format)
+            .to_string()
+    }
+
+    pub fn format_date(&self) -> String {
+        chrono::Local::now()
+            .format(&self.date_format)
+            .to_string()
+    }
+
+    pub fn spoken_reply(&self, text: &str) -> Option<String> {
+        if !self.enabled {
+            return None;
+        }
+        let key = self.key(text);
+        if key.is_empty() {
+            return None;
+        }
+        if self.time_phrases.iter().any(|p| self.key(p) == key) {
+            return Some(self.time_template.replace("{time}", &self.format_time()));
+        }
+        if self.date_phrases.iter().any(|p| self.key(p) == key) {
+            return Some(self.date_template.replace("{date}", &self.format_date()));
+        }
+        None
+    }
+
+    fn key(&self, text: &str) -> String {
+        let mut s = normalize_ask(text);
+        loop {
+            let mut stripped = false;
+            for tail in &self.strip_tails {
+                let t = normalize_ask(tail);
+                if t.is_empty() {
+                    continue;
+                }
+                if let Some(rest) = s.strip_suffix(&format!(" {t}")) {
+                    s = rest.trim().to_string();
+                    stripped = true;
+                } else if s == t {
+                    s.clear();
+                    stripped = true;
+                }
+            }
+            if !stripped {
+                break;
+            }
+        }
+        s
+    }
+}
+
+fn normalize_ask(text: &str) -> String {
+    let mut out = String::new();
+    for c in text.chars() {
+        if c == '\'' || c == '’' {
+            continue;
+        }
+        if c.is_alphanumeric() {
+            for x in c.to_lowercase() {
+                out.push(x);
+            }
+        } else if !out.is_empty() && !out.ends_with(' ') {
+            out.push(' ');
+        }
+    }
+    out.trim().to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -271,15 +476,20 @@ impl Config {
     }
 
     pub fn system_prompt(&self) -> String {
-        format!(
-            "You are {}, a fast local voice assistant on Omarchy/Hyprland. \
-             Answer questions out loud in short spoken sentences. \
-             No markdown, no bullet lists, no code fences. \
-             You cannot control the desktop, windows, brightness, volume, or workspaces. \
-             If the user asked you to do something on the computer, say you did not catch a command you can run. \
-             Never claim you did an action.",
-            self.assistant.name
-        )
+        let mut s = self.assistant.prompt.replace("{name}", &self.assistant.name);
+        if s.trim().is_empty() {
+            s = default_assistant_prompt().replace("{name}", &self.assistant.name);
+        }
+        if self.clock.enabled && self.clock.inject_prompt && !self.clock.prompt.is_empty() {
+            let line = self
+                .clock
+                .prompt
+                .replace("{time}", &self.clock.format_time())
+                .replace("{date}", &self.clock.format_date());
+            s.push(' ');
+            s.push_str(&line);
+        }
+        s
     }
 }
 
@@ -296,11 +506,44 @@ mod tests {
         let cfg: Config = toml::from_str(default_toml()).unwrap();
         assert_eq!(cfg.assistant.name, "Nyx");
         assert_eq!(cfg.assistant.mode, "push-to-talk");
+        assert!(cfg.assistant.prompt.contains("short spoken sentences"));
         assert_eq!(cfg.stt.provider, "voxtype");
         assert_eq!(cfg.llm.backend, "llama.cpp");
         assert_eq!(cfg.tts.provider, "kokoro");
         assert_eq!(cfg.permissions.shell, "deny");
         assert!(cfg.barge_in.enabled);
         assert_eq!(cfg.barge_in.grace_ms, 500);
+        assert!(cfg.wake_word.enabled);
+        assert!(cfg.wake_word.phrases.iter().any(|p| p == "nyx"));
+        assert!(cfg.clock.enabled);
+        assert!(cfg.clock.inject_prompt);
+        assert!(cfg.clock.time_phrases.iter().any(|p| p == "what time is it"));
+    }
+
+    #[test]
+    fn clock_speaks_local_time() {
+        let clock = ClockCfg::default();
+        let spoken = clock.spoken_reply("what time is it?").expect("time phrase");
+        assert!(spoken.starts_with("It's "), "{spoken}");
+        let spoken = clock
+            .spoken_reply("what's the time please")
+            .expect("apostrophe and tail");
+        assert!(spoken.starts_with("It's "), "{spoken}");
+        let spoken = clock.spoken_reply("what day is it").expect("date phrase");
+        assert!(spoken.starts_with("It's "), "{spoken}");
+        assert!(clock.spoken_reply("open terminal").is_none());
+        assert!(clock.spoken_reply("what time does the store close").is_none());
+    }
+
+    #[test]
+    fn system_prompt_includes_clock() {
+        let cfg = Config::default();
+        let prompt = cfg.system_prompt();
+        assert!(prompt.contains("current local time"), "{prompt}");
+        assert!(prompt.contains(&cfg.clock.format_time()), "{prompt}");
+        assert!(
+            !prompt.to_lowercase().contains("catch a command"),
+            "{prompt}"
+        );
     }
 }

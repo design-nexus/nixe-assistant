@@ -1,0 +1,956 @@
+# Desktop command phrases. Edit this file, then:
+#   omarchy-assistant reload
+#
+# `omarchy` is argv after the binary: omarchy <args>, or hyprctl <args> when
+# the first arg is hyprctl. `{n}` in [workspace] is the spoken workspace number.
+
+can_do = "I didn't catch a command I can run. I can lock, close a window, change volume or brightness, switch workspaces 1 to 5, cycle wallpaper, toggle the bar, gaps, or night light, or take a screenshot"
+
+forget = [
+  "forget that",
+  "forget it",
+  "forget everything",
+  "start over",
+  "clear the conversation",
+  "new conversation",
+]
+
+starts = [
+  "go ",
+  "going ",
+  "switch ",
+  "make ",
+  "move ",
+  "send ",
+  "put ",
+  "focus ",
+  "record ",
+  "stop recording",
+  "open ",
+  "launch ",
+  "turn ",
+  "mute",
+  "unmute",
+  "lock",
+  "take ",
+  "toggle ",
+  "change ",
+  "dim",
+  "brighten ",
+  "raise ",
+  "lower ",
+  "increase ",
+  "decrease ",
+  "quieter",
+  "louder",
+  "screenshot",
+  "workspace",
+  "brighter",
+  "dimmer",
+  "stay ",
+  "silence ",
+  "hide ",
+  "show ",
+  "close ",
+  "shut ",
+  "shutdown",
+  "reboot",
+  "log out",
+  "logout",
+  "power off",
+  "suspend",
+  "fullscreen",
+  "gaps",
+  "keyboard",
+  "touchpad",
+  "screensaver",
+  "scratchpad",
+  "clipboard",
+  "emojis",
+  "keybindings",
+]
+
+vocab = [
+  "workspace",
+  "screen",
+  "brighter",
+  "dimmer",
+  "brightness",
+  "volume",
+  "lock",
+  "wallpaper",
+  "background",
+  "scratchpad",
+  "floating",
+  "float",
+  "split",
+  "focus",
+  "recording",
+  "emoji",
+  "clipboard",
+  "keybindings",
+  "picker",
+  "bluetooth",
+  "mute",
+  "unmute",
+  "open",
+  "launch",
+  "switch",
+  "change",
+  "move",
+  "send",
+  "put",
+  "make",
+  "turn",
+  "toggle",
+  "night",
+  "light",
+  "nightlight",
+  "screenshot",
+  "capture",
+  "silence",
+  "notifications",
+  "awake",
+  "sleep",
+  "stay",
+  "quieter",
+  "louder",
+  "raise",
+  "lower",
+  "increase",
+  "decrease",
+  "brighten",
+  "bar",
+  "gaps",
+  "animations",
+  "transparency",
+  "fullscreen",
+  "layout",
+  "region",
+  "panel",
+  "touchpad",
+  "keyboard",
+  "window",
+  "close",
+  "theme",
+  "screensaver",
+  "output",
+  "backlight",
+  "speakers",
+  "headphones",
+]
+
+[workspace]
+max = 5
+tool = "hypr.workspace"
+move_tool = "hypr.workspace_move"
+spoken = "Workspace {n}."
+move_spoken = "Moving to workspace {n}."
+focus = 'hl.dispatch(hl.dsp.focus({ workspace = "{n}" }))'
+move = 'hl.dispatch(hl.dsp.window.move({ workspace = "{n}" }))'
+
+[[say]]
+phrases = [
+  "mute mic",
+  "mute the mic",
+  "mute microphone",
+  "mute the microphone",
+  "unmute mic",
+  "unmute the mic",
+  "unmute microphone",
+  "unmute the microphone",
+]
+reply = "I need the microphone, so I can't mute it."
+
+[[say]]
+phrases = [
+  "shut down",
+  "shutdown",
+  "shut down the computer",
+  "shut down the machine",
+  "shut down the system",
+  "power off",
+  "power down",
+  "turn off the computer",
+  "turn the computer off",
+  "reboot",
+  "reboot the computer",
+  "restart the computer",
+  "restart the machine",
+  "restart the system",
+  "log out",
+  "logout",
+  "sign out",
+  "suspend",
+  "go to sleep",
+  "put the computer to sleep",
+]
+reply = "I won't shut down, reboot, or log out from voice."
+
+[[command]]
+phrases = [
+  "lock",
+  "lock screen",
+  "lock the screen",
+  "lock session",
+  "lock the session",
+  "lock computer",
+  "lock the computer",
+  "lock machine",
+  "lock the machine",
+]
+tool = "system.lock"
+reply = "Locking."
+omarchy = [
+  "system",
+  "lock",
+]
+
+[[command]]
+phrases = [
+  "volume down",
+  "turn down the volume",
+  "turn the volume down",
+  "lower the volume",
+  "quieter",
+  "turn it down",
+]
+tool = "audio.volume_down"
+reply = "Volume down."
+omarchy = [
+  "audio",
+  "output",
+  "volume",
+  "lower",
+]
+
+[[command]]
+phrases = [
+  "volume up",
+  "turn up the volume",
+  "turn the volume up",
+  "raise the volume",
+  "louder",
+  "turn it up",
+]
+tool = "audio.volume_up"
+reply = "Volume up."
+omarchy = [
+  "audio",
+  "output",
+  "volume",
+  "raise",
+]
+
+[[command]]
+phrases = [
+  "mute",
+  "mute audio",
+  "mute the volume",
+  "mute sound",
+  "unmute",
+  "unmute audio",
+  "toggle mute",
+]
+tool = "audio.mute"
+reply = "Toggling mute."
+omarchy = [
+  "audio",
+  "output",
+  "volume",
+  "mute-toggle",
+]
+
+[[command]]
+phrases = [
+  "screenshot",
+  "take a screenshot",
+  "take screenshot",
+  "capture screen",
+  "capture the screen",
+  "screenshot the screen",
+]
+tool = "capture.screenshot"
+reply = "Capturing."
+omarchy = [
+  "capture",
+  "screenshot",
+]
+
+[[command]]
+phrases = [
+  "night light",
+  "nightlight",
+  "toggle night light",
+  "toggle nightlight",
+  "night mode",
+]
+tool = "toggle.nightlight"
+reply = "Toggling night light."
+omarchy = [
+  "toggle",
+  "nightlight",
+]
+
+[[command]]
+phrases = [
+  "brighter",
+  "brightness up",
+  "increase brightness",
+  "turn brightness up",
+  "raise the brightness",
+  "make it brighter",
+  "make the screen brighter",
+  "make screen brighter",
+  "brighten the screen",
+]
+tool = "display.brightness_up"
+reply = "Brightness up."
+omarchy = [
+  "brightness",
+  "display",
+  "+10%",
+]
+
+[[command]]
+phrases = [
+  "dimmer",
+  "brightness down",
+  "decrease brightness",
+  "turn brightness down",
+  "lower the brightness",
+  "make it dimmer",
+  "make the screen dimmer",
+  "make screen dimmer",
+  "dim the screen",
+]
+tool = "display.brightness_down"
+reply = "Brightness down."
+omarchy = [
+  "brightness",
+  "display",
+  "10%-",
+]
+
+[[command]]
+phrases = [
+  "next wallpaper",
+  "next background",
+  "change wallpaper",
+  "change the wallpaper",
+  "change background",
+]
+tool = "theme.bg_next"
+reply = "Next wallpaper."
+omarchy = [
+  "theme",
+  "bg",
+  "next",
+]
+
+[[command]]
+phrases = [
+  "toggle bluetooth",
+  "bluetooth",
+  "turn bluetooth on",
+  "turn bluetooth off",
+]
+tool = "bluetooth.toggle"
+reply = "Toggling Bluetooth."
+omarchy = [
+  "bluetooth",
+  "power",
+  "toggle",
+]
+
+[[command]]
+phrases = [
+  "do not disturb",
+  "toggle do not disturb",
+  "silence notifications",
+]
+tool = "toggle.dnd"
+reply = "Toggling do not disturb."
+omarchy = [
+  "toggle",
+  "notification",
+  "silencing",
+]
+
+[[command]]
+phrases = [
+  "stay awake",
+  "dont sleep",
+  "do not sleep",
+]
+tool = "toggle.idle"
+reply = "Staying awake."
+omarchy = [
+  "toggle",
+  "idle",
+  "stay-awake",
+]
+
+[[command]]
+phrases = [
+  "toggle bar",
+  "toggle the bar",
+  "hide the bar",
+  "hide bar",
+  "show the bar",
+  "show bar",
+  "hide the panel",
+  "show the panel",
+]
+tool = "toggle.bar"
+reply = "Toggling the bar."
+omarchy = [
+  "toggle",
+  "bar",
+]
+
+[[command]]
+phrases = [
+  "toggle gaps",
+  "toggle window gaps",
+  "no gaps",
+  "window gaps",
+]
+tool = "hypr.gaps"
+reply = "Toggling gaps."
+omarchy = [
+  "hyprland",
+  "window",
+  "gaps",
+  "toggle",
+]
+
+[[command]]
+phrases = [
+  "toggle animations",
+  "toggle effects",
+  "reduce motion",
+]
+tool = "toggle.animations"
+reply = "Toggling animations."
+omarchy = [
+  "toggle",
+  "animations",
+]
+
+[[command]]
+phrases = [
+  "toggle transparency",
+  "toggle window transparency",
+]
+tool = "hypr.transparency"
+reply = "Toggling transparency."
+omarchy = [
+  "hyprland",
+  "window",
+  "transparency",
+  "toggle",
+]
+
+[[command]]
+phrases = [
+  "toggle fullscreen",
+  "fullscreen",
+  "full screen",
+]
+tool = "hypr.fullscreen"
+reply = "Toggling fullscreen."
+omarchy = [
+  "hyprland",
+  "window",
+  "tiled",
+  "fullscreen",
+  "toggle",
+]
+
+[[command]]
+phrases = [
+  "toggle layout",
+  "toggle tiling",
+  "switch layout",
+]
+tool = "hypr.layout"
+reply = "Toggling layout."
+omarchy = [
+  "hyprland",
+  "workspace",
+  "layout",
+  "toggle",
+]
+
+[[command]]
+phrases = [
+  "screenshot region",
+  "region screenshot",
+  "screenshot a region",
+  "capture a region",
+]
+tool = "capture.screenshot_region"
+reply = "Region screenshot."
+omarchy = [
+  "capture",
+  "screenshot",
+  "region",
+]
+
+[[command]]
+phrases = [
+  "screenshot window",
+  "window screenshot",
+  "capture a window",
+  "screenshot a window",
+]
+tool = "capture.screenshot_window"
+reply = "Window screenshot."
+omarchy = [
+  "capture",
+  "screenshot",
+  "windows",
+]
+
+[[command]]
+phrases = [
+  "fullscreen screenshot",
+  "screenshot fullscreen",
+  "full screen screenshot",
+]
+tool = "capture.screenshot_fullscreen"
+reply = "Fullscreen screenshot."
+omarchy = [
+  "capture",
+  "screenshot",
+  "fullscreen",
+]
+
+[[command]]
+phrases = [
+  "copy text from the screen",
+  "copy text from screen",
+  "capture text",
+  "read the screen",
+  "ocr",
+]
+tool = "capture.text"
+reply = "Capturing text."
+omarchy = [
+  "capture",
+  "text",
+]
+
+[[command]]
+phrases = [
+  "close window",
+  "close the window",
+  "close this window",
+  "close the focused window",
+]
+tool = "hypr.window_close"
+reply = "Closing the window."
+omarchy = [
+  "hyprctl",
+  "eval",
+  "hl.dispatch(hl.dsp.window.close())",
+]
+
+[[command]]
+phrases = [
+  "next workspace",
+  "go to the next workspace",
+  "switch to the next workspace",
+]
+tool = "hypr.workspace"
+reply = "Next workspace."
+omarchy = [
+  "hyprctl",
+  "eval",
+  'hl.dispatch(hl.dsp.focus({ workspace = "e+1" }))',
+]
+
+[[command]]
+phrases = [
+  "previous workspace",
+  "last workspace",
+  "go to the previous workspace",
+  "switch to the previous workspace",
+]
+tool = "hypr.workspace"
+reply = "Previous workspace."
+omarchy = [
+  "hyprctl",
+  "eval",
+  'hl.dispatch(hl.dsp.focus({ workspace = "e-1" }))',
+]
+
+[[command]]
+phrases = [
+  "former workspace",
+  "go to the former workspace",
+  "back to the last workspace",
+]
+tool = "hypr.workspace"
+reply = "Former workspace."
+omarchy = [
+  "hyprctl",
+  "eval",
+  'hl.dispatch(hl.dsp.focus({ workspace = "previous" }))',
+]
+
+[[command]]
+phrases = [
+  "toggle touchpad",
+  "disable touchpad",
+  "enable touchpad",
+  "turn off the touchpad",
+  "turn on the touchpad",
+]
+tool = "toggle.touchpad"
+reply = "Toggling the touchpad."
+omarchy = [
+  "toggle",
+  "touchpad",
+]
+
+[[command]]
+phrases = [
+  "toggle screensaver",
+  "screensaver",
+]
+tool = "toggle.screensaver"
+reply = "Toggling the screensaver."
+omarchy = [
+  "toggle",
+  "screensaver",
+]
+
+[[command]]
+phrases = [
+  "fullscreen desktop",
+  "toggle fullscreen desktop",
+  "hide bar and gaps",
+]
+tool = "toggle.fullscreen_desktop"
+reply = "Toggling fullscreen desktop."
+omarchy = [
+  "toggle",
+  "fullscreen",
+  "desktop",
+]
+
+[[command]]
+phrases = [
+  "switch audio",
+  "switch audio output",
+  "switch speakers",
+  "switch headphones",
+  "change audio output",
+]
+tool = "audio.output_switch"
+reply = "Switching audio output."
+omarchy = [
+  "audio",
+  "output",
+  "switch",
+]
+
+[[command]]
+phrases = [
+  "keyboard brighter",
+  "keyboard backlight up",
+  "increase keyboard brightness",
+  "keyboard up",
+]
+tool = "display.keyboard_up"
+reply = "Keyboard brighter."
+omarchy = [
+  "brightness",
+  "keyboard",
+  "up",
+]
+
+[[command]]
+phrases = [
+  "keyboard dimmer",
+  "keyboard backlight down",
+  "decrease keyboard brightness",
+  "keyboard down",
+  "dim the keyboard",
+]
+tool = "display.keyboard_down"
+reply = "Keyboard dimmer."
+omarchy = [
+  "brightness",
+  "keyboard",
+  "down",
+]
+
+[[command]]
+phrases = [
+  "change theme",
+  "switch theme",
+  "open theme switcher",
+  "theme switcher",
+]
+tool = "theme.switcher"
+reply = "Opening the theme switcher."
+omarchy = [
+  "theme",
+  "switcher",
+]
+
+[[command]]
+phrases = [
+  "toggle scratchpad",
+  "scratchpad",
+  "show scratchpad",
+  "hide scratchpad",
+  "open scratchpad",
+]
+tool = "hypr.scratchpad"
+reply = "Toggling the scratchpad."
+omarchy = [
+  "hyprctl",
+  "eval",
+  'hl.dispatch(hl.dsp.workspace.toggle_special("scratchpad"))',
+]
+
+[[command]]
+phrases = [
+  "move to scratchpad",
+  "send to scratchpad",
+  "scratch this window",
+]
+tool = "hypr.scratchpad_move"
+reply = "Moving to the scratchpad."
+omarchy = [
+  "hyprctl",
+  "eval",
+  'hl.dispatch(hl.dsp.window.move({ workspace = "special:scratchpad", follow = false }))',
+]
+
+[[command]]
+phrases = [
+  "toggle floating",
+  "float the window",
+  "tile the window",
+  "toggle float",
+]
+tool = "hypr.float"
+reply = "Toggling floating."
+omarchy = [
+  "hyprctl",
+  "eval",
+  'hl.dispatch(hl.dsp.window.float({ action = "toggle" }))',
+]
+
+[[command]]
+phrases = [
+  "toggle split",
+  "toggle the split",
+]
+tool = "hypr.split"
+reply = "Toggling the split."
+omarchy = [
+  "hyprctl",
+  "eval",
+  'hl.dispatch(hl.dsp.layout("togglesplit"))',
+]
+
+[[command]]
+phrases = [
+  "focus left",
+  "focus the left window",
+  "window left",
+]
+tool = "hypr.focus"
+reply = "Focusing left."
+omarchy = [
+  "hyprctl",
+  "eval",
+  'hl.dispatch(hl.dsp.focus({ direction = "l" }))',
+]
+
+[[command]]
+phrases = [
+  "focus right",
+  "focus the right window",
+  "window right",
+]
+tool = "hypr.focus"
+reply = "Focusing right."
+omarchy = [
+  "hyprctl",
+  "eval",
+  'hl.dispatch(hl.dsp.focus({ direction = "r" }))',
+]
+
+[[command]]
+phrases = [
+  "focus up",
+  "focus above",
+  "focus the window above",
+]
+tool = "hypr.focus"
+reply = "Focusing up."
+omarchy = [
+  "hyprctl",
+  "eval",
+  'hl.dispatch(hl.dsp.focus({ direction = "u" }))',
+]
+
+[[command]]
+phrases = [
+  "focus down",
+  "focus below",
+  "focus the window below",
+]
+tool = "hypr.focus"
+reply = "Focusing down."
+omarchy = [
+  "hyprctl",
+  "eval",
+  'hl.dispatch(hl.dsp.focus({ direction = "d" }))',
+]
+
+[[command]]
+phrases = [
+  "next window",
+  "cycle windows",
+  "focus the next window",
+]
+tool = "hypr.window_cycle"
+reply = "Next window."
+omarchy = [
+  "hyprctl",
+  "eval",
+  "hl.dispatch(hl.dsp.window.cycle_next())",
+]
+
+[[command]]
+phrases = [
+  "previous window",
+  "focus the previous window",
+]
+tool = "hypr.window_cycle"
+reply = "Previous window."
+omarchy = [
+  "hyprctl",
+  "eval",
+  "hl.dispatch(hl.dsp.window.cycle_next({ next = false }))",
+]
+
+[[command]]
+phrases = [
+  "pop the window out",
+  "pop out",
+  "pop window",
+  "pin the window",
+]
+tool = "hypr.window_pop"
+reply = "Popping the window out."
+omarchy = [
+  "hyprland",
+  "window",
+  "pop",
+]
+
+[[command]]
+phrases = [
+  "open the menu",
+  "omarchy menu",
+  "open omarchy menu",
+  "open the omarchy menu",
+]
+tool = "app.launch"
+reply = "Opening the menu."
+omarchy = [
+  "menu",
+  "toggle",
+  "root",
+]
+
+[[command]]
+phrases = [
+  "open apps menu",
+  "apps menu",
+  "open the apps menu",
+]
+tool = "app.launch"
+reply = "Opening the apps menu."
+omarchy = [
+  "menu",
+  "toggle",
+  "apps",
+]
+
+[[command]]
+phrases = [
+  "emoji picker",
+  "open emojis",
+  "emojis",
+]
+tool = "app.launch"
+reply = "Opening emojis."
+omarchy = [
+  "menu",
+  "emoji",
+]
+
+[[command]]
+phrases = [
+  "clipboard history",
+  "open clipboard",
+  "clipboard",
+]
+tool = "app.launch"
+reply = "Opening the clipboard."
+omarchy = [
+  "menu",
+  "clipboard",
+]
+
+[[command]]
+phrases = [
+  "show keybindings",
+  "keybindings",
+  "open keybindings",
+]
+tool = "app.launch"
+reply = "Opening keybindings."
+omarchy = [
+  "menu",
+  "keybindings",
+]
+
+[[command]]
+phrases = [
+  "start recording",
+  "record the screen",
+  "record screen",
+  "start screen recording",
+]
+tool = "capture.screenrecord"
+reply = "Starting a screen recording."
+omarchy = [
+  "capture",
+  "screenrecording",
+  "--fullscreen",
+]
+
+[[command]]
+phrases = [
+  "stop recording",
+  "stop screen recording",
+  "stop the recording",
+]
+tool = "capture.screenrecord"
+reply = "Stopping the recording."
+omarchy = [
+  "capture",
+  "screenrecording",
+  "--stop-recording",
+]

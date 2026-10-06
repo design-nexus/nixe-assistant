@@ -1,6 +1,7 @@
 //! Shared types for Nyx: config, state machine, events, timing.
 
 pub mod apps;
+pub mod commands;
 pub mod config;
 pub mod event;
 pub mod paths;
@@ -8,6 +9,7 @@ pub mod state;
 pub mod timing;
 
 pub use apps::{AppLaunch, AppsFile};
+pub use commands::{CommandPhrase, CommandsFile, WorkspaceCommands};
 pub use config::Config;
 pub use event::Event;
 pub use state::{AssistantState, StateMachine};

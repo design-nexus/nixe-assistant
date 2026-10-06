@@ -33,6 +33,10 @@ pub fn apps_path() -> PathBuf {
     config_dir().join("apps.toml")
 }
 
+pub fn commands_path() -> PathBuf {
+    config_dir().join("commands.toml")
+}
+
 pub fn data_dir() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from(".").join(".local/share"))

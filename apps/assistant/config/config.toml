@@ -1,6 +1,7 @@
 [assistant]
 name = "Nyx"
 mode = "push-to-talk"
+prompt = "You are {name}, a fast local voice assistant on Omarchy/Hyprland. Answer questions out loud in short spoken sentences. No markdown, no bullet lists, no code fences. Never claim you changed the computer."
 
 [stt]
 provider = "voxtype"
@@ -36,9 +37,54 @@ enabled = true
 grace_ms = 500
 threshold = 0.08
 hangover_ms = 160
+aec = true
 
 [wake_word]
-enabled = false
+enabled = true
+threshold = 0.003
+hangover_ms = 500
+start_confirm_frames = 4
+preroll_ms = 500
+min_ms = 400
+max_ms = 10000
+hush_ms = 1200
+prefixes = ["hey", "ok", "okay"]
+phrases = ["nyx", "nix", "nicks", "nick", "niks", "nics", "nyks", "next", "six", "neks"]
+
+[clock]
+enabled = true
+inject_prompt = true
+time_format = "%-I:%M %p"
+date_format = "%A, %B %-d"
+time_template = "It's {time}."
+date_template = "It's {date}."
+prompt = "The current local time is {time}. Today's date is {date}. Use these when asked the time or date."
+time_phrases = [
+  "what time is it",
+  "whats the time",
+  "what is the time",
+  "tell me the time",
+  "tell me what time it is",
+  "current time",
+  "whats the current time",
+  "what is the current time",
+  "what time",
+  "got the time",
+  "do you have the time",
+  "time is it",
+]
+date_phrases = [
+  "whats the date",
+  "what is the date",
+  "what day is it",
+  "whats today",
+  "what is today",
+  "whats todays date",
+  "what is todays date",
+  "tell me the date",
+  "what date is it",
+]
+strip_tails = ["please", "now", "right now", "for me"]
 
 [ui]
 enabled = true

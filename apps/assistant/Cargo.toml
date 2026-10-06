@@ -27,6 +27,7 @@ assistant-inference = { path = "crates/assistant-inference" }
 assistant-ipc = { path = "crates/assistant-ipc" }
 assistant-omarchy = { path = "crates/assistant-omarchy" }
 assistant-tools = { path = "crates/assistant-tools" }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 dirs = "6"
 hound = "3"
 serde = { version = "1", features = ["derive"] }

@@ -11,9 +11,9 @@ pub enum Command {
     Shutdown,
     /// Skip STT; run LLM → TTS → speakers on this text.
     Say { text: String },
-    /// Closed-loop probe: Kokoro → 16 kHz WAV → Voxtype → LLM → speakers.
+    /// Closed-loop probe: Kokoro → 16 kHz WAV → Parakeet → LLM → speakers.
     Demo,
-    /// Reload `apps.toml` without restarting the models.
+    /// Reload `apps.toml`, `commands.toml`, and `config.toml` without restarting the models.
     Reload,
 }
 

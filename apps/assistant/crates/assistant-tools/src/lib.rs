@@ -240,3 +240,55 @@ pub fn builtin_tools() -> Vec<ToolSpec> {
         },
     ]
 }
+
+/// Gate a routed tool against config permission strings.
+/// Confirm tools have no UI yet, so only `system.shutdown` with `allow` passes.
+pub fn tool_allowed(tool: &str, volume: &str, launch_app: &str, shutdown: &str) -> bool {
+    let Some(spec) = builtin_tools().into_iter().find(|t| t.name == tool) else {
+        return false;
+    };
+    match spec.permission {
+        Permission::Disabled | Permission::Dangerous => false,
+        Permission::Confirm => tool == "system.shutdown" && shutdown == "allow",
+        Permission::Safe => match tool {
+            "audio.volume_down" | "audio.volume_up" | "audio.mute" | "audio.output_switch" => {
+                volume == "allow"
+            }
+            "app.launch" => launch_app == "allow",
+            "audio.mic_mute" => false,
+            _ => true,
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn volume_respects_config() {
+        assert!(tool_allowed("audio.mute", "allow", "allow", "confirm"));
+        assert!(!tool_allowed("audio.mute", "deny", "allow", "confirm"));
+    }
+
+    #[test]
+    fn shell_never() {
+        assert!(!tool_allowed("shell", "allow", "allow", "allow"));
+    }
+
+    #[test]
+    fn shutdown_needs_allow() {
+        assert!(!tool_allowed("system.shutdown", "allow", "allow", "confirm"));
+        assert!(tool_allowed("system.shutdown", "allow", "allow", "allow"));
+    }
+
+    #[test]
+    fn unknown_denied() {
+        assert!(!tool_allowed("nope.tool", "allow", "allow", "allow"));
+    }
+
+    #[test]
+    fn lock_is_safe() {
+        assert!(tool_allowed("system.lock", "allow", "allow", "confirm"));
+    }
+}

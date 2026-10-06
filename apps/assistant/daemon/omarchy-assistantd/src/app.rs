@@ -1,24 +1,28 @@
 use anyhow::{Context, Result};
 use assistant_agent::{
-    is_filler, route_with_apps, Intent, KokoroProvider, PhraseChunker, VoxtypeProvider,
+    is_filler, route_with, strip_wake, Intent, KokoroProvider, PhraseChunker,
+    VoxtypeProvider,
 };
 use assistant_audio::{
-    f32_24k_to_i16_16k, record_until, record_until_vad, AudioEngine, EnergyVad,
+    aec_barge_threshold, f32_24k_to_i16_16k, record_until, record_until_vad, AudioEngine,
+    EnergyVad, VadDecision,
 };
 use assistant_core::apps::AppsFile;
+use assistant_core::commands::CommandsFile;
 use assistant_core::config::Config;
 use assistant_core::event::Event;
 use assistant_core::state::{AssistantState, StateMachine};
 use assistant_core::timing::TurnTiming;
 use assistant_inference::LlamaCppBackend;
 use assistant_ipc::{Command, Ipc};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::{broadcast, Mutex, watch};
+use tokio::sync::{broadcast, mpsc, Mutex, watch};
 use tokio_util::sync::CancellationToken;
 
 pub async fn run(cfg: Config) -> Result<()> {
+    tracing::info!(prompt = %cfg.assistant.prompt, "loaded config.toml");
     let ipc = assistant_ipc::bind().await.context("ipc bind")?;
     let Ipc {
         mut commands,
@@ -45,9 +49,15 @@ pub async fn run(cfg: Config) -> Result<()> {
         AppsFile::shipped()
     });
     tracing::info!(n = apps.app.len(), "loaded voice apps");
+    let voice_commands = CommandsFile::load().unwrap_or_else(|err| {
+        tracing::warn!(%err, "commands.toml; using shipped defaults");
+        CommandsFile::shipped()
+    });
+    tracing::info!(n = voice_commands.command.len(), "loaded voice commands");
     let app = Arc::new(App {
-        cfg,
+        cfg: std::sync::Mutex::new(cfg),
         apps: Mutex::new(apps),
+        commands: Mutex::new(voice_commands),
         state: Mutex::new(StateMachine::new()),
         events,
         audio,
@@ -58,12 +68,14 @@ pub async fn run(cfg: Config) -> Result<()> {
         released: release_tx,
         _released_rx: release_rx,
         turn_busy: AtomicBool::new(false),
+        turn_gen: AtomicU64::new(0),
         need_keyup: AtomicBool::new(false),
         last_hold: std::sync::Mutex::new(Instant::now()),
         history: Mutex::new(Vec::new()),
         cancel: Mutex::new(CancellationToken::new()),
         barged_in: AtomicBool::new(false),
         shutdown: shutdown_tx,
+        wake_hush_until: Mutex::new(Instant::now()),
     });
 
     if let Err(err) = assistant_omarchy::unmute_default_source().await {
@@ -72,6 +84,35 @@ pub async fn run(cfg: Config) -> Result<()> {
 
     app.emit_state(AssistantState::Idle).await;
     app.emit_health();
+
+    {
+        let app = Arc::clone(&app);
+        let mut shutdown = app.shutdown.subscribe();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_millis(50));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    _ = tick.tick() => {
+                        app.hold_tick().await;
+                        app.emit_level_if_listening();
+                    }
+                    _ = shutdown.changed() => {
+                        if *shutdown.borrow() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    {
+        let app = Arc::clone(&app);
+        tokio::spawn(async move {
+            app.watch_wake().await;
+        });
+    }
 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let mut sighup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
@@ -86,9 +127,6 @@ pub async fn run(cfg: Config) -> Result<()> {
                 }
                 app.handle(cmd).await;
             }
-            _ = tokio::time::sleep(Duration::from_millis(50)) => {
-                app.hold_tick().await;
-            }
             _ = tokio::signal::ctrl_c() => {
                 tracing::info!("SIGINT");
                 break;
@@ -99,7 +137,7 @@ pub async fn run(cfg: Config) -> Result<()> {
             }
             _ = sighup.recv() => {
                 tracing::info!("SIGHUP");
-                app.reload_apps().await;
+                app.reload().await;
             }
             _ = shutdown_rx.changed() => {
                 if *shutdown_rx.borrow() {
@@ -112,8 +150,9 @@ pub async fn run(cfg: Config) -> Result<()> {
 }
 
 struct App {
-    cfg: Config,
+    cfg: std::sync::Mutex<Config>,
     apps: Mutex<AppsFile>,
+    commands: Mutex<CommandsFile>,
     state: Mutex<StateMachine>,
     events: broadcast::Sender<Event>,
     audio: AudioEngine,
@@ -125,12 +164,14 @@ struct App {
     /// Must stay alive: tokio watch `send` is a no-op with zero receivers.
     _released_rx: watch::Receiver<bool>,
     turn_busy: AtomicBool,
+    turn_gen: AtomicU64,
     need_keyup: AtomicBool,
     last_hold: std::sync::Mutex<Instant>,
     history: Mutex<Vec<(String, String)>>,
     cancel: Mutex<CancellationToken>,
     barged_in: AtomicBool,
     shutdown: watch::Sender<bool>,
+    wake_hush_until: Mutex<Instant>,
 }
 
 fn now_ms() -> u64 {
@@ -145,6 +186,13 @@ impl App {
         let _ = self.events.send(ev);
     }
 
+    fn cfg(&self) -> Config {
+        self.cfg
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
     fn emit_health(&self) {
         let state = self
             .state
@@ -154,10 +202,40 @@ impl App {
         self.emit(Event::Health {
             ok: true,
             state,
-            name: self.cfg.assistant.name.clone(),
+            name: self.cfg().assistant.name.clone(),
             model: self.llm.model_path().display().to_string(),
             model_loaded: self.llm.is_loaded(),
         });
+    }
+
+    async fn reload(&self) {
+        self.reload_apps().await;
+        self.reload_commands().await;
+        match Config::load() {
+            Ok(new) => {
+                let mut guard = self.cfg.lock().unwrap_or_else(|e| e.into_inner());
+                if new.llm.model != guard.llm.model
+                    || new.llm.n_gpu_layers != guard.llm.n_gpu_layers
+                    || new.llm.backend != guard.llm.backend
+                    || new.tts.device != guard.tts.device
+                    || new.tts.provider != guard.tts.provider
+                    || new.stt.provider != guard.stt.provider
+                {
+                    tracing::warn!(
+                        "model/STT/TTS device changes need a restart; applying other settings"
+                    );
+                }
+                tracing::info!(prompt = %new.assistant.prompt, "reloaded config.toml");
+                *guard = new;
+            }
+            Err(err) => {
+                tracing::error!(%err, "reload config.toml failed; keeping previous config");
+                self.emit(Event::Error {
+                    message: format!("config.toml: {err}"),
+                });
+            }
+        }
+        self.emit_health();
     }
 
     async fn reload_apps(&self) {
@@ -166,12 +244,27 @@ impl App {
                 let n = apps.app.len();
                 *self.apps.lock().await = apps;
                 tracing::info!(n, "reloaded voice apps");
-                self.emit_health();
             }
             Err(err) => {
                 tracing::error!(%err, "reload apps.toml failed; keeping previous list");
                 self.emit(Event::Error {
                     message: format!("apps.toml: {err}"),
+                });
+            }
+        }
+    }
+
+    async fn reload_commands(&self) {
+        match CommandsFile::load() {
+            Ok(cmds) => {
+                let n = cmds.command.len();
+                *self.commands.lock().await = cmds;
+                tracing::info!(n, "reloaded voice commands");
+            }
+            Err(err) => {
+                tracing::error!(%err, "reload commands.toml failed; keeping previous list");
+                self.emit(Event::Error {
+                    message: format!("commands.toml: {err}"),
                 });
             }
         }
@@ -190,6 +283,20 @@ impl App {
         }
     }
 
+    async fn missed_utterance(&self) {
+        self.emit(Event::Error {
+            message: "Didn't catch that. Hold Alt+Space and speak.".into(),
+        });
+        self.emit_state(AssistantState::Idle).await;
+    }
+
+    async fn missed_follow_up(&self) {
+        self.emit(Event::Error {
+            message: "Didn't catch that.".into(),
+        });
+        self.emit_state(AssistantState::Idle).await;
+    }
+
     async fn handle(self: &Arc<Self>, cmd: Command) {
         match cmd {
             Command::PttStart => self.ptt_start().await,
@@ -199,7 +306,7 @@ impl App {
             Command::Shutdown => {}
             Command::Say { text } => self.start_text_turn(text).await,
             Command::Demo => self.start_demo().await,
-            Command::Reload => self.reload_apps().await,
+            Command::Reload => self.reload().await,
         }
     }
 
@@ -210,6 +317,7 @@ impl App {
             });
             return;
         }
+        let gen = self.turn_gen.fetch_add(1, Ordering::SeqCst) + 1;
         let app = Arc::clone(self);
         tokio::spawn(async move {
             let mut timing = TurnTiming::new();
@@ -223,7 +331,7 @@ impl App {
                 app.emit_state(AssistantState::Error).await;
                 app.emit_state(AssistantState::Idle).await;
             }
-            app.turn_busy.store(false, Ordering::SeqCst);
+            app.finish_turn(gen);
         });
     }
 
@@ -234,6 +342,7 @@ impl App {
             });
             return;
         }
+        let gen = self.turn_gen.fetch_add(1, Ordering::SeqCst) + 1;
         let app = Arc::clone(self);
         tokio::spawn(async move {
             if let Err(err) = app.run_demo().await {
@@ -244,7 +353,7 @@ impl App {
                 app.emit_state(AssistantState::Error).await;
                 app.emit_state(AssistantState::Idle).await;
             }
-            app.turn_busy.store(false, Ordering::SeqCst);
+            app.finish_turn(gen);
         });
     }
 
@@ -261,6 +370,26 @@ impl App {
             .unwrap_or(Duration::from_secs(1))
     }
 
+    fn emit_level_if_listening(&self) {
+        let listening = self
+            .state
+            .try_lock()
+            .map(|s| s.current() == AssistantState::Listening)
+            .unwrap_or(false);
+        if !listening {
+            return;
+        }
+        let rms = *self.audio.levels().borrow();
+        self.emit(Event::Level { rms });
+    }
+
+    async fn reset_cancel(&self) -> CancellationToken {
+        let mut g = self.cancel.lock().await;
+        let t = CancellationToken::new();
+        *g = t.clone();
+        t
+    }
+
     async fn hold_tick(&self) {
         if self.hold_age() <= Duration::from_millis(450) {
             return;
@@ -271,7 +400,7 @@ impl App {
             .try_lock()
             .map(|s| s.current() == AssistantState::Listening)
             .unwrap_or(false);
-        if listening {
+        if listening && !*self.released.borrow() {
             tracing::info!("PTT key-up (hold ended)");
             let _ = self.released.send(true);
         }
@@ -282,6 +411,15 @@ impl App {
         if self.need_keyup.load(Ordering::SeqCst) {
             return;
         }
+        if self.turn_busy.load(Ordering::SeqCst)
+            && self
+                .state
+                .try_lock()
+                .map(|s| s.current() == AssistantState::Listening)
+                .unwrap_or(false)
+        {
+            return;
+        }
         let cur = self.state.lock().await.current();
         if matches!(cur, AssistantState::Speaking | AssistantState::Thinking) {
             self.cancel_turn().await;
@@ -289,14 +427,16 @@ impl App {
         if self.turn_busy.swap(true, Ordering::SeqCst) {
             return;
         }
+        let gen = self.turn_gen.fetch_add(1, Ordering::SeqCst) + 1;
+        let _ = self.reset_cancel().await;
         if self.released.send(false).is_err() {
             tracing::error!("PTT watch closed");
-            self.turn_busy.store(false, Ordering::SeqCst);
+            self.finish_turn(gen);
             return;
         }
         if let Err(err) = self.audio.start_capture() {
             tracing::error!(%err, "start capture");
-            self.turn_busy.store(false, Ordering::SeqCst);
+            self.finish_turn(gen);
             return;
         }
         if let Err(err) = self.stt.begin().await {
@@ -315,7 +455,7 @@ impl App {
                 app.emit_state(AssistantState::Idle).await;
             }
             app.need_keyup.store(true, Ordering::SeqCst);
-            app.turn_busy.store(false, Ordering::SeqCst);
+            app.finish_turn(gen);
         });
         // Hold PttStop in the IPC queue until record_until is subscribed.
         let _ = armed_rx.await;
@@ -329,8 +469,25 @@ impl App {
         let _ = self.released.send(true);
     }
 
+    fn finish_turn(&self, gen: u64) {
+        if self.turn_gen.load(Ordering::SeqCst) == gen {
+            self.turn_busy.store(false, Ordering::SeqCst);
+        }
+    }
+
     async fn cancel_turn(&self) {
+        let idle = !self.turn_busy.load(Ordering::SeqCst)
+            && self
+                .state
+                .try_lock()
+                .map(|s| s.current() == AssistantState::Idle)
+                .unwrap_or(false);
+        if idle {
+            return;
+        }
+        tracing::info!("cancel");
         self.barged_in.store(false, Ordering::SeqCst);
+        self.turn_gen.fetch_add(1, Ordering::SeqCst);
         self.cancel.lock().await.cancel();
         *self.cancel.lock().await = CancellationToken::new();
         let _ = self.audio.cancel_playback();
@@ -340,10 +497,12 @@ impl App {
         self.emit_state(AssistantState::Interrupted).await;
         self.emit_state(AssistantState::Idle).await;
         self.turn_busy.store(false, Ordering::SeqCst);
+        self.hush_wake(self.cfg().wake_word.hush_ms / 3).await;
     }
 
     async fn run_turn(self: &Arc<Self>, armed: tokio::sync::oneshot::Sender<()>) -> Result<()> {
-        let mut vad = EnergyVad::new(self.cfg.vad.threshold, self.cfg.vad.hangover_ms, 32);
+        let cfg = self.cfg();
+        let mut vad = EnergyVad::new(cfg.vad.threshold, cfg.vad.hangover_ms, 32);
         let stop = self.released.subscribe();
         let _ = armed.send(());
         let (pcm, _by_vad) = {
@@ -357,10 +516,7 @@ impl App {
 
         if pcm.len() < 3_200 {
             tracing::info!(samples = pcm.len(), "utterance too short, ignoring");
-            self.emit(Event::Error {
-                message: "Didn't catch that. Hold Alt+Space and speak.".into(),
-            });
-            self.emit_state(AssistantState::Idle).await;
+            self.missed_utterance().await;
             return Ok(());
         }
 
@@ -373,7 +529,8 @@ impl App {
             text: tr.text.clone(),
         });
         if tr.text.trim().is_empty() {
-            self.emit_state(AssistantState::Idle).await;
+            tracing::info!("empty transcript");
+            self.missed_utterance().await;
             return Ok(());
         }
         self.respond(&tr.text, timing).await
@@ -405,50 +562,13 @@ impl App {
     }
 
     fn intent_allowed(&self, tool: &str) -> bool {
-        match tool {
-            "audio.volume_down" | "audio.volume_up" | "audio.mute" => {
-                self.cfg.permissions.volume == "allow"
-            }
-            "app.launch" => self.cfg.permissions.launch_app == "allow",
-            "system.lock"
-            | "capture.screenshot"
-            | "capture.screenshot_region"
-            | "capture.screenshot_window"
-            | "capture.screenshot_fullscreen"
-            | "capture.text"
-            | "toggle.nightlight"
-            | "display.brightness_up"
-            | "display.brightness_down"
-            | "display.keyboard_up"
-            | "display.keyboard_down"
-            | "theme.bg_next"
-            | "theme.switcher"
-            | "hypr.workspace"
-            | "hypr.workspace_move"
-            | "hypr.gaps"
-            | "hypr.transparency"
-            | "hypr.fullscreen"
-            | "hypr.layout"
-            | "hypr.window_close"
-            | "hypr.scratchpad"
-            | "hypr.scratchpad_move"
-            | "hypr.float"
-            | "hypr.split"
-            | "hypr.focus"
-            | "hypr.window_cycle"
-            | "hypr.window_pop"
-            | "capture.screenrecord"
-            | "bluetooth.toggle"
-            | "toggle.dnd"
-            | "toggle.idle"
-            | "toggle.bar"
-            | "toggle.animations"
-            | "toggle.touchpad"
-            | "toggle.screensaver"
-            | "toggle.fullscreen_desktop"
-            | "audio.output_switch" => true,
-            _ => false,
-        }
+        let p = self.cfg().permissions;
+        assistant_tools::tool_allowed(
+            tool,
+            &p.volume,
+            &p.launch_app,
+            &p.shutdown,
+        )
     }
 
     async fn remember(&self, user: &str, assistant: &str) {
@@ -462,8 +582,24 @@ impl App {
     }
 
     async fn respond(self: &Arc<Self>, user_text: &str, mut timing: TurnTiming) -> Result<()> {
+        let cfg = self.cfg();
+        let ask = strip_wake(
+            user_text,
+            &cfg.assistant.name,
+            &cfg.wake_word.prefix_list(),
+            &cfg.wake_word.phrase_list(&cfg.assistant.name),
+        )
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| user_text.to_string());
+        let user_text = ask.as_str();
+        if let Some(spoken) = cfg.clock.spoken_reply(user_text) {
+            tracing::info!(intent = "clock", spoken = %spoken, "routed");
+            timing.route_done = Some(Instant::now());
+            return self.speak_reply(&spoken, timing).await;
+        }
         let apps = self.apps.lock().await.app.clone();
-        let intent = route_with_apps(user_text, &apps);
+        let cmds = self.commands.lock().await.clone();
+        let intent = route_with(user_text, &apps, &cmds);
         tracing::info!(?intent, "routed");
         match intent {
             Intent::Forget => {
@@ -473,7 +609,7 @@ impl App {
             }
             Intent::Say(spoken) => {
                 timing.route_done = Some(Instant::now());
-                return self.speak_reply(spoken, timing).await;
+                return self.speak_reply(&spoken, timing).await;
             }
             Intent::Desktop {
                 tool,
@@ -481,10 +617,10 @@ impl App {
                 omarchy,
             } => {
                 timing.route_done = Some(Instant::now());
-                if !self.intent_allowed(tool) {
+                if !self.intent_allowed(&tool) {
                     return self.speak_reply("I can't do that.", timing).await;
                 }
-                return self.run_desktop(tool, &spoken, omarchy, timing).await;
+                return self.run_desktop(&tool, &spoken, omarchy, timing).await;
             }
             Intent::Chat => {}
         }
@@ -511,28 +647,46 @@ impl App {
         let mut tokens = self
             .llm
             .generate(
-                &self.cfg.system_prompt(),
+                &cfg.system_prompt(),
                 &history,
                 user_text,
-                self.cfg.llm.n_predict,
-                self.cfg.llm.temperature,
+                cfg.llm.n_predict,
+                cfg.llm.temperature,
                 gen_cancel,
             )
             .await?;
 
         let mut chunker = PhraseChunker::new();
         let mut first_llm = true;
-        let mut first_audio = true;
         let mut spoken = String::new();
         let tts = Arc::clone(&self.tts);
         let barge = self.spawn_barge_in(cancel.clone());
+        let timing = Arc::new(Mutex::new(timing));
+        let first_audio = Arc::new(AtomicBool::new(true));
+        let (phrase_tx, mut phrase_rx) = mpsc::channel::<String>(8);
+        let tts_app = Arc::clone(self);
+        let tts_w = Arc::clone(&tts);
+        let timing_w = Arc::clone(&timing);
+        let first_w = Arc::clone(&first_audio);
+        let tts_cancel = cancel.clone();
+        let tts_worker = tokio::spawn(async move {
+            while let Some(phrase) = phrase_rx.recv().await {
+                if tts_cancel.is_cancelled() {
+                    break;
+                }
+                tts_app
+                    .speak_phrase(&tts_w, &phrase, &*timing_w, &first_w)
+                    .await?;
+            }
+            Ok::<(), anyhow::Error>(())
+        });
 
         while let Some(tok) = tokens.recv().await {
             if cancel.is_cancelled() {
                 break;
             }
             if first_llm {
-                timing.llm_first = Some(Instant::now());
+                timing.lock().await.llm_first = Some(Instant::now());
                 first_llm = false;
             }
             spoken.push_str(&tok);
@@ -541,18 +695,24 @@ impl App {
                 done: false,
             });
             if let Some(phrase) = chunker.push(&tok) {
-                self.speak_phrase(&tts, &phrase, &mut timing, &mut first_audio)
-                    .await?;
+                if phrase_tx.send(phrase).await.is_err() {
+                    break;
+                }
             }
         }
         if !cancel.is_cancelled() {
             if let Some(phrase) = chunker.flush() {
-                self.speak_phrase(&tts, &phrase, &mut timing, &mut first_audio)
-                    .await?;
+                let _ = phrase_tx.send(phrase).await;
             }
         }
-
-        self.audio.wait_playback().await;
+        drop(phrase_tx);
+        if cancel.is_cancelled() {
+            tts_worker.abort();
+            let _ = self.audio.cancel_playback();
+        } else {
+            tts_worker.await.context("tts worker join")??;
+            self.audio.wait_playback().await;
+        }
         barge.abort();
         tracing::info!(reply = %spoken, "spoken reply");
         if !cancel.is_cancelled() && !spoken.trim().is_empty() {
@@ -562,8 +722,10 @@ impl App {
             text: spoken,
             done: true,
         });
+        let timing = timing.lock().await;
         tracing::info!("{}", timing.format_trace());
         self.emit(Event::from_timing(&timing));
+        drop(timing);
         self.finish_speech(&cancel).await
     }
 
@@ -596,24 +758,30 @@ impl App {
     async fn speak_reply(
         self: &Arc<Self>,
         spoken: &str,
-        mut timing: TurnTiming,
+        timing: TurnTiming,
     ) -> Result<()> {
         self.emit(Event::AssistantText {
             text: spoken.to_string(),
             done: false,
         });
         let tts = Arc::clone(&self.tts);
-        let mut first_audio = true;
+        let first_audio = AtomicBool::new(true);
         let cancel = self.cancel.lock().await.clone();
         let barge = self.spawn_barge_in(cancel.clone());
-        self.speak_phrase(&tts, spoken, &mut timing, &mut first_audio)
+        let timing = Mutex::new(timing);
+        self.speak_phrase(&tts, spoken, &timing, &first_audio)
             .await?;
-        self.audio.wait_playback().await;
+        if cancel.is_cancelled() {
+            let _ = self.audio.cancel_playback();
+        } else {
+            self.audio.wait_playback().await;
+        }
         barge.abort();
         self.emit(Event::AssistantText {
             text: spoken.to_string(),
             done: true,
         });
+        let timing = timing.into_inner();
         tracing::info!("{}", timing.format_trace());
         self.emit(Event::from_timing(&timing));
         self.finish_speech(&cancel).await
@@ -623,8 +791,8 @@ impl App {
         &self,
         tts: &Arc<KokoroProvider>,
         phrase: &str,
-        timing: &mut TurnTiming,
-        first_audio: &mut bool,
+        timing: &Mutex<TurnTiming>,
+        first_audio: &AtomicBool,
     ) -> Result<()> {
         if self.cancel.lock().await.is_cancelled() {
             return Ok(());
@@ -640,13 +808,15 @@ impl App {
         if self.cancel.lock().await.is_cancelled() {
             return Ok(());
         }
-        if *first_audio {
-            timing.tts_begin = Some(Instant::now());
+        if first_audio.swap(false, Ordering::SeqCst) {
+            timing.lock().await.tts_begin = Some(Instant::now());
             self.emit_state(AssistantState::Speaking).await;
-            *first_audio = false;
         }
-        if timing.audio_play.is_none() {
-            timing.audio_play = Some(Instant::now());
+        {
+            let mut timing = timing.lock().await;
+            if timing.audio_play.is_none() {
+                timing.audio_play = Some(Instant::now());
+            }
         }
         self.audio.play(pcm)?;
         Ok(())
@@ -660,20 +830,38 @@ impl App {
     }
 
     async fn watch_barge_in(&self, cancel: CancellationToken) {
-        if !self.cfg.barge_in.enabled {
+        let barge = self.cfg().barge_in;
+        if !barge.enabled {
             return;
         }
         let _ = self.audio.start_capture();
-        tokio::select! {
-            _ = cancel.cancelled() => return,
-            _ = tokio::time::sleep(Duration::from_millis(self.cfg.barge_in.grace_ms.max(1))) => {}
+        let aec = self.audio.aec_levels().is_some();
+        let (mut levels, configured) = match self.audio.aec_levels() {
+            Some(rx) => (rx, barge.threshold.min(0.04)),
+            None => (self.audio.levels(), barge.threshold),
+        };
+        let grace_end =
+            tokio::time::Instant::now() + Duration::from_millis(barge.grace_ms.max(1));
+        let mut residual = 0.0f32;
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => return,
+                _ = tokio::time::sleep_until(grace_end) => break,
+                changed = levels.changed() => {
+                    if changed.is_err() {
+                        return;
+                    }
+                    residual = residual.max(*levels.borrow());
+                }
+            }
         }
-        if cancel.is_cancelled() {
-            return;
-        }
-        let mut levels = self.audio.levels();
-        let threshold = self.cfg.barge_in.threshold;
-        let need = (self.cfg.barge_in.hangover_ms / 32).max(1) as u32;
+        let threshold = if aec {
+            aec_barge_threshold(residual, configured)
+        } else {
+            configured
+        };
+        tracing::info!(residual, threshold, aec, "barge-in armed");
+        let need = (barge.hangover_ms / 32).max(1) as u32;
         let mut loud = 0u32;
         loop {
             tokio::select! {
@@ -721,8 +909,28 @@ impl App {
         }
         let _ = self.audio.stop_capture();
         self.discard_pending_samples().await;
+        self.hush_wake(self.cfg().wake_word.hush_ms).await;
         self.emit_state(AssistantState::Idle).await;
         Ok(())
+    }
+
+    async fn hush_wake(&self, ms: u64) {
+        let d = Duration::from_millis(ms.max(1));
+        let until = Instant::now() + d;
+        if let Ok(mut g) = self.wake_hush_until.try_lock() {
+            if until > *g {
+                *g = until;
+            }
+        } else {
+            *self.wake_hush_until.lock().await = until;
+        }
+    }
+
+    fn wake_hushed(&self) -> bool {
+        self.wake_hush_until
+            .try_lock()
+            .map(|g| Instant::now() < *g)
+            .unwrap_or(true)
     }
 
     async fn discard_pending_samples(&self) {
@@ -730,12 +938,201 @@ impl App {
         while samples.try_recv().is_ok() {}
     }
 
+    async fn watch_wake(self: Arc<Self>) {
+        let mut shutdown = self.shutdown.subscribe();
+        loop {
+            tokio::select! {
+                _ = shutdown.changed() => {
+                    if *shutdown.borrow() {
+                        return;
+                    }
+                }
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+            }
+            if !self.cfg().wake_word.enabled {
+                if !self.turn_busy.load(Ordering::SeqCst)
+                    && self
+                        .state
+                        .try_lock()
+                        .map(|s| s.current() == AssistantState::Idle)
+                        .unwrap_or(false)
+                {
+                    let _ = self.audio.stop_capture();
+                }
+                continue;
+            }
+            if self.turn_busy.load(Ordering::SeqCst) {
+                continue;
+            }
+            if !self
+                .state
+                .try_lock()
+                .map(|s| s.current() == AssistantState::Idle)
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            let _ = self.audio.start_capture();
+            if self.wake_hushed() {
+                self.discard_pending_samples().await;
+                continue;
+            }
+            let Some(pcm) = self.collect_wake_pcm().await else {
+                continue;
+            };
+            if self.turn_busy.swap(true, Ordering::SeqCst) {
+                continue;
+            }
+            let gen = self.turn_gen.fetch_add(1, Ordering::SeqCst) + 1;
+            let app = Arc::clone(&self);
+            tokio::spawn(async move {
+                if let Err(err) = app.run_wake(pcm).await {
+                    tracing::warn!(%err, "wake");
+                    app.emit_state(AssistantState::Idle).await;
+                }
+                app.finish_turn(gen);
+            });
+        }
+    }
+
+    async fn collect_wake_pcm(&self) -> Option<Vec<i16>> {
+        let w = self.cfg().wake_word;
+        let rate = self.cfg().audio.capture_rate.max(1) as usize;
+        let mut vad = EnergyVad::with_confirm(
+            w.threshold,
+            w.hangover_ms,
+            32,
+            w.start_confirm_frames,
+        );
+        let mut preroll = Vec::<i16>::new();
+        let mut pcm = Vec::<i16>::new();
+        let mut in_utt = false;
+        let mut began = false;
+        let wait_deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        let mut utt_deadline = tokio::time::Instant::now();
+        let preroll_n = rate * w.preroll_ms as usize / 1000;
+        let min_n = rate * w.min_ms as usize / 1000;
+        let max_n = rate * w.max_ms.max(w.min_ms) as usize / 1000;
+        loop {
+            if self.turn_busy.load(Ordering::SeqCst) || self.wake_hushed() {
+                if began && !self.turn_busy.load(Ordering::SeqCst) {
+                    self.stt.cancel_listen().await;
+                }
+                return None;
+            }
+            if !self.cfg().wake_word.enabled {
+                if began && !self.turn_busy.load(Ordering::SeqCst) {
+                    self.stt.cancel_listen().await;
+                }
+                return None;
+            }
+            let chunk = {
+                let mut samples = self.samples.lock().await;
+                match tokio::time::timeout(Duration::from_millis(50), samples.recv()).await {
+                    Ok(Some(c)) => c,
+                    Ok(None) => return None,
+                    Err(_) => {
+                        if in_utt && tokio::time::Instant::now() > utt_deadline {
+                            break;
+                        }
+                        if !in_utt && tokio::time::Instant::now() > wait_deadline {
+                            return None;
+                        }
+                        continue;
+                    }
+                }
+            };
+            let d = vad.push(&chunk);
+            match d {
+                VadDecision::SpeechStart => {
+                    in_utt = true;
+                    utt_deadline =
+                        tokio::time::Instant::now() + Duration::from_millis(w.max_ms.max(1));
+                    pcm.extend_from_slice(&preroll);
+                    pcm.extend_from_slice(&chunk);
+                    preroll.clear();
+                    if self.stt.begin().await.is_ok() {
+                        began = true;
+                    }
+                }
+                VadDecision::Speech | VadDecision::SpeechEnd if in_utt => {
+                    pcm.extend_from_slice(&chunk);
+                    if pcm.len() > max_n
+                        || matches!(d, VadDecision::SpeechEnd)
+                        || tokio::time::Instant::now() > utt_deadline
+                    {
+                        break;
+                    }
+                }
+                _ => {
+                    preroll.extend_from_slice(&chunk);
+                    if preroll.len() > preroll_n {
+                        let extra = preroll.len() - preroll_n;
+                        preroll.drain(..extra);
+                    }
+                    if tokio::time::Instant::now() > wait_deadline {
+                        return None;
+                    }
+                }
+            }
+        }
+        if pcm.len() < min_n {
+            if began && !self.turn_busy.load(Ordering::SeqCst) {
+                self.stt.cancel_listen().await;
+            }
+            return None;
+        }
+        Some(pcm)
+    }
+
+    async fn run_wake(self: &Arc<Self>, pcm: Vec<i16>) -> Result<()> {
+        let cancel = self.reset_cancel().await;
+        let cfg = self.cfg();
+        let name = cfg.assistant.name.clone();
+        let prefixes = cfg.wake_word.prefix_list();
+        let phrases = cfg.wake_word.phrase_list(&name);
+        let min_n = cfg.audio.capture_rate.max(1) as usize * cfg.wake_word.min_ms as usize / 1000;
+        let mut tr = self.stt.finish(&pcm, cancel.clone()).await?;
+        let mut rest = strip_wake(&tr.text, &name, &prefixes, &phrases);
+        if rest.is_none() && tr.text.trim().is_empty() && pcm.len() >= min_n {
+            tracing::info!("wake empty; retry pcm");
+            if let Ok(t2) = self.stt.transcribe(&pcm, cancel).await {
+                rest = strip_wake(&t2.text, &name, &prefixes, &phrases);
+                tr = t2;
+            }
+        }
+        let Some(rest) = rest else {
+            tracing::info!(transcript = %tr.text, "wake ignored");
+            self.hush_wake(cfg.wake_word.hush_ms / 3).await;
+            return Ok(());
+        };
+        tracing::info!(transcript = %tr.text, rest = %rest, "wake");
+        self.emit(Event::Transcript {
+            text: tr.text.clone(),
+        });
+        if rest.trim().is_empty() {
+            if let Err(err) = self.stt.begin().await {
+                tracing::warn!(%err, "wake follow-up parakeet listen");
+            }
+            return self.follow_up_listen().await;
+        }
+        let mut timing = TurnTiming::new();
+        timing.mark_vad_end();
+        timing.stt_done = Some(Instant::now());
+        self.respond(&rest, timing).await
+    }
+
     async fn follow_up_listen(self: &Arc<Self>) -> Result<()> {
-        tracing::info!("barge-in follow-up listen");
+        tracing::info!("wake follow-up listen");
         self.emit_state(AssistantState::Listening).await;
         let _ = self.audio.start_capture();
-        let mut vad = EnergyVad::new(self.cfg.vad.threshold, self.cfg.vad.hangover_ms, 32);
-        let cancel = self.cancel.lock().await.clone();
+        let cfg = self.cfg();
+        let mut vad = EnergyVad::new(
+            cfg.wake_word.threshold.min(cfg.vad.threshold),
+            cfg.wake_word.hangover_ms.max(cfg.vad.hangover_ms),
+            32,
+        );
+        let cancel = self.reset_cancel().await;
         let (stop_tx, stop_rx) = watch::channel(false);
         let watch_cancel = cancel.clone();
         tokio::spawn(async move {
@@ -750,9 +1147,10 @@ impl App {
         if cancel.is_cancelled() {
             return Ok(());
         }
-        if pcm.len() < 3_200 {
-            tracing::info!(samples = pcm.len(), "barge-in follow-up too short");
-            self.emit_state(AssistantState::Idle).await;
+        let min_n = cfg.audio.capture_rate.max(1) as usize * cfg.wake_word.min_ms as usize / 1000;
+        if pcm.len() < min_n.max(1) {
+            tracing::info!(samples = pcm.len(), "wake follow-up too short");
+            self.missed_follow_up().await;
             return Ok(());
         }
         self.emit_state(AssistantState::Transcribing).await;
@@ -762,7 +1160,8 @@ impl App {
             text: tr.text.clone(),
         });
         if tr.text.trim().is_empty() {
-            self.emit_state(AssistantState::Idle).await;
+            tracing::info!("empty barge-in transcript");
+            self.missed_follow_up().await;
             return Ok(());
         }
         let mut timing = TurnTiming::new();

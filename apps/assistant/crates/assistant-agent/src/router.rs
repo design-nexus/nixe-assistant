@@ -4,62 +4,59 @@ pub enum Intent {
     Chat,
     Forget,
     /// Spoken reply only; do not run a desktop command.
-    Say(&'static str),
+    Say(String),
     Desktop {
-        tool: &'static str,
+        tool: String,
         spoken: String,
         omarchy: Vec<String>,
     },
 }
 
-const CAN_DO: &str = "I didn't catch a command I can run. I can lock, close a window, change volume or brightness, switch workspaces 1 to 5, cycle wallpaper, toggle the bar, gaps, or night light, take a screenshot, or open the browser, terminal, files, Spotify, or Signal.";
-
 pub fn route(text: &str) -> Intent {
-    route_with_apps(text, &[])
+    route_with(text, &[], &assistant_core::CommandsFile::shipped())
 }
 
 pub fn route_with_apps(text: &str, apps: &[assistant_core::AppLaunch]) -> Intent {
+    route_with(text, apps, &assistant_core::CommandsFile::shipped())
+}
+
+pub fn route_with(
+    text: &str,
+    apps: &[assistant_core::AppLaunch],
+    cmds: &assistant_core::CommandsFile,
+) -> Intent {
     let extra = app_vocab(apps);
-    let key = preprocess(text, &extra);
+    let key = preprocess(text, &extra, &cmds.vocab);
     if key.is_empty() {
         return Intent::Chat;
     }
-    if FORGET.iter().any(|p| *p == key) {
+    if cmds.forget.iter().any(|p| p == &key) {
         return Intent::Forget;
     }
-    if MUTE_MIC.iter().any(|p| *p == key) {
-        return Intent::Say("I need the microphone, so I can't mute it.");
+    for say in &cmds.say {
+        if say.phrases.iter().any(|p| p == &key) {
+            return Intent::Say(say.reply.clone());
+        }
     }
-    if let Some(hit) = exact_command(&key) {
+    if let Some(hit) = exact_command(&key, cmds) {
         return hit;
     }
     if let Some(hit) = exact_app(&key, apps) {
         return hit;
     }
-    if let Some(n) = workspace_num(&key) {
+    if let Some(n) = workspace_num(&key, cmds.workspace.max) {
         if is_workspace_move(&key) {
-            return workspace_move_intent(n);
+            return workspace_move_intent(n, &cmds.workspace);
         }
-        return workspace_intent(n);
+        return workspace_intent(n, &cmds.workspace);
     }
-    if let Some(hit) = fuzzy_command(&key) {
+    if let Some(hit) = fuzzy_command(&key, cmds) {
         return hit;
     }
     if let Some(hit) = fuzzy_app(&key, apps) {
         return hit;
     }
-    if looks_like_command(&key) {
-        return Intent::Say(CAN_DO);
-    }
     Intent::Chat
-}
-
-fn desktop(tool: &'static str, spoken: &'static str, omarchy: &[&str]) -> Intent {
-    Intent::Desktop {
-        tool,
-        spoken: spoken.to_string(),
-        omarchy: omarchy.iter().map(|s| (*s).to_string()).collect(),
-    }
 }
 
 fn app_vocab(apps: &[assistant_core::AppLaunch]) -> Vec<String> {
@@ -80,7 +77,7 @@ fn exact_app(key: &str, apps: &[assistant_core::AppLaunch]) -> Option<Intent> {
     for app in apps {
         if app.phrases.iter().any(|p| p == key) {
             return Some(Intent::Desktop {
-                tool: "app.launch",
+                tool: "app.launch".into(),
                 spoken: app.reply.clone(),
                 omarchy: app.args(),
             });
@@ -98,7 +95,7 @@ fn fuzzy_app(key: &str, apps: &[assistant_core::AppLaunch]) -> Option<Intent> {
             if d > 0 && d <= max_edits(phrase, key) && d < best_d {
                 best_d = d;
                 best = Some(Intent::Desktop {
-                    tool: "app.launch",
+                    tool: "app.launch".into(),
                     spoken: app.reply.clone(),
                     omarchy: app.args(),
                 });
@@ -114,28 +111,36 @@ const FILLER: &[&str] = &[
 
 /// Backchannel that should not start a new chat when there is no conversation yet.
 pub fn is_filler(text: &str) -> bool {
-    let key = preprocess(text, &[]);
+    let key = preprocess(text, &[], &[]);
     FILLER.iter().any(|p| *p == key)
 }
 
-fn exact_command(key: &str) -> Option<Intent> {
-    for (phrases, tool, spoken, omarchy) in TABLE {
-        if phrases.iter().any(|p| *p == key) {
-            return Some(desktop(tool, spoken, omarchy));
+fn exact_command(key: &str, cmds: &assistant_core::CommandsFile) -> Option<Intent> {
+    for cmd in &cmds.command {
+        if cmd.phrases.iter().any(|p| p == key) {
+            return Some(Intent::Desktop {
+                tool: cmd.tool.clone(),
+                spoken: cmd.reply.clone(),
+                omarchy: cmd.omarchy.clone(),
+            });
         }
     }
     None
 }
 
-fn fuzzy_command(key: &str) -> Option<Intent> {
+fn fuzzy_command(key: &str, cmds: &assistant_core::CommandsFile) -> Option<Intent> {
     let mut best: Option<Intent> = None;
     let mut best_d = usize::MAX;
-    for (phrases, tool, spoken, omarchy) in TABLE {
-        for phrase in *phrases {
+    for cmd in &cmds.command {
+        for phrase in &cmd.phrases {
             let d = phrase_distance(key, phrase);
             if d > 0 && d <= max_edits(phrase, key) && d < best_d {
                 best_d = d;
-                best = Some(desktop(tool, spoken, omarchy));
+                best = Some(Intent::Desktop {
+                    tool: cmd.tool.clone(),
+                    spoken: cmd.reply.clone(),
+                    omarchy: cmd.omarchy.clone(),
+                });
             }
         }
     }
@@ -180,18 +185,30 @@ fn levenshtein(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
-fn workspace_intent(n: u8) -> Intent {
-    let i = (n - 1) as usize;
-    desktop("hypr.workspace", WORKSPACE_SPOKEN[i], WORKSPACES[i])
+fn workspace_intent(n: u8, ws: &assistant_core::WorkspaceCommands) -> Intent {
+    let n = n.to_string();
+    Intent::Desktop {
+        tool: ws.tool.clone(),
+        spoken: ws.spoken.replace("{n}", &n),
+        omarchy: vec![
+            "hyprctl".into(),
+            "eval".into(),
+            ws.focus.replace("{n}", &n),
+        ],
+    }
 }
 
-fn workspace_move_intent(n: u8) -> Intent {
-    let i = (n - 1) as usize;
-    desktop(
-        "hypr.workspace_move",
-        WORKSPACE_MOVE_SPOKEN[i],
-        WORKSPACE_MOVES[i],
-    )
+fn workspace_move_intent(n: u8, ws: &assistant_core::WorkspaceCommands) -> Intent {
+    let n = n.to_string();
+    Intent::Desktop {
+        tool: ws.move_tool.clone(),
+        spoken: ws.move_spoken.replace("{n}", &n),
+        omarchy: vec![
+            "hyprctl".into(),
+            "eval".into(),
+            ws.r#move.replace("{n}", &n),
+        ],
+    }
 }
 
 fn is_workspace_move(key: &str) -> bool {
@@ -199,24 +216,24 @@ fn is_workspace_move(key: &str) -> bool {
         .any(|w| w == "move" || w == "send" || w == "put")
 }
 
-fn workspace_num(key: &str) -> Option<u8> {
+fn workspace_num(key: &str, max: u8) -> Option<u8> {
     let words: Vec<&str> = key.split_whitespace().collect();
     for (i, w) in words.iter().enumerate() {
         if !looks_like_workspace(w) {
             continue;
         }
         if let Some(next) = words.get(i + 1).copied() {
-            if let Some(n) = parse_ws_num(next) {
+            if let Some(n) = parse_ws_num(next, max) {
                 return Some(n);
             }
         }
         if i > 0 {
-            if let Some(n) = parse_ws_num(words[i - 1]) {
+            if let Some(n) = parse_ws_num(words[i - 1], max) {
                 return Some(n);
             }
         }
         for tok in words.iter().rev() {
-            if let Some(n) = parse_ws_num(tok) {
+            if let Some(n) = parse_ws_num(tok, max) {
                 return Some(n);
             }
         }
@@ -225,7 +242,7 @@ fn workspace_num(key: &str) -> Option<u8> {
     let Some((last, rest)) = words.split_last() else {
         return None;
     };
-    let n = parse_ws_num(last)?;
+    let n = parse_ws_num(last, max)?;
     if rest
         .iter()
         .any(|w| {
@@ -264,17 +281,17 @@ const NUM_WORDS: &[(&str, u8)] = &[
     ("fifth", 5),
 ];
 
-fn parse_ws_num(rest: &str) -> Option<u8> {
+fn parse_ws_num(rest: &str, max: u8) -> Option<u8> {
     let rest = rest.strip_prefix("number ").unwrap_or(rest).trim();
-    if rest.is_empty() {
+    if rest.is_empty() || max == 0 {
         return None;
     }
     if let Ok(n) = rest.parse::<u8>() {
-        return (1..=5).contains(&n).then_some(n);
+        return (1..=max).contains(&n).then_some(n);
     }
     for (word, n) in NUM_WORDS {
         if rest == *word {
-            return Some(*n);
+            return (*n <= max).then_some(*n);
         }
     }
     if rest.len() < 3 {
@@ -283,6 +300,9 @@ fn parse_ws_num(rest: &str) -> Option<u8> {
     let mut best = None;
     let mut best_d = usize::MAX;
     for (word, n) in NUM_WORDS {
+        if *n > max {
+            continue;
+        }
         let d = levenshtein(rest, word);
         if d == 1 && d < best_d {
             best_d = d;
@@ -302,69 +322,7 @@ fn looks_like_workspace(tok: &str) -> bool {
         || levenshtein(tok, "workspace") <= 4
 }
 
-fn looks_like_command(key: &str) -> bool {
-    const STARTS: &[&str] = &[
-        "go ",
-        "going ",
-        "switch ",
-        "make ",
-        "move ",
-        "send ",
-        "put ",
-        "focus ",
-        "record ",
-        "stop recording",
-        "open ",
-        "launch ",
-        "turn ",
-        "mute",
-        "unmute",
-        "lock",
-        "take ",
-        "toggle ",
-        "change ",
-        "dim",
-        "brighten ",
-        "raise ",
-        "lower ",
-        "increase ",
-        "decrease ",
-        "quieter",
-        "louder",
-        "screenshot",
-        "workspace",
-        "brighter",
-        "dimmer",
-        "stay ",
-        "silence ",
-        "hide ",
-        "show ",
-        "close ",
-        "spotify",
-        "signal",
-        "fullscreen",
-        "gaps",
-        "keyboard",
-        "touchpad",
-        "discord",
-        "screensaver",
-        "obsidian",
-        "chatgpt",
-        "strata",
-        "scratchpad",
-        "incognito",
-        "omawrite",
-        "passwords",
-        "calculator",
-        "clipboard",
-        "emojis",
-        "keybindings",
-    ];
-    STARTS.iter().any(|p| key == p.trim() || key.starts_with(p))
-        || key.split_whitespace().any(looks_like_workspace)
-}
-
-fn preprocess(raw: &str, extra: &[String]) -> String {
+fn preprocess(raw: &str, extra: &[String], vocab: &[String]) -> String {
     let mut s = normalize(raw);
     s = split_trailing_digits(&s);
     for (from, to) in [
@@ -377,12 +335,12 @@ fn preprocess(raw: &str, extra: &[String]) -> String {
         s = s.replace(from, to);
     }
     s.split_whitespace()
-        .map(|w| correct_token(w, extra))
+        .map(|w| correct_token(w, extra, vocab))
         .collect::<Vec<_>>()
         .join(" ")
 }
 
-fn correct_token(w: &str, extra: &[String]) -> String {
+fn correct_token(w: &str, extra: &[String], vocab: &[String]) -> String {
     if w == "mike" {
         return "make".into();
     }
@@ -397,104 +355,14 @@ fn correct_token(w: &str, extra: &[String]) -> String {
         "five" | "fife" | "fifth" => return "5".into(),
         _ => {}
     }
-    snap_vocab(w, extra).to_string()
+    snap_vocab(w, vocab, extra).to_string()
 }
 
-const VOCAB: &[&str] = &[
-    "workspace",
-    "screen",
-    "brighter",
-    "dimmer",
-    "brightness",
-    "volume",
-    "lock",
-    "browser",
-    "chrome",
-    "terminal",
-    "wallpaper",
-    "background",
-    "files",
-    "file",
-    "manager",
-    "nautilus",
-    "strata",
-    "obsidian",
-    "chatgpt",
-    "music",
-    "scratchpad",
-    "floating",
-    "float",
-    "split",
-    "incognito",
-    "private",
-    "passwords",
-    "omawrite",
-    "focus",
-    "calculator",
-    "recording",
-    "emoji",
-    "clipboard",
-    "keybindings",
-    "picker",
-    "bluetooth",
-    "mute",
-    "unmute",
-    "open",
-    "launch",
-    "switch",
-    "change",
-    "move",
-    "send",
-    "put",
-    "make",
-    "turn",
-    "toggle",
-    "night",
-    "light",
-    "nightlight",
-    "screenshot",
-    "capture",
-    "silence",
-    "notifications",
-    "awake",
-    "sleep",
-    "stay",
-    "quieter",
-    "louder",
-    "raise",
-    "lower",
-    "increase",
-    "decrease",
-    "brighten",
-    "bar",
-    "gaps",
-    "animations",
-    "transparency",
-    "fullscreen",
-    "layout",
-    "spotify",
-    "signal",
-    "region",
-    "about",
-    "panel",
-    "touchpad",
-    "keyboard",
-    "window",
-    "close",
-    "theme",
-    "discord",
-    "screensaver",
-    "output",
-    "backlight",
-    "speakers",
-    "headphones",
-];
-
-fn snap_vocab<'a>(w: &'a str, extra: &'a [String]) -> &'a str {
+fn snap_vocab<'a>(w: &'a str, vocab: &'a [String], extra: &'a [String]) -> &'a str {
     if w.len() < 4 {
         return w;
     }
-    if VOCAB.iter().any(|v| *v == w) || extra.iter().any(|v| v == w) {
+    if vocab.iter().any(|v| v == w) || extra.iter().any(|v| v == w) {
         return w;
     }
     let mut best = w;
@@ -510,8 +378,8 @@ fn snap_vocab<'a>(w: &'a str, extra: &'a [String]) -> &'a str {
             *best = v;
         }
     };
-    for v in VOCAB {
-        consider(v, &mut best, &mut best_d);
+    for v in vocab {
+        consider(v.as_str(), &mut best, &mut best_d);
     }
     for v in extra {
         consider(v.as_str(), &mut best, &mut best_d);
@@ -534,627 +402,6 @@ fn split_trailing_digits(s: &str) -> String {
         .join(" ")
 }
 
-const WORKSPACE_SPOKEN: [&str; 5] = [
-    "Workspace 1.",
-    "Workspace 2.",
-    "Workspace 3.",
-    "Workspace 4.",
-    "Workspace 5.",
-];
-
-const WORKSPACES: [&[&str]; 5] = [
-    &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.focus({ workspace = "1" }))"#],
-    &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.focus({ workspace = "2" }))"#],
-    &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.focus({ workspace = "3" }))"#],
-    &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.focus({ workspace = "4" }))"#],
-    &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.focus({ workspace = "5" }))"#],
-];
-
-const WORKSPACE_MOVE_SPOKEN: [&str; 5] = [
-    "Moving to workspace 1.",
-    "Moving to workspace 2.",
-    "Moving to workspace 3.",
-    "Moving to workspace 4.",
-    "Moving to workspace 5.",
-];
-
-const WORKSPACE_MOVES: [&[&str]; 5] = [
-    &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.window.move({ workspace = "1" }))"#],
-    &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.window.move({ workspace = "2" }))"#],
-    &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.window.move({ workspace = "3" }))"#],
-    &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.window.move({ workspace = "4" }))"#],
-    &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.window.move({ workspace = "5" }))"#],
-];
-
-const MUTE_MIC: &[&str] = &[
-    "mute mic",
-    "mute the mic",
-    "mute microphone",
-    "mute the microphone",
-    "unmute mic",
-    "unmute the mic",
-    "unmute microphone",
-    "unmute the microphone",
-];
-
-const FORGET: &[&str] = &[
-    "forget that",
-    "forget it",
-    "forget everything",
-    "start over",
-    "clear the conversation",
-    "new conversation",
-];
-
-const TABLE: &[(&[&str], &str, &str, &[&str])] = &[
-    (
-        &[
-            "lock",
-            "lock screen",
-            "lock the screen",
-            "lock session",
-            "lock the session",
-            "lock computer",
-            "lock the computer",
-            "lock machine",
-            "lock the machine",
-        ],
-        "system.lock",
-        "Locking.",
-        &["system", "lock"],
-    ),
-    (
-        &[
-            "volume down",
-            "turn down the volume",
-            "turn the volume down",
-            "lower the volume",
-            "quieter",
-            "turn it down",
-        ],
-        "audio.volume_down",
-        "Volume down.",
-        &["audio", "output", "volume", "lower"],
-    ),
-    (
-        &[
-            "volume up",
-            "turn up the volume",
-            "turn the volume up",
-            "raise the volume",
-            "louder",
-            "turn it up",
-        ],
-        "audio.volume_up",
-        "Volume up.",
-        &["audio", "output", "volume", "raise"],
-    ),
-    (
-        &[
-            "mute",
-            "mute audio",
-            "mute the volume",
-            "mute sound",
-            "unmute",
-            "unmute audio",
-            "toggle mute",
-        ],
-        "audio.mute",
-        "Toggling mute.",
-        &["audio", "output", "volume", "mute-toggle"],
-    ),
-    (
-        &[
-            "screenshot",
-            "take a screenshot",
-            "take screenshot",
-            "capture screen",
-            "capture the screen",
-            "screenshot the screen",
-        ],
-        "capture.screenshot",
-        "Capturing.",
-        &["capture", "screenshot"],
-    ),
-    (
-        &[
-            "night light",
-            "nightlight",
-            "toggle night light",
-            "toggle nightlight",
-            "night mode",
-        ],
-        "toggle.nightlight",
-        "Toggling night light.",
-        &["toggle", "nightlight"],
-    ),
-    (
-        &[
-            "brighter",
-            "brightness up",
-            "increase brightness",
-            "turn brightness up",
-            "raise the brightness",
-            "make it brighter",
-            "make the screen brighter",
-            "make screen brighter",
-            "brighten the screen",
-        ],
-        "display.brightness_up",
-        "Brightness up.",
-        &["brightness", "display", "+10%"],
-    ),
-    (
-        &[
-            "dimmer",
-            "brightness down",
-            "decrease brightness",
-            "turn brightness down",
-            "lower the brightness",
-            "make it dimmer",
-            "make the screen dimmer",
-            "make screen dimmer",
-            "dim the screen",
-        ],
-        "display.brightness_down",
-        "Brightness down.",
-        &["brightness", "display", "10%-"],
-    ),
-    (
-        &[
-            "next wallpaper",
-            "next background",
-            "change wallpaper",
-            "change the wallpaper",
-            "change background",
-        ],
-        "theme.bg_next",
-        "Next wallpaper.",
-        &["theme", "bg", "next"],
-    ),
-    (
-        &[
-            "toggle bluetooth",
-            "bluetooth",
-            "turn bluetooth on",
-            "turn bluetooth off",
-        ],
-        "bluetooth.toggle",
-        "Toggling Bluetooth.",
-        &["bluetooth", "power", "toggle"],
-    ),
-    (
-        &[
-            "do not disturb",
-            "toggle do not disturb",
-            "silence notifications",
-        ],
-        "toggle.dnd",
-        "Toggling do not disturb.",
-        &["toggle", "notification", "silencing"],
-    ),
-    (
-        &["stay awake", "dont sleep", "do not sleep"],
-        "toggle.idle",
-        "Staying awake.",
-        &["toggle", "idle", "stay-awake"],
-    ),
-    (
-        &[
-            "toggle bar",
-            "toggle the bar",
-            "hide the bar",
-            "hide bar",
-            "show the bar",
-            "show bar",
-            "hide the panel",
-            "show the panel",
-        ],
-        "toggle.bar",
-        "Toggling the bar.",
-        &["toggle", "bar"],
-    ),
-    (
-        &[
-            "toggle gaps",
-            "toggle window gaps",
-            "no gaps",
-            "window gaps",
-        ],
-        "hypr.gaps",
-        "Toggling gaps.",
-        &["hyprland", "window", "gaps", "toggle"],
-    ),
-    (
-        &[
-            "toggle animations",
-            "toggle effects",
-            "reduce motion",
-        ],
-        "toggle.animations",
-        "Toggling animations.",
-        &["toggle", "animations"],
-    ),
-    (
-        &[
-            "toggle transparency",
-            "toggle window transparency",
-        ],
-        "hypr.transparency",
-        "Toggling transparency.",
-        &["hyprland", "window", "transparency", "toggle"],
-    ),
-    (
-        &[
-            "toggle fullscreen",
-            "fullscreen",
-            "full screen",
-        ],
-        "hypr.fullscreen",
-        "Toggling fullscreen.",
-        &["hyprland", "window", "tiled", "fullscreen", "toggle"],
-    ),
-    (
-        &[
-            "toggle layout",
-            "toggle tiling",
-            "switch layout",
-        ],
-        "hypr.layout",
-        "Toggling layout.",
-        &["hyprland", "workspace", "layout", "toggle"],
-    ),
-    (
-        &[
-            "screenshot region",
-            "region screenshot",
-            "screenshot a region",
-            "capture a region",
-        ],
-        "capture.screenshot_region",
-        "Region screenshot.",
-        &["capture", "screenshot", "region"],
-    ),
-    (
-        &[
-            "screenshot window",
-            "window screenshot",
-            "capture a window",
-            "screenshot a window",
-        ],
-        "capture.screenshot_window",
-        "Window screenshot.",
-        &["capture", "screenshot", "windows"],
-    ),
-    (
-        &[
-            "fullscreen screenshot",
-            "screenshot fullscreen",
-            "full screen screenshot",
-        ],
-        "capture.screenshot_fullscreen",
-        "Fullscreen screenshot.",
-        &["capture", "screenshot", "fullscreen"],
-    ),
-    (
-        &[
-            "copy text from the screen",
-            "copy text from screen",
-            "capture text",
-            "read the screen",
-            "ocr",
-        ],
-        "capture.text",
-        "Capturing text.",
-        &["capture", "text"],
-    ),
-    (
-        &[
-            "close window",
-            "close the window",
-            "close this window",
-            "close the focused window",
-        ],
-        "hypr.window_close",
-        "Closing the window.",
-        &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.window.close())"#],
-    ),
-    (
-        &[
-            "next workspace",
-            "go to the next workspace",
-            "switch to the next workspace",
-        ],
-        "hypr.workspace",
-        "Next workspace.",
-        &[
-            "hyprctl",
-            "eval",
-            r#"hl.dispatch(hl.dsp.focus({ workspace = "e+1" }))"#,
-        ],
-    ),
-    (
-        &[
-            "previous workspace",
-            "last workspace",
-            "go to the previous workspace",
-            "switch to the previous workspace",
-        ],
-        "hypr.workspace",
-        "Previous workspace.",
-        &[
-            "hyprctl",
-            "eval",
-            r#"hl.dispatch(hl.dsp.focus({ workspace = "e-1" }))"#,
-        ],
-    ),
-    (
-        &[
-            "former workspace",
-            "go to the former workspace",
-            "back to the last workspace",
-        ],
-        "hypr.workspace",
-        "Former workspace.",
-        &[
-            "hyprctl",
-            "eval",
-            r#"hl.dispatch(hl.dsp.focus({ workspace = "previous" }))"#,
-        ],
-    ),
-    (
-        &[
-            "toggle touchpad",
-            "disable touchpad",
-            "enable touchpad",
-            "turn off the touchpad",
-            "turn on the touchpad",
-        ],
-        "toggle.touchpad",
-        "Toggling the touchpad.",
-        &["toggle", "touchpad"],
-    ),
-    (
-        &[
-            "toggle screensaver",
-            "screensaver",
-        ],
-        "toggle.screensaver",
-        "Toggling the screensaver.",
-        &["toggle", "screensaver"],
-    ),
-    (
-        &[
-            "fullscreen desktop",
-            "toggle fullscreen desktop",
-            "hide bar and gaps",
-        ],
-        "toggle.fullscreen_desktop",
-        "Toggling fullscreen desktop.",
-        &["toggle", "fullscreen", "desktop"],
-    ),
-    (
-        &[
-            "switch audio",
-            "switch audio output",
-            "switch speakers",
-            "switch headphones",
-            "change audio output",
-        ],
-        "audio.output_switch",
-        "Switching audio output.",
-        &["audio", "output", "switch"],
-    ),
-    (
-        &[
-            "keyboard brighter",
-            "keyboard backlight up",
-            "increase keyboard brightness",
-            "keyboard up",
-        ],
-        "display.keyboard_up",
-        "Keyboard brighter.",
-        &["brightness", "keyboard", "up"],
-    ),
-    (
-        &[
-            "keyboard dimmer",
-            "keyboard backlight down",
-            "decrease keyboard brightness",
-            "keyboard down",
-            "dim the keyboard",
-        ],
-        "display.keyboard_down",
-        "Keyboard dimmer.",
-        &["brightness", "keyboard", "down"],
-    ),
-    (
-        &[
-            "change theme",
-            "switch theme",
-            "open theme switcher",
-            "theme switcher",
-        ],
-        "theme.switcher",
-        "Opening the theme switcher.",
-        &["theme", "switcher"],
-    ),
-    (
-        &[
-            "toggle scratchpad",
-            "scratchpad",
-            "show scratchpad",
-            "hide scratchpad",
-            "open scratchpad",
-        ],
-        "hypr.scratchpad",
-        "Toggling the scratchpad.",
-        &[
-            "hyprctl",
-            "eval",
-            r#"hl.dispatch(hl.dsp.workspace.toggle_special("scratchpad"))"#,
-        ],
-    ),
-    (
-        &[
-            "move to scratchpad",
-            "send to scratchpad",
-            "scratch this window",
-        ],
-        "hypr.scratchpad_move",
-        "Moving to the scratchpad.",
-        &[
-            "hyprctl",
-            "eval",
-            r#"hl.dispatch(hl.dsp.window.move({ workspace = "special:scratchpad", follow = false }))"#,
-        ],
-    ),
-    (
-        &[
-            "toggle floating",
-            "float the window",
-            "tile the window",
-            "toggle float",
-        ],
-        "hypr.float",
-        "Toggling floating.",
-        &[
-            "hyprctl",
-            "eval",
-            r#"hl.dispatch(hl.dsp.window.float({ action = "toggle" }))"#,
-        ],
-    ),
-    (
-        &["toggle split", "toggle the split"],
-        "hypr.split",
-        "Toggling the split.",
-        &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.layout("togglesplit"))"#],
-    ),
-    (
-        &[
-            "focus left",
-            "focus the left window",
-            "window left",
-        ],
-        "hypr.focus",
-        "Focusing left.",
-        &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.focus({ direction = "l" }))"#],
-    ),
-    (
-        &[
-            "focus right",
-            "focus the right window",
-            "window right",
-        ],
-        "hypr.focus",
-        "Focusing right.",
-        &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.focus({ direction = "r" }))"#],
-    ),
-    (
-        &[
-            "focus up",
-            "focus above",
-            "focus the window above",
-        ],
-        "hypr.focus",
-        "Focusing up.",
-        &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.focus({ direction = "u" }))"#],
-    ),
-    (
-        &[
-            "focus down",
-            "focus below",
-            "focus the window below",
-        ],
-        "hypr.focus",
-        "Focusing down.",
-        &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.focus({ direction = "d" }))"#],
-    ),
-    (
-        &["next window", "cycle windows", "focus the next window"],
-        "hypr.window_cycle",
-        "Next window.",
-        &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.window.cycle_next())"#],
-    ),
-    (
-        &["previous window", "focus the previous window"],
-        "hypr.window_cycle",
-        "Previous window.",
-        &[
-            "hyprctl",
-            "eval",
-            r#"hl.dispatch(hl.dsp.window.cycle_next({ next = false }))"#,
-        ],
-    ),
-    (
-        &[
-            "pop the window out",
-            "pop out",
-            "pop window",
-            "pin the window",
-        ],
-        "hypr.window_pop",
-        "Popping the window out.",
-        &["hyprland", "window", "pop"],
-    ),
-    (
-        &[
-            "open the menu",
-            "omarchy menu",
-            "open omarchy menu",
-            "open the omarchy menu",
-        ],
-        "app.launch",
-        "Opening the menu.",
-        &["menu", "toggle", "root"],
-    ),
-    (
-        &["open apps menu", "apps menu", "open the apps menu"],
-        "app.launch",
-        "Opening the apps menu.",
-        &["menu", "toggle", "apps"],
-    ),
-    (
-        &["emoji picker", "open emojis", "emojis"],
-        "app.launch",
-        "Opening emojis.",
-        &["menu", "emoji"],
-    ),
-    (
-        &["clipboard history", "open clipboard", "clipboard"],
-        "app.launch",
-        "Opening the clipboard.",
-        &["menu", "clipboard"],
-    ),
-    (
-        &["show keybindings", "keybindings", "open keybindings"],
-        "app.launch",
-        "Opening keybindings.",
-        &["menu", "keybindings"],
-    ),
-    (
-        &[
-            "start recording",
-            "record the screen",
-            "record screen",
-            "start screen recording",
-        ],
-        "capture.screenrecord",
-        "Starting a screen recording.",
-        &["capture", "screenrecording", "--fullscreen"],
-    ),
-    (
-        &[
-            "stop recording",
-            "stop screen recording",
-            "stop the recording",
-        ],
-        "capture.screenrecord",
-        "Stopping the recording.",
-        &["capture", "screenrecording", "--stop-recording"],
-    ),
-];
-
 fn normalize(raw: &str) -> String {
     let alnum: String = raw
         .chars()
@@ -1167,11 +414,6 @@ fn normalize(raw: &str) -> String {
         })
         .collect();
     let mut words: Vec<&str> = alnum.split_whitespace().collect();
-    if words.first() == Some(&"hey") && words.get(1) == Some(&"nyx") {
-        words.drain(..2);
-    } else if words.first() == Some(&"nyx") {
-        words.remove(0);
-    }
     if words.first() == Some(&"please") {
         words.remove(0);
     }
@@ -1189,7 +431,7 @@ mod tests {
         route_with_apps(text, &assistant_core::AppsFile::shipped().app)
     }
 
-    fn tool(text: &str) -> Option<&'static str> {
+    fn tool(text: &str) -> Option<String> {
         match route(text) {
             Intent::Desktop { tool, .. } => Some(tool),
             Intent::Chat | Intent::Forget | Intent::Say(_) => None,
@@ -1198,27 +440,27 @@ mod tests {
 
     #[test]
     fn locks_on_short_phrases() {
-        assert_eq!(tool("Lock the screen."), Some("system.lock"));
-        assert_eq!(tool("hey nyx, lock please"), Some("system.lock"));
+        assert_eq!(tool("Lock the screen.").as_deref(), Some("system.lock"));
+        assert_eq!(tool("lock please").as_deref(), Some("system.lock"));
         assert_eq!(tool("lock the door"), None);
     }
 
     #[test]
     fn volume_and_launch() {
-        assert_eq!(tool("turn it down"), Some("audio.volume_down"));
-        assert_eq!(tool("volume up"), Some("audio.volume_up"));
-        assert_eq!(tool("mute"), Some("audio.mute"));
-        assert_eq!(tool("open the browser"), Some("app.launch"));
-        assert_eq!(tool("open a terminal"), Some("app.launch"));
+        assert_eq!(tool("turn it down").as_deref(), Some("audio.volume_down"));
+        assert_eq!(tool("volume up").as_deref(), Some("audio.volume_up"));
+        assert_eq!(tool("mute").as_deref(), Some("audio.mute"));
+        assert_eq!(tool("open the browser").as_deref(), Some("app.launch"));
+        assert_eq!(tool("open a terminal").as_deref(), Some("app.launch"));
         match route("open terminal") {
             Intent::Desktop { omarchy, .. } => {
                 assert_eq!(omarchy, ["launch", "terminal"]);
             }
             other => panic!("{other:?}"),
         }
-        assert_eq!(tool("brighter"), Some("display.brightness_up"));
-        assert_eq!(tool("next wallpaper"), Some("theme.bg_next"));
-        assert_eq!(tool("go to workspace 3"), Some("hypr.workspace"));
+        assert_eq!(tool("brighter").as_deref(), Some("display.brightness_up"));
+        assert_eq!(tool("next wallpaper").as_deref(), Some("theme.bg_next"));
+        assert_eq!(tool("go to workspace 3").as_deref(), Some("hypr.workspace"));
         match route("move to workspace 3") {
             Intent::Desktop { tool, spoken, .. } => {
                 assert_eq!(tool, "hypr.workspace_move");
@@ -1236,7 +478,7 @@ mod tests {
         assert_eq!(tool("workspace 10"), None);
         assert_eq!(tool("go to workspace 8"), None);
         assert_eq!(tool("workspace 6"), None);
-        assert_eq!(tool("open files"), Some("app.launch"));
+        assert_eq!(tool("open files").as_deref(), Some("app.launch"));
         match route("open files") {
             Intent::Desktop { omarchy, .. } => {
                 assert_eq!(omarchy, ["launch", "nautilus"]);
@@ -1247,16 +489,25 @@ mod tests {
             Intent::Desktop { omarchy, .. } => assert_eq!(omarchy, ["launch", "nautilus"]),
             other => panic!("{other:?}"),
         }
-        assert_eq!(tool("make the screen brighter"), Some("display.brightness_up"));
-        assert_eq!(tool("switch workspace 2"), Some("hypr.workspace"));
-        assert_eq!(tool("go to workspace one"), Some("hypr.workspace"));
-        assert_eq!(tool("workspace won"), Some("hypr.workspace"));
-        assert_eq!(tool("Workspace One."), Some("hypr.workspace"));
-        assert_eq!(tool("Go to ArcSpice1."), Some("hypr.workspace"));
-        assert_eq!(tool("make scream brighter"), Some("display.brightness_up"));
-        assert_eq!(tool("Mike scream dimmer."), Some("display.brightness_down"));
-        assert_eq!(tool("go to our space one"), Some("hypr.workspace"));
+        assert_eq!(tool("make the screen brighter").as_deref(), Some("display.brightness_up"));
+        assert_eq!(tool("switch workspace 2").as_deref(), Some("hypr.workspace"));
+        assert_eq!(tool("go to workspace one").as_deref(), Some("hypr.workspace"));
+        assert_eq!(tool("workspace won").as_deref(), Some("hypr.workspace"));
+        assert_eq!(tool("Workspace One.").as_deref(), Some("hypr.workspace"));
+        assert_eq!(tool("Go to ArcSpice1.").as_deref(), Some("hypr.workspace"));
+        assert_eq!(tool("make scream brighter").as_deref(), Some("display.brightness_up"));
+        assert_eq!(tool("Mike scream dimmer.").as_deref(), Some("display.brightness_down"));
+        assert_eq!(tool("go to our space one").as_deref(), Some("hypr.workspace"));
         assert!(matches!(route("mute the mic"), Intent::Say(_)));
+        match route("shut down") {
+            Intent::Say(s) => assert!(s.contains("won't"), "{s}"),
+            other => panic!("{other:?}"),
+        }
+        match route("reboot") {
+            Intent::Say(s) => assert!(s.contains("won't"), "{s}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(tool("what is a shutdown"), None);
     }
 
     #[test]
@@ -1267,16 +518,18 @@ mod tests {
         assert_eq!(tool(""), None);
         assert_eq!(route("forget everything"), Intent::Forget);
         assert_eq!(route("start over"), Intent::Forget);
+        assert!(matches!(route("make a joke"), Intent::Chat));
+        assert!(matches!(route("show me how gravity works"), Intent::Chat));
+        assert!(matches!(route("go to workspace eleven"), Intent::Chat));
+        assert!(matches!(route("make the screen wider"), Intent::Chat));
     }
 
     #[test]
     fn refuses_unknown_commands_instead_of_pretending() {
-        assert!(matches!(route("go to workspace eleven"), Intent::Say(_)));
         match route("go to arcspice one") {
             Intent::Desktop { spoken, .. } => assert_eq!(spoken, "Workspace 1."),
             other => panic!("{other:?}"),
         }
-        assert!(matches!(route("make the screen wider"), Intent::Say(_)));
         match route("Going to workspace our space one.") {
             Intent::Desktop { spoken, .. } => assert_eq!(spoken, "Workspace 1."),
             other => panic!("{other:?}"),
@@ -1285,57 +538,59 @@ mod tests {
             Intent::Desktop { spoken, .. } => assert_eq!(spoken, "Workspace 1."),
             other => panic!("{other:?}"),
         }
-        assert!(matches!(route("go to workspace"), Intent::Say(_)));
-        assert!(matches!(route("go to workspace 8"), Intent::Say(_)));
-        assert!(matches!(route("go to workspace eleven"), Intent::Say(_)));
+        assert!(matches!(route("go to workspace"), Intent::Chat));
+        assert!(matches!(route("go to workspace 8"), Intent::Chat));
+        assert!(matches!(route("go to workspace eleven"), Intent::Chat));
     }
 
     #[test]
     fn more_omarchy_tools() {
-        assert_eq!(tool("open spotify"), Some("app.launch"));
-        assert_eq!(tool("open signal"), Some("app.launch"));
-        assert_eq!(tool("toggle bar"), Some("toggle.bar"));
-        assert_eq!(tool("hide the bar"), Some("toggle.bar"));
-        assert_eq!(tool("toggle gaps"), Some("hypr.gaps"));
-        assert_eq!(tool("toggle animations"), Some("toggle.animations"));
-        assert_eq!(tool("toggle transparency"), Some("hypr.transparency"));
-        assert_eq!(tool("toggle fullscreen"), Some("hypr.fullscreen"));
-        assert_eq!(tool("toggle layout"), Some("hypr.layout"));
-        assert_eq!(tool("screenshot region"), Some("capture.screenshot_region"));
-        assert_eq!(tool("screenshot window"), Some("capture.screenshot_window"));
-        assert_eq!(tool("about this computer"), Some("app.launch"));
-        assert_eq!(tool("close the window"), Some("hypr.window_close"));
-        assert_eq!(tool("next workspace"), Some("hypr.workspace"));
-        assert_eq!(tool("previous workspace"), Some("hypr.workspace"));
-        assert_eq!(tool("former workspace"), Some("hypr.workspace"));
-        assert_eq!(tool("toggle touchpad"), Some("toggle.touchpad"));
-        assert_eq!(tool("switch audio output"), Some("audio.output_switch"));
-        assert_eq!(tool("keyboard brighter"), Some("display.keyboard_up"));
-        assert_eq!(tool("change theme"), Some("theme.switcher"));
-        assert_eq!(tool("open discord"), Some("app.launch"));
-        assert_eq!(tool("open obsidian"), Some("app.launch"));
-        assert_eq!(tool("open chatgpt"), Some("app.launch"));
-        assert_eq!(tool("open music"), Some("app.launch"));
-        assert_eq!(tool("capture text"), Some("capture.text"));
-        assert_eq!(tool("toggle scratchpad"), Some("hypr.scratchpad"));
-        assert_eq!(tool("move to scratchpad"), Some("hypr.scratchpad_move"));
-        assert_eq!(tool("toggle floating"), Some("hypr.float"));
-        assert_eq!(tool("toggle split"), Some("hypr.split"));
-        assert_eq!(tool("open passwords"), Some("app.launch"));
-        assert_eq!(tool("open omawrite"), Some("app.launch"));
-        assert_eq!(tool("private browser"), Some("app.launch"));
-        assert_eq!(tool("focus left"), Some("hypr.focus"));
-        assert_eq!(tool("next window"), Some("hypr.window_cycle"));
-        assert_eq!(tool("open calculator"), Some("app.launch"));
-        assert_eq!(tool("color picker"), Some("app.launch"));
-        assert_eq!(tool("open the menu"), Some("app.launch"));
-        assert_eq!(tool("apps menu"), Some("app.launch"));
-        assert_eq!(tool("emoji picker"), Some("app.launch"));
-        assert_eq!(tool("clipboard history"), Some("app.launch"));
-        assert_eq!(tool("show keybindings"), Some("app.launch"));
-        assert_eq!(tool("record the screen"), Some("capture.screenrecord"));
-        assert_eq!(tool("stop recording"), Some("capture.screenrecord"));
-        assert_eq!(tool("pop the window out"), Some("hypr.window_pop"));
+        assert_eq!(tool("open spotify").as_deref(), Some("app.launch"));
+        assert_eq!(tool("spotify").as_deref(), Some("app.launch"));
+        assert!(matches!(route_with_apps("spotify", &[]), Intent::Chat));
+        assert_eq!(tool("open signal").as_deref(), Some("app.launch"));
+        assert_eq!(tool("toggle bar").as_deref(), Some("toggle.bar"));
+        assert_eq!(tool("hide the bar").as_deref(), Some("toggle.bar"));
+        assert_eq!(tool("toggle gaps").as_deref(), Some("hypr.gaps"));
+        assert_eq!(tool("toggle animations").as_deref(), Some("toggle.animations"));
+        assert_eq!(tool("toggle transparency").as_deref(), Some("hypr.transparency"));
+        assert_eq!(tool("toggle fullscreen").as_deref(), Some("hypr.fullscreen"));
+        assert_eq!(tool("toggle layout").as_deref(), Some("hypr.layout"));
+        assert_eq!(tool("screenshot region").as_deref(), Some("capture.screenshot_region"));
+        assert_eq!(tool("screenshot window").as_deref(), Some("capture.screenshot_window"));
+        assert_eq!(tool("about this computer").as_deref(), Some("app.launch"));
+        assert_eq!(tool("close the window").as_deref(), Some("hypr.window_close"));
+        assert_eq!(tool("next workspace").as_deref(), Some("hypr.workspace"));
+        assert_eq!(tool("previous workspace").as_deref(), Some("hypr.workspace"));
+        assert_eq!(tool("former workspace").as_deref(), Some("hypr.workspace"));
+        assert_eq!(tool("toggle touchpad").as_deref(), Some("toggle.touchpad"));
+        assert_eq!(tool("switch audio output").as_deref(), Some("audio.output_switch"));
+        assert_eq!(tool("keyboard brighter").as_deref(), Some("display.keyboard_up"));
+        assert_eq!(tool("change theme").as_deref(), Some("theme.switcher"));
+        assert_eq!(tool("open discord").as_deref(), Some("app.launch"));
+        assert_eq!(tool("open obsidian").as_deref(), Some("app.launch"));
+        assert_eq!(tool("open chatgpt").as_deref(), Some("app.launch"));
+        assert_eq!(tool("open music").as_deref(), Some("app.launch"));
+        assert_eq!(tool("capture text").as_deref(), Some("capture.text"));
+        assert_eq!(tool("toggle scratchpad").as_deref(), Some("hypr.scratchpad"));
+        assert_eq!(tool("move to scratchpad").as_deref(), Some("hypr.scratchpad_move"));
+        assert_eq!(tool("toggle floating").as_deref(), Some("hypr.float"));
+        assert_eq!(tool("toggle split").as_deref(), Some("hypr.split"));
+        assert_eq!(tool("open passwords").as_deref(), Some("app.launch"));
+        assert_eq!(tool("open omawrite").as_deref(), Some("app.launch"));
+        assert_eq!(tool("private browser").as_deref(), Some("app.launch"));
+        assert_eq!(tool("focus left").as_deref(), Some("hypr.focus"));
+        assert_eq!(tool("next window").as_deref(), Some("hypr.window_cycle"));
+        assert_eq!(tool("open calculator").as_deref(), Some("app.launch"));
+        assert_eq!(tool("color picker").as_deref(), Some("app.launch"));
+        assert_eq!(tool("open the menu").as_deref(), Some("app.launch"));
+        assert_eq!(tool("apps menu").as_deref(), Some("app.launch"));
+        assert_eq!(tool("emoji picker").as_deref(), Some("app.launch"));
+        assert_eq!(tool("clipboard history").as_deref(), Some("app.launch"));
+        assert_eq!(tool("show keybindings").as_deref(), Some("app.launch"));
+        assert_eq!(tool("record the screen").as_deref(), Some("capture.screenrecord"));
+        assert_eq!(tool("stop recording").as_deref(), Some("capture.screenrecord"));
+        assert_eq!(tool("pop the window out").as_deref(), Some("hypr.window_pop"));
         assert_eq!(tool("close"), None);
         assert!(is_filler("Yeah."));
         assert!(is_filler("ok"));
@@ -1361,5 +616,22 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn commands_file_can_change_phrases_without_rebuild() {
+        let mut cmds = assistant_core::CommandsFile::shipped();
+        cmds.command.retain(|c| c.tool != "system.lock");
+        cmds.command.push(assistant_core::CommandPhrase {
+            phrases: vec!["lock the screen".into()],
+            tool: "system.lock".into(),
+            reply: "Locked custom.".into(),
+            omarchy: vec!["system".into(), "lock".into()],
+        });
+        match route_with("lock the screen", &[], &cmds) {
+            Intent::Desktop { spoken, .. } => assert_eq!(spoken, "Locked custom."),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(tool("lock").as_deref(), Some("system.lock"));
     }
 }

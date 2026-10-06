@@ -6,8 +6,9 @@ use assistant_core::config::Config;
 use pipewire as pw;
 use pw::spa::pod::Pod;
 use pw::{properties::properties, spa};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::sync::{mpsc, oneshot, watch};
 
 const CAPTURE_RATE: u32 = 16_000;
@@ -17,8 +18,8 @@ const FRAME: usize = 512;
 enum PwCmd {
     StartCapture,
     StopCapture,
-    QueuePlay(Vec<f32>),
-    CancelPlay,
+    QueuePlay { epoch: u64, pcm: Vec<f32> },
+    CancelPlay { epoch: u64 },
     Shutdown,
 }
 
@@ -26,7 +27,11 @@ pub struct AudioEngine {
     cmd: pw::channel::Sender<PwCmd>,
     samples_rx: Mutex<Option<mpsc::Receiver<Vec<i16>>>>,
     levels: watch::Receiver<f32>,
+    aec_levels: Option<watch::Receiver<f32>>,
     queued: Arc<AtomicUsize>,
+    play_epoch: Arc<AtomicU64>,
+    echo_module: Option<u32>,
+    echo_wire: Option<Arc<AtomicBool>>,
 }
 
 struct CaptureState {
@@ -34,26 +39,53 @@ struct CaptureState {
     level: watch::Sender<f32>,
     active: bool,
     pending: Vec<i16>,
+    armed: Option<Instant>,
 }
 
 struct PlayState {
     queue: Vec<f32>,
-    cancelled: bool,
+    epoch: u64,
     queued: Arc<AtomicUsize>,
 }
 
 impl AudioEngine {
-    pub fn start(_cfg: &Config) -> Result<Self> {
+    pub fn start(cfg: &Config) -> Result<Self> {
+        let mut echo_wire = None;
+        let echo_module = if cfg.barge_in.aec {
+            match load_nyx_echo_cancel() {
+                Ok((id, wire)) => {
+                    tracing::info!(id, "echo-cancel loaded");
+                    echo_wire = Some(wire);
+                    Some(id)
+                }
+                Err(err) => {
+                    tracing::warn!(%err, "echo-cancel not loaded; barge-in has no AEC");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let aec = echo_module.is_some();
         let (samples_tx, samples_rx) = mpsc::channel::<Vec<i16>>(32);
         let (level_tx, level_rx) = watch::channel(0.0f32);
+        let (aec_level_tx, aec_level_rx) = if aec {
+            let (tx, rx) = watch::channel(0.0f32);
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
+        };
         let queued = Arc::new(AtomicUsize::new(0));
+        let play_epoch = Arc::new(AtomicU64::new(0));
         let (ready_tx, ready_rx) = oneshot::channel::<Result<pw::channel::Sender<PwCmd>>>();
         let queued_thread = queued.clone();
 
         std::thread::Builder::new()
             .name("nyx-pipewire".into())
             .spawn(move || {
-                if let Err(err) = pw_thread(samples_tx, level_tx, queued_thread, ready_tx) {
+                if let Err(err) =
+                    pw_thread(samples_tx, level_tx, aec_level_tx, queued_thread, ready_tx)
+                {
                     tracing::error!(%err, "pipewire thread exited");
                 }
             })
@@ -67,7 +99,11 @@ impl AudioEngine {
             cmd,
             samples_rx: Mutex::new(Some(samples_rx)),
             levels: level_rx,
+            aec_levels: aec_level_rx,
             queued,
+            play_epoch,
+            echo_module,
+            echo_wire,
         })
     }
 
@@ -77,6 +113,10 @@ impl AudioEngine {
 
     pub fn levels(&self) -> watch::Receiver<f32> {
         self.levels.clone()
+    }
+
+    pub fn aec_levels(&self) -> Option<watch::Receiver<f32>> {
+        self.aec_levels.clone()
     }
 
     pub fn start_capture(&self) -> Result<()> {
@@ -92,17 +132,21 @@ impl AudioEngine {
     }
 
     pub fn play(&self, pcm: Vec<f32>) -> Result<()> {
-        self.queued.fetch_add(pcm.len(), Ordering::Relaxed);
+        let epoch = self.play_epoch.load(Ordering::SeqCst);
         self.cmd
-            .send(PwCmd::QueuePlay(pcm))
+            .send(PwCmd::QueuePlay { epoch, pcm })
             .map_err(|_| anyhow::anyhow!("pipewire command channel closed"))
     }
 
     pub fn cancel_playback(&self) -> Result<()> {
+        let t0 = Instant::now();
+        let epoch = self.play_epoch.fetch_add(1, Ordering::SeqCst) + 1;
         self.queued.store(0, Ordering::Relaxed);
         self.cmd
-            .send(PwCmd::CancelPlay)
-            .map_err(|_| anyhow::anyhow!("pipewire command channel closed"))
+            .send(PwCmd::CancelPlay { epoch })
+            .map_err(|_| anyhow::anyhow!("pipewire command channel closed"))?;
+        tracing::info!(us = t0.elapsed().as_micros(), "playback cancel queued");
+        Ok(())
     }
 
     pub async fn wait_playback(&self) {
@@ -119,12 +163,231 @@ impl AudioEngine {
 impl Drop for AudioEngine {
     fn drop(&mut self) {
         let _ = self.cmd.send(PwCmd::Shutdown);
+        if let Some(run) = self.echo_wire.take() {
+            run.store(false, Ordering::Relaxed);
+        }
+        if let Some(id) = self.echo_module.take() {
+            unload_echo_module(id);
+        }
     }
+}
+
+const NYX_EC_SOURCE: &str = "nyx-echo-cancel";
+
+fn load_nyx_echo_cancel() -> Result<(u32, Arc<AtomicBool>)> {
+    unload_nyx_echo_cancel();
+    // Keep the session sink format (typically 48 kHz stereo). Forcing 16 kHz
+    // mono renamed echo-cancel-sink ports to *_MONO so analog monitor_FL
+    // waited forever under pw-link -w, and resampled the speaker reference.
+    // Nyx plays analog speakers; settings_eq is music/video only.
+    let id = match pactl_load_echo_cancel(&[
+        "source_name=nyx-echo-cancel",
+        "aec_method=webrtc",
+        // webrtc NS ducks the near-end ~20x; the HUD bar and STT then look dead.
+        "aec_args=noise_suppression=0 voice_detection=0 gain_control=0",
+        "sink_properties=priority.session=0",
+    ]) {
+        Ok(id) => id,
+        Err(err) => {
+            tracing::warn!(%err, "echo-cancel extra args failed; retrying base args");
+            pactl_load_echo_cancel(&[
+                "source_name=nyx-echo-cancel",
+                "aec_method=webrtc",
+                "aec_args=noise_suppression=0 voice_detection=0",
+            ])?
+        }
+    };
+    let run = Arc::new(AtomicBool::new(true));
+    let run_thread = run.clone();
+    std::thread::Builder::new()
+        .name("nyx-aec-wire".into())
+        .spawn(move || {
+            let mut pass = 0u32;
+            while run_thread.load(Ordering::Relaxed) {
+                let ms = if pass == 0 { 150 } else { 2_000 };
+                std::thread::sleep(std::time::Duration::from_millis(ms));
+                if !run_thread.load(Ordering::Relaxed) {
+                    break;
+                }
+                match wire_echo_cancel_monitor() {
+                    Ok(()) => {
+                        if pass < 2 {
+                            tracing::info!(pass, "echo-cancel using sink monitor");
+                        }
+                    }
+                    Err(err) => tracing::warn!(pass, %err, "echo-cancel monitor wiring"),
+                }
+                pass = pass.saturating_add(1);
+            }
+        })
+        .context("spawn aec wire thread")?;
+    Ok((id, run))
+}
+
+/// Floor on the cancelled stream: above residual TTS leak, below speech.
+pub fn aec_barge_threshold(residual: f32, configured: f32) -> f32 {
+    let t = residual.mul_add(1.4, 0.005);
+    t.clamp(0.016, configured.max(0.016))
+}
+
+fn pactl_load_echo_cancel(extra: &[&str]) -> Result<u32> {
+    let mut args = vec!["load-module", "module-echo-cancel"];
+    args.extend_from_slice(extra);
+    let out = std::process::Command::new("pactl")
+        .args(&args)
+        .output()
+        .context("pactl load-module echo-cancel")?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "pactl load-module echo-cancel: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse::<u32>()
+        .context("echo-cancel module id")
+}
+
+fn default_sink_name() -> Result<String> {
+    let out = std::process::Command::new("pactl")
+        .args(["get-default-sink"])
+        .output()
+        .context("pactl get-default-sink")?;
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if name.is_empty() {
+        anyhow::bail!("pactl get-default-sink empty");
+    }
+    Ok(name)
+}
+
+fn default_source_name() -> Option<String> {
+    let out = std::process::Command::new("pactl")
+        .args(["get-default-source"])
+        .output()
+        .ok()?;
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if name.is_empty() || name == NYX_EC_SOURCE || name.contains("echo-cancel") {
+        return None;
+    }
+    Some(name)
+}
+
+/// Pulse `monitor_mode` still creates an idle sink and plays it to the speakers,
+/// so AEC has no reference. Disconnect that playback and feed the default sink
+/// monitor into the canceller instead.
+fn wire_echo_cancel_monitor() -> Result<()> {
+    let sink = default_sink_name()?;
+    let outputs = pw_ports("-o");
+    let inputs = pw_ports("-i");
+    for out in outputs
+        .iter()
+        .filter(|p| p.starts_with("echo-cancel-playback:"))
+    {
+        for inp in inputs.iter().filter(|p| p.starts_with(&format!("{sink}:"))) {
+            let _ = pw_link(&["-d", out, inp]);
+        }
+    }
+    let monitors: Vec<String> = outputs
+        .into_iter()
+        .filter(|p| p.starts_with(&format!("{sink}:monitor_")))
+        .collect();
+    let playback: Vec<String> = inputs
+        .into_iter()
+        .filter(|p| p.starts_with("echo-cancel-sink:playback_"))
+        .collect();
+    if monitors.is_empty() || playback.is_empty() {
+        anyhow::bail!("no monitor links to echo-cancel-sink from {sink}");
+    }
+    let mut linked = 0u32;
+    for (out, inp) in pair_monitor_ports(&monitors, &playback) {
+        if pw_link(&["-L", &out, &inp]) {
+            linked += 1;
+        }
+    }
+    if linked == 0 {
+        anyhow::bail!("no monitor links to echo-cancel-sink from {sink}");
+    }
+    Ok(())
+}
+
+fn pw_ports(flag: &str) -> Vec<String> {
+    let Ok(out) = std::process::Command::new("pw-link").arg(flag).output() else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn pw_link(args: &[&str]) -> bool {
+    let Ok(out) = std::process::Command::new("pw-link").args(args).output() else {
+        return false;
+    };
+    if out.status.success() {
+        return true;
+    }
+    String::from_utf8_lossy(&out.stderr).contains("File exists")
+}
+
+fn pair_monitor_ports(monitors: &[String], playback: &[String]) -> Vec<(String, String)> {
+    if playback.len() == 1 {
+        return monitors
+            .iter()
+            .cloned()
+            .map(|m| (m, playback[0].clone()))
+            .collect();
+    }
+    let mut pairs = Vec::new();
+    for m in monitors {
+        let ch = m.rsplit('_').next().unwrap_or("");
+        if let Some(p) = playback
+            .iter()
+            .find(|p| p.ends_with(&format!("_{ch}")))
+        {
+            pairs.push((m.clone(), p.clone()));
+        }
+    }
+    if pairs.is_empty() {
+        for (m, p) in monitors.iter().zip(playback.iter()) {
+            pairs.push((m.clone(), p.clone()));
+        }
+    }
+    pairs
+}
+
+fn unload_nyx_echo_cancel() {
+    let Ok(out) = std::process::Command::new("pactl")
+        .args(["list", "modules", "short"])
+        .output()
+    else {
+        return;
+    };
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        if !line.contains("nyx-echo-cancel") {
+            continue;
+        }
+        if let Some(id) = line.split_whitespace().next() {
+            if let Ok(n) = id.parse::<u32>() {
+                unload_echo_module(n);
+            }
+        }
+    }
+}
+
+fn unload_echo_module(id: u32) {
+    let _ = std::process::Command::new("pactl")
+        .args(["unload-module", &id.to_string()])
+        .status();
 }
 
 fn pw_thread(
     samples_tx: mpsc::Sender<Vec<i16>>,
     level_tx: watch::Sender<f32>,
+    aec_level_tx: Option<watch::Sender<f32>>,
     queued: Arc<AtomicUsize>,
     ready: oneshot::Sender<Result<pw::channel::Sender<PwCmd>>>,
 ) -> Result<()> {
@@ -138,38 +401,45 @@ fn pw_thread(
         level: level_tx,
         active: false,
         pending: Vec::new(),
+        armed: None,
     }));
     let play = Arc::new(Mutex::new(PlayState {
         queue: Vec::new(),
-        cancelled: false,
+        epoch: 0,
         queued: queued.clone(),
     }));
 
-    let cap_stream = pw::stream::StreamBox::new(
-        &core,
-        "nyx-capture",
-        properties! {
+    // HUD / PTT PCM: hardware mic. AEC source is a second stream used only
+    // for barge-in so TTS echo does not trip the energy detector.
+    let cap_props = match default_source_name() {
+        Some(src) => properties! {
+            *pw::keys::MEDIA_TYPE => "Audio",
+            *pw::keys::MEDIA_CATEGORY => "Capture",
+            *pw::keys::MEDIA_ROLE => "Communication",
+            *pw::keys::NODE_NAME => "Nyx",
+            *pw::keys::NODE_DESCRIPTION => "Nyx microphone",
+            "target.object" => src.as_str(),
+        },
+        None => properties! {
             *pw::keys::MEDIA_TYPE => "Audio",
             *pw::keys::MEDIA_CATEGORY => "Capture",
             *pw::keys::MEDIA_ROLE => "Communication",
             *pw::keys::NODE_NAME => "Nyx",
             *pw::keys::NODE_DESCRIPTION => "Nyx microphone",
         },
-    )
-    .context("capture stream")?;
+    };
+    let play_props = properties! {
+        *pw::keys::MEDIA_TYPE => "Audio",
+        *pw::keys::MEDIA_CATEGORY => "Playback",
+        *pw::keys::MEDIA_ROLE => "Communication",
+        *pw::keys::NODE_NAME => "Nyx",
+        *pw::keys::NODE_DESCRIPTION => "Nyx speaker",
+    };
+    let cap_stream = pw::stream::StreamBox::new(&core, "nyx-capture", cap_props)
+        .context("capture stream")?;
 
-    let play_stream = pw::stream::StreamBox::new(
-        &core,
-        "nyx-playback",
-        properties! {
-            *pw::keys::MEDIA_TYPE => "Audio",
-            *pw::keys::MEDIA_CATEGORY => "Playback",
-            *pw::keys::MEDIA_ROLE => "Communication",
-            *pw::keys::NODE_NAME => "Nyx",
-            *pw::keys::NODE_DESCRIPTION => "Nyx speaker",
-        },
-    )
-    .context("playback stream")?;
+    let play_stream = pw::stream::StreamBox::new(&core, "nyx-playback", play_props)
+        .context("playback stream")?;
 
     let cap_data = capture.clone();
     let _cap_listener = cap_stream
@@ -213,11 +483,66 @@ fn pw_thread(
                 }
                 let rms = (acc / frame.len() as f32).sqrt();
                 let _ = st.level.send(rms);
+                if let Some(t0) = st.armed.take() {
+                    tracing::info!(ms = t0.elapsed().as_millis(), "capture first frame");
+                }
                 let _ = st.tx.try_send(frame);
             }
         })
         .register()
         .context("capture listener")?;
+
+    let aec_stream = if aec_level_tx.is_some() {
+        let props = properties! {
+            *pw::keys::MEDIA_TYPE => "Audio",
+            *pw::keys::MEDIA_CATEGORY => "Capture",
+            *pw::keys::MEDIA_ROLE => "Communication",
+            *pw::keys::NODE_NAME => "Nyx-AEC",
+            *pw::keys::NODE_DESCRIPTION => "Nyx echo-cancel",
+            "target.object" => NYX_EC_SOURCE,
+        };
+        Some(pw::stream::StreamBox::new(&core, "nyx-aec", props).context("aec stream")?)
+    } else {
+        None
+    };
+    let _aec_listener = if let (Some(stream), Some(tx)) = (aec_stream.as_ref(), aec_level_tx) {
+        Some(
+            stream
+                .add_local_listener_with_user_data(())
+                .process(move |stream, _| {
+                    let Some(mut buf) = stream.dequeue_buffer() else {
+                        return;
+                    };
+                    let datas = buf.datas_mut();
+                    if datas.is_empty() {
+                        return;
+                    }
+                    let data = &mut datas[0];
+                    let n = data.chunk().size() as usize;
+                    let Some(slice) = data.data() else {
+                        return;
+                    };
+                    let bytes = &slice[..n.min(slice.len())];
+                    let mut acc = 0.0f32;
+                    let mut count = 0u32;
+                    let mut i = 0;
+                    while i + 1 < bytes.len() {
+                        let s = i16::from_le_bytes([bytes[i], bytes[i + 1]]);
+                        let x = s as f32 / 32768.0;
+                        acc += x * x;
+                        count += 1;
+                        i += 2;
+                    }
+                    if count > 0 {
+                        let _ = tx.send((acc / count as f32).sqrt());
+                    }
+                })
+                .register()
+                .context("aec listener")?,
+        )
+    } else {
+        None
+    };
 
     let play_data = play.clone();
     let _play_listener = play_stream
@@ -239,13 +564,7 @@ fn pw_thread(
                 Some(bytes) => bytes.len() / 4,
                 None => return,
             };
-            let cancelled = st.cancelled;
-            if cancelled {
-                st.queue.clear();
-                st.cancelled = false;
-                st.queued.store(0, Ordering::Relaxed);
-            }
-            let take = if cancelled { 0 } else { n.min(st.queue.len()) };
+            let take = n.min(st.queue.len());
             let samples: Vec<f32> = if take > 0 {
                 st.queue.drain(..take).collect()
             } else {
@@ -279,6 +598,21 @@ fn pw_thread(
         )
         .context("connect capture")?;
 
+    if let Some(stream) = aec_stream.as_ref() {
+        let aec_bytes = format_bytes(CAPTURE_RATE, spa::param::audio::AudioFormat::S16LE)?;
+        let mut aec_params = [Pod::from_bytes(&aec_bytes).context("aec pod")?];
+        stream
+            .connect(
+                spa::utils::Direction::Input,
+                None,
+                pw::stream::StreamFlags::AUTOCONNECT
+                    | pw::stream::StreamFlags::MAP_BUFFERS
+                    | pw::stream::StreamFlags::RT_PROCESS,
+                &mut aec_params,
+            )
+            .context("connect aec")?;
+    }
+
     let play_bytes = format_bytes(PLAYBACK_RATE, spa::param::audio::AudioFormat::F32LE)?;
     let mut play_params = [Pod::from_bytes(&play_bytes).context("playback pod")?];
     play_stream
@@ -300,22 +634,27 @@ fn pw_thread(
         PwCmd::StartCapture => {
             let mut st = cap_cmd.lock().unwrap();
             st.pending.clear();
+            st.armed = Some(Instant::now());
             st.active = true;
         }
         PwCmd::StopCapture => {
             cap_cmd.lock().unwrap().active = false;
         }
-        PwCmd::QueuePlay(pcm) => {
+        PwCmd::QueuePlay { epoch, pcm } => {
             let mut st = play_cmd.lock().unwrap();
-            st.cancelled = false;
+            if epoch != st.epoch {
+                return;
+            }
             st.queue.extend(pcm);
             st.queued.store(st.queue.len(), Ordering::Relaxed);
         }
-        PwCmd::CancelPlay => {
+        PwCmd::CancelPlay { epoch } => {
+            let t0 = Instant::now();
             let mut st = play_cmd.lock().unwrap();
+            st.epoch = epoch;
             st.queue.clear();
-            st.cancelled = true;
             st.queued.store(0, Ordering::Relaxed);
+            tracing::info!(us = t0.elapsed().as_micros(), "playback cancel flushed");
         }
         PwCmd::Shutdown => {
             loop_clone.quit();
@@ -401,6 +740,18 @@ pub async fn record_until_vad(
     use crate::VadDecision;
     let mut pcm = Vec::new();
     let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(max_secs.max(1));
+    if *stop.borrow() {
+        if keep_pending {
+            while let Ok(chunk) = samples.try_recv() {
+                let d = vad.push(&chunk);
+                pcm.extend_from_slice(&chunk);
+                if matches!(d, VadDecision::SpeechEnd) {
+                    return Ok((pcm, true));
+                }
+            }
+        }
+        return Ok((pcm, false));
+    }
     if keep_pending {
         while let Ok(chunk) = samples.try_recv() {
             let d = vad.push(&chunk);
@@ -434,4 +785,63 @@ pub async fn record_until_vad(
         pcm.extend_from_slice(&chunk);
     }
     Ok((pcm, false))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{aec_barge_threshold, pair_monitor_ports};
+
+    #[test]
+    fn aec_threshold_sits_above_tts_residual() {
+        assert!((aec_barge_threshold(0.012, 0.08) - 0.0218).abs() < 1e-4);
+        assert_eq!(aec_barge_threshold(0.001, 0.08), 0.016);
+        assert_eq!(aec_barge_threshold(0.06, 0.08), 0.08);
+    }
+
+    #[test]
+    fn pairs_stereo_by_channel_suffix() {
+        let monitors = vec![
+            "analog:monitor_FL".into(),
+            "analog:monitor_FR".into(),
+        ];
+        let playback = vec![
+            "echo-cancel-sink:playback_FL".into(),
+            "echo-cancel-sink:playback_FR".into(),
+        ];
+        assert_eq!(
+            pair_monitor_ports(&monitors, &playback),
+            vec![
+                (
+                    "analog:monitor_FL".into(),
+                    "echo-cancel-sink:playback_FL".into()
+                ),
+                (
+                    "analog:monitor_FR".into(),
+                    "echo-cancel-sink:playback_FR".into()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn mixes_stereo_monitors_into_mono_playback() {
+        let monitors = vec![
+            "analog:monitor_FL".into(),
+            "analog:monitor_FR".into(),
+        ];
+        let playback = vec!["echo-cancel-sink:playback_MONO".into()];
+        assert_eq!(
+            pair_monitor_ports(&monitors, &playback),
+            vec![
+                (
+                    "analog:monitor_FL".into(),
+                    "echo-cancel-sink:playback_MONO".into()
+                ),
+                (
+                    "analog:monitor_FR".into(),
+                    "echo-cancel-sink:playback_MONO".into()
+                ),
+            ]
+        );
+    }
 }

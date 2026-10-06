@@ -40,7 +40,7 @@ pub async fn bind() -> anyhow::Result<Ipc> {
     fs::set_permissions(&sock, perms)?;
 
     let (cmd_tx, cmd_rx) = mpsc::channel(32);
-    let (ev_tx, _) = broadcast::channel(64);
+    let (ev_tx, _) = broadcast::channel(256);
     let events = ev_tx.clone();
 
     tokio::spawn(async move {
@@ -80,6 +80,9 @@ async fn handle_client(
                         break;
                     }
                     if write.write_all(b"\n").await.is_err() {
+                        break;
+                    }
+                    if write.flush().await.is_err() {
                         break;
                     }
                 }

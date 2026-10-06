@@ -10,6 +10,8 @@ pub enum VadDecision {
 pub struct EnergyVad {
     threshold: f32,
     hangover_frames: u32,
+    start_confirm: u32,
+    voiced_run: u32,
     silence_run: u32,
     in_speech: bool,
     ever_speech: bool,
@@ -17,10 +19,21 @@ pub struct EnergyVad {
 
 impl EnergyVad {
     pub fn new(threshold: f32, hangover_ms: u64, frame_ms: u64) -> Self {
+        Self::with_confirm(threshold, hangover_ms, frame_ms, 1)
+    }
+
+    pub fn with_confirm(
+        threshold: f32,
+        hangover_ms: u64,
+        frame_ms: u64,
+        start_confirm: u32,
+    ) -> Self {
         let hangover_frames = (hangover_ms / frame_ms.max(1)).max(1) as u32;
         Self {
             threshold,
             hangover_frames,
+            start_confirm: start_confirm.max(1),
+            voiced_run: 0,
             silence_run: 0,
             in_speech: false,
             ever_speech: false,
@@ -28,6 +41,7 @@ impl EnergyVad {
     }
 
     pub fn reset(&mut self) {
+        self.voiced_run = 0;
         self.silence_run = 0;
         self.in_speech = false;
         self.ever_speech = false;
@@ -51,13 +65,18 @@ impl EnergyVad {
 
         if voiced {
             self.silence_run = 0;
+            self.voiced_run = self.voiced_run.saturating_add(1);
             if !self.in_speech {
+                if self.voiced_run < self.start_confirm {
+                    return VadDecision::Silence;
+                }
                 self.in_speech = true;
                 self.ever_speech = true;
                 return VadDecision::SpeechStart;
             }
             return VadDecision::Speech;
         }
+        self.voiced_run = 0;
 
         if self.in_speech {
             self.silence_run += 1;

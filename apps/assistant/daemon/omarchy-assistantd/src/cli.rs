@@ -9,6 +9,7 @@ async fn main() -> anyhow::Result<()> {
         "ptt-start" => send_command(&Command::PttStart).await?,
         "ptt-stop" => send_command(&Command::PttStop).await?,
         "cancel" => send_command(&Command::Cancel).await?,
+        "cancel-esc" => cancel_esc().await?,
         "reload" => {
             send_command(&Command::Reload).await?;
             let events = send_and_listen(Some(Command::Status), 400).await?;
@@ -59,6 +60,28 @@ fn print_events(events: Vec<assistant_core::Event>) {
     }
 }
 
+async fn cancel_esc() -> anyhow::Result<()> {
+    let events = send_and_listen(Some(Command::Status), 80).await?;
+    let busy = events.iter().any(|ev| match ev {
+        assistant_core::Event::Health { state, .. }
+        | assistant_core::Event::State { state, .. } => {
+            !matches!(
+                state,
+                assistant_core::AssistantState::Idle | assistant_core::AssistantState::Interrupted
+            )
+        }
+        _ => false,
+    });
+    if busy {
+        send_command(&Command::Cancel).await?;
+        return Ok(());
+    }
+    let _ = std::process::Command::new("hyprctl")
+        .args(["dispatch", "sendshortcut", ",Escape,"])
+        .status();
+    Ok(())
+}
+
 fn print_help() {
     eprintln!(
         "omarchy-assistant — Nyx voice assistant client\n\n\
@@ -66,11 +89,12 @@ fn print_help() {
            ptt-start   start push-to-talk capture\n\
            ptt-stop    stop capture (key-up)\n\
            cancel      interrupt the current turn\n\
+           cancel-esc  Escape: stop Nyx, or pass Escape through when idle\n\
            status      print a health event\n\
            say TEXT    skip STT; speak an LLM reply\n\
-           demo        Kokoro → Voxtype → LLM → speakers\n\
+           demo        Kokoro → Parakeet → LLM → speakers\n\
            listen      print events until idle/timeout\n\
-           reload      reread apps.toml without restarting\n\
+           reload      reread apps.toml, commands.toml, and config.toml without restarting models\n\
            shutdown    stop the daemon\n"
     );
 }

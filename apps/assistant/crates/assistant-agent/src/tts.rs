@@ -6,6 +6,31 @@ use std::io::Cursor;
 use std::path::Path;
 use std::sync::Mutex;
 
+fn cuda_skip_stamp() -> std::path::PathBuf {
+    paths::cache_dir().join("kokoro-cuda-skip")
+}
+
+/// ORT CUDA EP has no Blackwell (sm_120) kernels. Skip the load+probe that always fails.
+fn skip_cuda_tts() -> bool {
+    if cuda_skip_stamp().exists() {
+        return true;
+    }
+    let Ok(out) = std::process::Command::new("nvidia-smi")
+        .args(["--query-gpu=compute_cap", "--format=csv,noheader"])
+        .output()
+    else {
+        return false;
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .any(|l| l.trim().starts_with("12."))
+}
+
+fn remember_cuda_tts_broken() {
+    let _ = std::fs::create_dir_all(paths::cache_dir());
+    let _ = std::fs::write(cuda_skip_stamp(), b"ort-cuda has no sm_120 kernels\n");
+}
+
 fn load_engine(cache: &Path, device: TtsDevice) -> Result<Engine> {
     Engine::builder()
         .cache_dir(cache)
@@ -41,7 +66,7 @@ impl KokoroProvider {
         std::fs::create_dir_all(&cache)?;
         tracing::info!("loading Kokoro (this downloads weights on first run)");
         let t0 = std::time::Instant::now();
-        let want_cuda = cfg.tts.device != "cpu";
+        let want_cuda = cfg.tts.device != "cpu" && !skip_cuda_tts();
         let engine = if want_cuda {
             match load_engine(&cache, TtsDevice::Cuda(0)) {
                 Ok(engine) => match probe_speak(&engine, &cfg.tts.voice) {
@@ -51,6 +76,7 @@ impl KokoroProvider {
                             %err,
                             "Kokoro CUDA loaded but cannot infer on this GPU; using CPU"
                         );
+                        remember_cuda_tts_broken();
                         drop(engine);
                         load_engine(&cache, TtsDevice::Cpu)
                             .context("loqui Kokoro CPU fallback")?
@@ -62,6 +88,9 @@ impl KokoroProvider {
                 }
             }
         } else {
+            if cfg.tts.device != "cpu" {
+                tracing::info!("Kokoro CUDA skipped on this GPU (no sm_120 ORT kernels); using CPU");
+            }
             load_engine(&cache, TtsDevice::Cpu).context("loqui Kokoro CPU")?
         };
         tracing::info!(ms = t0.elapsed().as_millis(), "Kokoro ready");
