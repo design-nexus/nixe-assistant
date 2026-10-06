@@ -24,6 +24,9 @@ done
 if [[ ! -f "$cfg_dir/config.toml" ]]; then
   install -m 0644 "$root/config/config.toml" "$cfg_dir/config.toml"
 fi
+if [[ ! -f "$cfg_dir/apps.toml" ]]; then
+  install -m 0644 "$root/config/apps.toml" "$cfg_dir/apps.toml"
+fi
 if [[ ! -f "$cfg_dir/voxtype-parakeet.toml" ]]; then
   install -m 0644 "$root/config/voxtype-parakeet.toml" "$cfg_dir/voxtype-parakeet.toml"
 fi

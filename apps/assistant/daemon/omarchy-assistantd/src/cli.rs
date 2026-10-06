@@ -9,6 +9,11 @@ async fn main() -> anyhow::Result<()> {
         "ptt-start" => send_command(&Command::PttStart).await?,
         "ptt-stop" => send_command(&Command::PttStop).await?,
         "cancel" => send_command(&Command::Cancel).await?,
+        "reload" => {
+            send_command(&Command::Reload).await?;
+            let events = send_and_listen(Some(Command::Status), 400).await?;
+            print_events(events);
+        }
         "shutdown" => send_command(&Command::Shutdown).await?,
         "status" => {
             let events = send_and_listen(Some(Command::Status), 400).await?;
@@ -65,6 +70,7 @@ fn print_help() {
            say TEXT    skip STT; speak an LLM reply\n\
            demo        Kokoro → Voxtype → LLM → speakers\n\
            listen      print events until idle/timeout\n\
+           reload      reread apps.toml without restarting\n\
            shutdown    stop the daemon\n"
     );
 }

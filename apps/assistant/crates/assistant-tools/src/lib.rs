@@ -74,6 +74,11 @@ pub fn builtin_tools() -> Vec<ToolSpec> {
             description: "Switch Hyprland workspace".into(),
         },
         ToolSpec {
+            name: "hypr.workspace_move".into(),
+            permission: Permission::Safe,
+            description: "Move the focused window to a workspace".into(),
+        },
+        ToolSpec {
             name: "audio.mic_mute".into(),
             permission: Permission::Safe,
             description: "Toggle microphone mute".into(),
@@ -167,6 +172,26 @@ pub fn builtin_tools() -> Vec<ToolSpec> {
             name: "hypr.split".into(),
             permission: Permission::Safe,
             description: "Toggle the window split".into(),
+        },
+        ToolSpec {
+            name: "hypr.focus".into(),
+            permission: Permission::Safe,
+            description: "Focus a window in a direction".into(),
+        },
+        ToolSpec {
+            name: "hypr.window_cycle".into(),
+            permission: Permission::Safe,
+            description: "Cycle focused window".into(),
+        },
+        ToolSpec {
+            name: "hypr.window_pop".into(),
+            permission: Permission::Safe,
+            description: "Pop the window out (float and pin)".into(),
+        },
+        ToolSpec {
+            name: "capture.screenrecord".into(),
+            permission: Permission::Safe,
+            description: "Start or stop screen recording".into(),
         },
         ToolSpec {
             name: "toggle.touchpad".into(),

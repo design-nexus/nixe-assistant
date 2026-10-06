@@ -66,6 +66,14 @@ name = "Whatever"
 
 The system prompt and HUD label follow this name. Restart the daemon.
 
+## Voice apps
+
+Launched programs (terminal, browser, files, Spotify, …) are not compiled in.
+Edit `~/.config/omarchy-assistant/apps.toml`, then `omarchy-assistant reload`
+(or `systemctl --user reload omarchy-assistantd` / SIGHUP). Models stay loaded.
+Shipped template: `config/apps.toml`. Use `omarchy = ["launch", "nautilus"]` or
+`exec = ["env", "GSK_RENDERER=gl", "/usr/bin/strata"]`.
+
 ## Models
 
 `[llm].model = "auto"` uses a local GGUF if present (LM Studio copies first).

@@ -27,6 +27,8 @@ cargo build --release -p omarchy-assistantd
 
 Hold **Alt+Space**, talk, release.
 
+Voice-launched apps live in `~/.config/omarchy-assistant/apps.toml` (template: `config/apps.toml`). Edit that file, then `omarchy-assistant reload` (or SIGHUP). No rebuild.
+
 ## Layout
 
 ```

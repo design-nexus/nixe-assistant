@@ -6,6 +6,7 @@ Wants=pipewire.service nyx-parakeet.service
 [Service]
 Type=simple
 ExecStart=%h/.local/bin/omarchy-assistantd
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=2
 Environment=RUST_LOG=info

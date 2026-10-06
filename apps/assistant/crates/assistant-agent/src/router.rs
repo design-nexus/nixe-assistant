@@ -7,15 +7,20 @@ pub enum Intent {
     Say(&'static str),
     Desktop {
         tool: &'static str,
-        spoken: &'static str,
-        omarchy: &'static [&'static str],
+        spoken: String,
+        omarchy: Vec<String>,
     },
 }
 
 const CAN_DO: &str = "I didn't catch a command I can run. I can lock, close a window, change volume or brightness, switch workspaces 1 to 5, cycle wallpaper, toggle the bar, gaps, or night light, take a screenshot, or open the browser, terminal, files, Spotify, or Signal.";
 
 pub fn route(text: &str) -> Intent {
-    let key = preprocess(text);
+    route_with_apps(text, &[])
+}
+
+pub fn route_with_apps(text: &str, apps: &[assistant_core::AppLaunch]) -> Intent {
+    let extra = app_vocab(apps);
+    let key = preprocess(text, &extra);
     if key.is_empty() {
         return Intent::Chat;
     }
@@ -28,10 +33,19 @@ pub fn route(text: &str) -> Intent {
     if let Some(hit) = exact_command(&key) {
         return hit;
     }
+    if let Some(hit) = exact_app(&key, apps) {
+        return hit;
+    }
     if let Some(n) = workspace_num(&key) {
+        if is_workspace_move(&key) {
+            return workspace_move_intent(n);
+        }
         return workspace_intent(n);
     }
     if let Some(hit) = fuzzy_command(&key) {
+        return hit;
+    }
+    if let Some(hit) = fuzzy_app(&key, apps) {
         return hit;
     }
     if looks_like_command(&key) {
@@ -40,24 +54,74 @@ pub fn route(text: &str) -> Intent {
     Intent::Chat
 }
 
+fn desktop(tool: &'static str, spoken: &'static str, omarchy: &[&str]) -> Intent {
+    Intent::Desktop {
+        tool,
+        spoken: spoken.to_string(),
+        omarchy: omarchy.iter().map(|s| (*s).to_string()).collect(),
+    }
+}
+
+fn app_vocab(apps: &[assistant_core::AppLaunch]) -> Vec<String> {
+    let mut words = Vec::new();
+    for app in apps {
+        for phrase in &app.phrases {
+            for w in phrase.split_whitespace() {
+                if w.len() >= 4 && !words.iter().any(|x| x == w) {
+                    words.push(w.to_string());
+                }
+            }
+        }
+    }
+    words
+}
+
+fn exact_app(key: &str, apps: &[assistant_core::AppLaunch]) -> Option<Intent> {
+    for app in apps {
+        if app.phrases.iter().any(|p| p == key) {
+            return Some(Intent::Desktop {
+                tool: "app.launch",
+                spoken: app.reply.clone(),
+                omarchy: app.args(),
+            });
+        }
+    }
+    None
+}
+
+fn fuzzy_app(key: &str, apps: &[assistant_core::AppLaunch]) -> Option<Intent> {
+    let mut best: Option<Intent> = None;
+    let mut best_d = usize::MAX;
+    for app in apps {
+        for phrase in &app.phrases {
+            let d = phrase_distance(key, phrase);
+            if d > 0 && d <= max_edits(phrase, key) && d < best_d {
+                best_d = d;
+                best = Some(Intent::Desktop {
+                    tool: "app.launch",
+                    spoken: app.reply.clone(),
+                    omarchy: app.args(),
+                });
+            }
+        }
+    }
+    best
+}
+
 const FILLER: &[&str] = &[
     "yeah", "yes", "yep", "yup", "ok", "okay", "um", "uh", "hmm", "huh", "ah", "oh", "mhm",
 ];
 
 /// Backchannel that should not start a new chat when there is no conversation yet.
 pub fn is_filler(text: &str) -> bool {
-    let key = preprocess(text);
+    let key = preprocess(text, &[]);
     FILLER.iter().any(|p| *p == key)
 }
 
 fn exact_command(key: &str) -> Option<Intent> {
     for (phrases, tool, spoken, omarchy) in TABLE {
         if phrases.iter().any(|p| *p == key) {
-            return Some(Intent::Desktop {
-                tool,
-                spoken,
-                omarchy,
-            });
+            return Some(desktop(tool, spoken, omarchy));
         }
     }
     None
@@ -71,11 +135,7 @@ fn fuzzy_command(key: &str) -> Option<Intent> {
             let d = phrase_distance(key, phrase);
             if d > 0 && d <= max_edits(phrase, key) && d < best_d {
                 best_d = d;
-                best = Some(Intent::Desktop {
-                    tool,
-                    spoken,
-                    omarchy,
-                });
+                best = Some(desktop(tool, spoken, omarchy));
             }
         }
     }
@@ -122,11 +182,21 @@ fn levenshtein(a: &str, b: &str) -> usize {
 
 fn workspace_intent(n: u8) -> Intent {
     let i = (n - 1) as usize;
-    Intent::Desktop {
-        tool: "hypr.workspace",
-        spoken: WORKSPACE_SPOKEN[i],
-        omarchy: WORKSPACES[i],
-    }
+    desktop("hypr.workspace", WORKSPACE_SPOKEN[i], WORKSPACES[i])
+}
+
+fn workspace_move_intent(n: u8) -> Intent {
+    let i = (n - 1) as usize;
+    desktop(
+        "hypr.workspace_move",
+        WORKSPACE_MOVE_SPOKEN[i],
+        WORKSPACE_MOVES[i],
+    )
+}
+
+fn is_workspace_move(key: &str) -> bool {
+    key.split_whitespace()
+        .any(|w| w == "move" || w == "send" || w == "put")
 }
 
 fn workspace_num(key: &str) -> Option<u8> {
@@ -158,7 +228,15 @@ fn workspace_num(key: &str) -> Option<u8> {
     let n = parse_ws_num(last)?;
     if rest
         .iter()
-        .any(|w| *w == "go" || *w == "going" || *w == "switch" || *w == "change")
+        .any(|w| {
+            *w == "go"
+                || *w == "going"
+                || *w == "switch"
+                || *w == "change"
+                || *w == "move"
+                || *w == "send"
+                || *w == "put"
+        })
     {
         return Some(n);
     }
@@ -230,6 +308,12 @@ fn looks_like_command(key: &str) -> bool {
         "going ",
         "switch ",
         "make ",
+        "move ",
+        "send ",
+        "put ",
+        "focus ",
+        "record ",
+        "stop recording",
         "open ",
         "launch ",
         "turn ",
@@ -271,12 +355,16 @@ fn looks_like_command(key: &str) -> bool {
         "incognito",
         "omawrite",
         "passwords",
+        "calculator",
+        "clipboard",
+        "emojis",
+        "keybindings",
     ];
     STARTS.iter().any(|p| key == p.trim() || key.starts_with(p))
         || key.split_whitespace().any(looks_like_workspace)
 }
 
-fn preprocess(raw: &str) -> String {
+fn preprocess(raw: &str, extra: &[String]) -> String {
     let mut s = normalize(raw);
     s = split_trailing_digits(&s);
     for (from, to) in [
@@ -289,12 +377,12 @@ fn preprocess(raw: &str) -> String {
         s = s.replace(from, to);
     }
     s.split_whitespace()
-        .map(correct_token)
+        .map(|w| correct_token(w, extra))
         .collect::<Vec<_>>()
         .join(" ")
 }
 
-fn correct_token(w: &str) -> String {
+fn correct_token(w: &str, extra: &[String]) -> String {
     if w == "mike" {
         return "make".into();
     }
@@ -309,7 +397,7 @@ fn correct_token(w: &str) -> String {
         "five" | "fife" | "fifth" => return "5".into(),
         _ => {}
     }
-    snap_vocab(w).to_string()
+    snap_vocab(w, extra).to_string()
 }
 
 const VOCAB: &[&str] = &[
@@ -341,6 +429,13 @@ const VOCAB: &[&str] = &[
     "private",
     "passwords",
     "omawrite",
+    "focus",
+    "calculator",
+    "recording",
+    "emoji",
+    "clipboard",
+    "keybindings",
+    "picker",
     "bluetooth",
     "mute",
     "unmute",
@@ -348,6 +443,9 @@ const VOCAB: &[&str] = &[
     "launch",
     "switch",
     "change",
+    "move",
+    "send",
+    "put",
     "make",
     "turn",
     "toggle",
@@ -392,25 +490,31 @@ const VOCAB: &[&str] = &[
     "headphones",
 ];
 
-fn snap_vocab(w: &str) -> &str {
+fn snap_vocab<'a>(w: &'a str, extra: &'a [String]) -> &'a str {
     if w.len() < 4 {
         return w;
     }
-    if VOCAB.iter().any(|v| *v == w) {
+    if VOCAB.iter().any(|v| *v == w) || extra.iter().any(|v| v == w) {
         return w;
     }
     let mut best = w;
     let mut best_d = usize::MAX;
-    for v in VOCAB {
+    let consider = |v: &'a str, best: &mut &'a str, best_d: &mut usize| {
         if v.len() < 4 {
-            continue;
+            return;
         }
         let d = levenshtein(w, v);
         let max = if w.len().min(v.len()) < 6 { 1 } else { 2 };
-        if d > 0 && d <= max && d < best_d {
-            best_d = d;
-            best = v;
+        if d > 0 && d <= max && d < *best_d {
+            *best_d = d;
+            *best = v;
         }
+    };
+    for v in VOCAB {
+        consider(v, &mut best, &mut best_d);
+    }
+    for v in extra {
+        consider(v.as_str(), &mut best, &mut best_d);
     }
     best
 }
@@ -444,6 +548,22 @@ const WORKSPACES: [&[&str]; 5] = [
     &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.focus({ workspace = "3" }))"#],
     &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.focus({ workspace = "4" }))"#],
     &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.focus({ workspace = "5" }))"#],
+];
+
+const WORKSPACE_MOVE_SPOKEN: [&str; 5] = [
+    "Moving to workspace 1.",
+    "Moving to workspace 2.",
+    "Moving to workspace 3.",
+    "Moving to workspace 4.",
+    "Moving to workspace 5.",
+];
+
+const WORKSPACE_MOVES: [&[&str]; 5] = [
+    &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.window.move({ workspace = "1" }))"#],
+    &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.window.move({ workspace = "2" }))"#],
+    &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.window.move({ workspace = "3" }))"#],
+    &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.window.move({ workspace = "4" }))"#],
+    &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.window.move({ workspace = "5" }))"#],
 ];
 
 const MUTE_MIC: &[&str] = &[
@@ -525,32 +645,6 @@ const TABLE: &[(&[&str], &str, &str, &[&str])] = &[
     ),
     (
         &[
-            "open browser",
-            "launch browser",
-            "start browser",
-            "open the browser",
-            "launch the browser",
-            "open chrome",
-            "launch chrome",
-        ],
-        "app.launch",
-        "Opening the browser.",
-        &["launch", "browser"],
-    ),
-    (
-        &[
-            "open terminal",
-            "launch terminal",
-            "start terminal",
-            "open a terminal",
-            "open the terminal",
-        ],
-        "app.launch",
-        "Opening a terminal.",
-        &["launch", "terminal"],
-    ),
-    (
-        &[
             "screenshot",
             "take a screenshot",
             "take screenshot",
@@ -620,41 +714,6 @@ const TABLE: &[(&[&str], &str, &str, &[&str])] = &[
     ),
     (
         &[
-            "open files",
-            "open file manager",
-            "open the file manager",
-            "open strata",
-        ],
-        "app.launch",
-        "Opening files.",
-        &["exec", "env", "GSK_RENDERER=gl", "/usr/bin/strata"],
-    ),
-    (
-        &["open nautilus", "launch nautilus"],
-        "app.launch",
-        "Opening Nautilus.",
-        &["launch", "nautilus"],
-    ),
-    (
-        &["open obsidian", "launch obsidian", "obsidian"],
-        "app.launch",
-        "Opening Obsidian.",
-        &["exec", "obsidian"],
-    ),
-    (
-        &["open chatgpt", "launch chatgpt", "chatgpt"],
-        "app.launch",
-        "Opening ChatGPT.",
-        &["exec", "chatgpt"],
-    ),
-    (
-        &["open music", "launch music"],
-        "app.launch",
-        "Opening Spotify.",
-        &["launch", "spotify"],
-    ),
-    (
-        &[
             "toggle bluetooth",
             "bluetooth",
             "turn bluetooth on",
@@ -679,23 +738,6 @@ const TABLE: &[(&[&str], &str, &str, &[&str])] = &[
         "toggle.idle",
         "Staying awake.",
         &["toggle", "idle", "stay-awake"],
-    ),
-    (
-        &[
-            "open spotify",
-            "launch spotify",
-            "play spotify",
-            "spotify",
-        ],
-        "app.launch",
-        "Opening Spotify.",
-        &["launch", "spotify"],
-    ),
-    (
-        &["open signal", "launch signal", "signal"],
-        "app.launch",
-        "Opening Signal.",
-        &["launch", "signal"],
     ),
     (
         &[
@@ -775,16 +817,6 @@ const TABLE: &[(&[&str], &str, &str, &[&str])] = &[
     ),
     (
         &[
-            "about this computer",
-            "system info",
-            "system information",
-        ],
-        "app.launch",
-        "Opening system info.",
-        &["launch", "about"],
-    ),
-    (
-        &[
             "screenshot window",
             "window screenshot",
             "capture a window",
@@ -854,6 +886,20 @@ const TABLE: &[(&[&str], &str, &str, &[&str])] = &[
             "hyprctl",
             "eval",
             r#"hl.dispatch(hl.dsp.focus({ workspace = "e-1" }))"#,
+        ],
+    ),
+    (
+        &[
+            "former workspace",
+            "go to the former workspace",
+            "back to the last workspace",
+        ],
+        "hypr.workspace",
+        "Former workspace.",
+        &[
+            "hyprctl",
+            "eval",
+            r#"hl.dispatch(hl.dsp.focus({ workspace = "previous" }))"#,
         ],
     ),
     (
@@ -935,16 +981,6 @@ const TABLE: &[(&[&str], &str, &str, &[&str])] = &[
     ),
     (
         &[
-            "open discord",
-            "launch discord",
-            "discord",
-        ],
-        "app.launch",
-        "Opening Discord.",
-        &["launch", "discord", "community"],
-    ),
-    (
-        &[
             "toggle scratchpad",
             "scratchpad",
             "show scratchpad",
@@ -996,31 +1032,126 @@ const TABLE: &[(&[&str], &str, &str, &[&str])] = &[
     ),
     (
         &[
-            "open 1password",
-            "open one password",
-            "open passwords",
-            "passwords",
+            "focus left",
+            "focus the left window",
+            "window left",
         ],
-        "app.launch",
-        "Opening 1Password.",
-        &["launch", "1password"],
-    ),
-    (
-        &["open omawrite", "launch omawrite", "omawrite"],
-        "app.launch",
-        "Opening Omawrite.",
-        &["exec", "omawrite"],
+        "hypr.focus",
+        "Focusing left.",
+        &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.focus({ direction = "l" }))"#],
     ),
     (
         &[
-            "private browser",
-            "open private browser",
-            "incognito",
-            "open incognito",
+            "focus right",
+            "focus the right window",
+            "window right",
+        ],
+        "hypr.focus",
+        "Focusing right.",
+        &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.focus({ direction = "r" }))"#],
+    ),
+    (
+        &[
+            "focus up",
+            "focus above",
+            "focus the window above",
+        ],
+        "hypr.focus",
+        "Focusing up.",
+        &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.focus({ direction = "u" }))"#],
+    ),
+    (
+        &[
+            "focus down",
+            "focus below",
+            "focus the window below",
+        ],
+        "hypr.focus",
+        "Focusing down.",
+        &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.focus({ direction = "d" }))"#],
+    ),
+    (
+        &["next window", "cycle windows", "focus the next window"],
+        "hypr.window_cycle",
+        "Next window.",
+        &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.window.cycle_next())"#],
+    ),
+    (
+        &["previous window", "focus the previous window"],
+        "hypr.window_cycle",
+        "Previous window.",
+        &[
+            "hyprctl",
+            "eval",
+            r#"hl.dispatch(hl.dsp.window.cycle_next({ next = false }))"#,
+        ],
+    ),
+    (
+        &[
+            "pop the window out",
+            "pop out",
+            "pop window",
+            "pin the window",
+        ],
+        "hypr.window_pop",
+        "Popping the window out.",
+        &["hyprland", "window", "pop"],
+    ),
+    (
+        &[
+            "open the menu",
+            "omarchy menu",
+            "open omarchy menu",
+            "open the omarchy menu",
         ],
         "app.launch",
-        "Opening a private browser.",
-        &["launch", "browser", "--private"],
+        "Opening the menu.",
+        &["menu", "toggle", "root"],
+    ),
+    (
+        &["open apps menu", "apps menu", "open the apps menu"],
+        "app.launch",
+        "Opening the apps menu.",
+        &["menu", "toggle", "apps"],
+    ),
+    (
+        &["emoji picker", "open emojis", "emojis"],
+        "app.launch",
+        "Opening emojis.",
+        &["menu", "emoji"],
+    ),
+    (
+        &["clipboard history", "open clipboard", "clipboard"],
+        "app.launch",
+        "Opening the clipboard.",
+        &["menu", "clipboard"],
+    ),
+    (
+        &["show keybindings", "keybindings", "open keybindings"],
+        "app.launch",
+        "Opening keybindings.",
+        &["menu", "keybindings"],
+    ),
+    (
+        &[
+            "start recording",
+            "record the screen",
+            "record screen",
+            "start screen recording",
+        ],
+        "capture.screenrecord",
+        "Starting a screen recording.",
+        &["capture", "screenrecording", "--fullscreen"],
+    ),
+    (
+        &[
+            "stop recording",
+            "stop screen recording",
+            "stop the recording",
+        ],
+        "capture.screenrecord",
+        "Stopping the recording.",
+        &["capture", "screenrecording", "--stop-recording"],
     ),
 ];
 
@@ -1054,6 +1185,10 @@ fn normalize(raw: &str) -> String {
 mod tests {
     use super::*;
 
+    fn route(text: &str) -> Intent {
+        route_with_apps(text, &assistant_core::AppsFile::shipped().app)
+    }
+
     fn tool(text: &str) -> Option<&'static str> {
         match route(text) {
             Intent::Desktop { tool, .. } => Some(tool),
@@ -1076,25 +1211,40 @@ mod tests {
         assert_eq!(tool("open the browser"), Some("app.launch"));
         assert_eq!(tool("open a terminal"), Some("app.launch"));
         match route("open terminal") {
-            Intent::Desktop { omarchy, .. } => assert_eq!(omarchy, &["launch", "terminal"]),
+            Intent::Desktop { omarchy, .. } => {
+                assert_eq!(omarchy, ["launch", "terminal"]);
+            }
             other => panic!("{other:?}"),
         }
         assert_eq!(tool("brighter"), Some("display.brightness_up"));
         assert_eq!(tool("next wallpaper"), Some("theme.bg_next"));
         assert_eq!(tool("go to workspace 3"), Some("hypr.workspace"));
+        match route("move to workspace 3") {
+            Intent::Desktop { tool, spoken, .. } => {
+                assert_eq!(tool, "hypr.workspace_move");
+                assert_eq!(spoken, "Moving to workspace 3.");
+            }
+            other => panic!("{other:?}"),
+        }
+        match route("send this window to workspace one") {
+            Intent::Desktop { tool, spoken, .. } => {
+                assert_eq!(tool, "hypr.workspace_move");
+                assert_eq!(spoken, "Moving to workspace 1.");
+            }
+            other => panic!("{other:?}"),
+        }
         assert_eq!(tool("workspace 10"), None);
         assert_eq!(tool("go to workspace 8"), None);
         assert_eq!(tool("workspace 6"), None);
         assert_eq!(tool("open files"), Some("app.launch"));
         match route("open files") {
             Intent::Desktop { omarchy, .. } => {
-                assert_eq!(omarchy[0], "exec");
-                assert!(omarchy.iter().any(|a| *a == "/usr/bin/strata"));
+                assert_eq!(omarchy, ["launch", "nautilus"]);
             }
             other => panic!("{other:?}"),
         }
         match route("open nautilus") {
-            Intent::Desktop { omarchy, .. } => assert_eq!(omarchy, &["launch", "nautilus"]),
+            Intent::Desktop { omarchy, .. } => assert_eq!(omarchy, ["launch", "nautilus"]),
             other => panic!("{other:?}"),
         }
         assert_eq!(tool("make the screen brighter"), Some("display.brightness_up"));
@@ -1157,6 +1307,7 @@ mod tests {
         assert_eq!(tool("close the window"), Some("hypr.window_close"));
         assert_eq!(tool("next workspace"), Some("hypr.workspace"));
         assert_eq!(tool("previous workspace"), Some("hypr.workspace"));
+        assert_eq!(tool("former workspace"), Some("hypr.workspace"));
         assert_eq!(tool("toggle touchpad"), Some("toggle.touchpad"));
         assert_eq!(tool("switch audio output"), Some("audio.output_switch"));
         assert_eq!(tool("keyboard brighter"), Some("display.keyboard_up"));
@@ -1173,9 +1324,42 @@ mod tests {
         assert_eq!(tool("open passwords"), Some("app.launch"));
         assert_eq!(tool("open omawrite"), Some("app.launch"));
         assert_eq!(tool("private browser"), Some("app.launch"));
+        assert_eq!(tool("focus left"), Some("hypr.focus"));
+        assert_eq!(tool("next window"), Some("hypr.window_cycle"));
+        assert_eq!(tool("open calculator"), Some("app.launch"));
+        assert_eq!(tool("color picker"), Some("app.launch"));
+        assert_eq!(tool("open the menu"), Some("app.launch"));
+        assert_eq!(tool("apps menu"), Some("app.launch"));
+        assert_eq!(tool("emoji picker"), Some("app.launch"));
+        assert_eq!(tool("clipboard history"), Some("app.launch"));
+        assert_eq!(tool("show keybindings"), Some("app.launch"));
+        assert_eq!(tool("record the screen"), Some("capture.screenrecord"));
+        assert_eq!(tool("stop recording"), Some("capture.screenrecord"));
+        assert_eq!(tool("pop the window out"), Some("hypr.window_pop"));
         assert_eq!(tool("close"), None);
         assert!(is_filler("Yeah."));
         assert!(is_filler("ok"));
         assert!(!is_filler("lock the screen"));
+    }
+
+    #[test]
+    fn user_apps_file_can_change_files_without_rebuild() {
+        let apps = [assistant_core::AppLaunch {
+            phrases: vec!["open files".into()],
+            reply: "Opening files.".into(),
+            omarchy: vec![],
+            exec: vec![
+                "env".into(),
+                "GSK_RENDERER=gl".into(),
+                "/usr/bin/strata".into(),
+            ],
+        }];
+        match route_with_apps("open files", &apps) {
+            Intent::Desktop { omarchy, .. } => {
+                assert_eq!(omarchy[0], "exec");
+                assert!(omarchy.iter().any(|a| a == "/usr/bin/strata"));
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }

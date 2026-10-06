@@ -44,8 +44,10 @@ pub async fn omarchy(args: &[&str]) -> Result<String> {
 }
 
 fn should_hypr_exec(args: &[&str]) -> bool {
-    matches!(args.first().copied(), Some("launch") | Some("capture"))
-        || matches!(args, ["theme", "switcher", ..])
+    matches!(
+        args.first().copied(),
+        Some("launch") | Some("capture") | Some("menu")
+    ) || matches!(args, ["theme", "switcher", ..])
 }
 
 /// Run a command through Hyprland so GUI apps belong to the compositor, not Nyx.
@@ -82,6 +84,7 @@ mod tests {
         assert!(should_hypr_exec(&["launch", "nautilus"]));
         assert!(should_hypr_exec(&["capture", "screenshot"]));
         assert!(should_hypr_exec(&["theme", "switcher"]));
+        assert!(should_hypr_exec(&["menu", "toggle", "root"]));
         assert!(!should_hypr_exec(&["exec", "obsidian"]));
         assert!(!should_hypr_exec(&["system", "lock"]));
         assert!(!should_hypr_exec(&["audio", "output", "volume", "raise"]));

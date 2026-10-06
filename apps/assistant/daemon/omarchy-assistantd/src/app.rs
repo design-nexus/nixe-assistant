@@ -1,8 +1,11 @@
 use anyhow::{Context, Result};
-use assistant_agent::{is_filler, route, Intent, KokoroProvider, PhraseChunker, VoxtypeProvider};
+use assistant_agent::{
+    is_filler, route_with_apps, Intent, KokoroProvider, PhraseChunker, VoxtypeProvider,
+};
 use assistant_audio::{
     f32_24k_to_i16_16k, record_until, record_until_vad, AudioEngine, EnergyVad,
 };
+use assistant_core::apps::AppsFile;
 use assistant_core::config::Config;
 use assistant_core::event::Event;
 use assistant_core::state::{AssistantState, StateMachine};
@@ -37,8 +40,14 @@ pub async fn run(cfg: Config) -> Result<()> {
     let samples = audio.take_samples().context("capture channel")?;
     let (release_tx, release_rx) = watch::channel(true);
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+    let apps = AppsFile::load().unwrap_or_else(|err| {
+        tracing::warn!(%err, "apps.toml; using shipped defaults");
+        AppsFile::shipped()
+    });
+    tracing::info!(n = apps.app.len(), "loaded voice apps");
     let app = Arc::new(App {
         cfg,
+        apps: Mutex::new(apps),
         state: Mutex::new(StateMachine::new()),
         events,
         audio,
@@ -65,6 +74,7 @@ pub async fn run(cfg: Config) -> Result<()> {
     app.emit_health();
 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let mut sighup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
     loop {
         tokio::select! {
             cmd = commands.recv() => {
@@ -87,6 +97,10 @@ pub async fn run(cfg: Config) -> Result<()> {
                 tracing::info!("SIGTERM");
                 break;
             }
+            _ = sighup.recv() => {
+                tracing::info!("SIGHUP");
+                app.reload_apps().await;
+            }
             _ = shutdown_rx.changed() => {
                 if *shutdown_rx.borrow() {
                     break;
@@ -99,6 +113,7 @@ pub async fn run(cfg: Config) -> Result<()> {
 
 struct App {
     cfg: Config,
+    apps: Mutex<AppsFile>,
     state: Mutex<StateMachine>,
     events: broadcast::Sender<Event>,
     audio: AudioEngine,
@@ -145,6 +160,23 @@ impl App {
         });
     }
 
+    async fn reload_apps(&self) {
+        match AppsFile::load() {
+            Ok(apps) => {
+                let n = apps.app.len();
+                *self.apps.lock().await = apps;
+                tracing::info!(n, "reloaded voice apps");
+                self.emit_health();
+            }
+            Err(err) => {
+                tracing::error!(%err, "reload apps.toml failed; keeping previous list");
+                self.emit(Event::Error {
+                    message: format!("apps.toml: {err}"),
+                });
+            }
+        }
+    }
+
     async fn emit_state(&self, next: AssistantState) {
         let changed = {
             let mut sm = self.state.lock().await;
@@ -167,6 +199,7 @@ impl App {
             Command::Shutdown => {}
             Command::Say { text } => self.start_text_turn(text).await,
             Command::Demo => self.start_demo().await,
+            Command::Reload => self.reload_apps().await,
         }
     }
 
@@ -391,6 +424,7 @@ impl App {
             | "theme.bg_next"
             | "theme.switcher"
             | "hypr.workspace"
+            | "hypr.workspace_move"
             | "hypr.gaps"
             | "hypr.transparency"
             | "hypr.fullscreen"
@@ -400,6 +434,10 @@ impl App {
             | "hypr.scratchpad_move"
             | "hypr.float"
             | "hypr.split"
+            | "hypr.focus"
+            | "hypr.window_cycle"
+            | "hypr.window_pop"
+            | "capture.screenrecord"
             | "bluetooth.toggle"
             | "toggle.dnd"
             | "toggle.idle"
@@ -424,7 +462,8 @@ impl App {
     }
 
     async fn respond(self: &Arc<Self>, user_text: &str, mut timing: TurnTiming) -> Result<()> {
-        let intent = route(user_text);
+        let apps = self.apps.lock().await.app.clone();
+        let intent = route_with_apps(user_text, &apps);
         tracing::info!(?intent, "routed");
         match intent {
             Intent::Forget => {
@@ -445,7 +484,7 @@ impl App {
                 if !self.intent_allowed(tool) {
                     return self.speak_reply("I can't do that.", timing).await;
                 }
-                return self.run_desktop(tool, spoken, omarchy, timing).await;
+                return self.run_desktop(tool, &spoken, omarchy, timing).await;
             }
             Intent::Chat => {}
         }
@@ -532,15 +571,16 @@ impl App {
         self: &Arc<Self>,
         tool: &str,
         spoken: &str,
-        omarchy: &[&str],
+        omarchy: Vec<String>,
         timing: TurnTiming,
     ) -> Result<()> {
         tracing::info!(tool, "routed desktop command");
         self.emit_state(AssistantState::Executing).await;
-        let result = if omarchy.first() == Some(&"hyprctl") {
-            assistant_omarchy::hyprctl(&omarchy[1..]).await
+        let args: Vec<&str> = omarchy.iter().map(String::as_str).collect();
+        let result = if args.first() == Some(&"hyprctl") {
+            assistant_omarchy::hyprctl(&args[1..]).await
         } else {
-            assistant_omarchy::omarchy(omarchy).await
+            assistant_omarchy::omarchy(&args).await
         };
         if let Err(err) = result {
             tracing::error!(%err, tool, "desktop command failed");

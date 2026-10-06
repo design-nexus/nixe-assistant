@@ -1,0 +1,106 @@
+# Voice-launched apps. Edit this file, then:
+#   systemctl --user restart omarchy-assistantd
+#
+# `omarchy` runs `omarchy <args>` through Hyprland (same as Super+Return for terminal).
+# `exec` runs a raw command through Hyprland instead.
+# If both are set, `exec` wins.
+
+[[app]]
+phrases = [
+  "open terminal",
+  "launch terminal",
+  "start terminal",
+  "open a terminal",
+  "open the terminal",
+]
+reply = "Opening a terminal."
+omarchy = ["launch", "terminal"]
+
+[[app]]
+phrases = [
+  "open browser",
+  "launch browser",
+  "start browser",
+  "open the browser",
+  "launch the browser",
+  "open chrome",
+  "launch chrome",
+]
+reply = "Opening the browser."
+omarchy = ["launch", "browser"]
+
+[[app]]
+phrases = [
+  "private browser",
+  "open private browser",
+  "incognito",
+  "open incognito",
+]
+reply = "Opening a private browser."
+omarchy = ["launch", "browser", "--private"]
+
+[[app]]
+phrases = [
+  "open files",
+  "open file manager",
+  "open the file manager",
+]
+reply = "Opening files."
+omarchy = ["launch", "nautilus"]
+# Example: use Strata instead of Nautilus
+# exec = ["env", "GSK_RENDERER=gl", "/usr/bin/strata"]
+
+[[app]]
+phrases = ["open nautilus", "launch nautilus"]
+reply = "Opening Nautilus."
+omarchy = ["launch", "nautilus"]
+
+[[app]]
+phrases = ["open spotify", "launch spotify", "play spotify", "spotify", "open music", "launch music"]
+reply = "Opening Spotify."
+omarchy = ["launch", "spotify"]
+
+[[app]]
+phrases = ["open signal", "launch signal", "signal"]
+reply = "Opening Signal."
+omarchy = ["launch", "signal"]
+
+[[app]]
+phrases = ["open discord", "launch discord", "discord"]
+reply = "Opening Discord."
+omarchy = ["launch", "discord", "community"]
+
+[[app]]
+phrases = ["about this computer", "system info", "system information"]
+reply = "Opening system info."
+omarchy = ["launch", "about"]
+
+[[app]]
+phrases = ["open 1password", "open one password", "open passwords", "passwords"]
+reply = "Opening 1Password."
+omarchy = ["launch", "1password"]
+
+[[app]]
+phrases = ["open obsidian", "launch obsidian", "obsidian"]
+reply = "Opening Obsidian."
+exec = ["obsidian"]
+
+[[app]]
+phrases = ["open chatgpt", "launch chatgpt", "chatgpt"]
+reply = "Opening ChatGPT."
+exec = ["chatgpt"]
+
+[[app]]
+phrases = ["open omawrite", "launch omawrite", "omawrite"]
+reply = "Opening Omawrite."
+exec = ["omawrite"]
+
+[[app]]
+phrases = ["open calculator", "calculator", "launch calculator"]
+reply = "Opening the calculator."
+exec = ["omacalc"]
+
+[[app]]
+phrases = ["color picker", "pick a color", "open color picker"]
+reply = "Opening the color picker."
+exec = ["hyprpicker", "-a"]

@@ -13,6 +13,8 @@ pub enum Command {
     Say { text: String },
     /// Closed-loop probe: Kokoro → 16 kHz WAV → Voxtype → LLM → speakers.
     Demo,
+    /// Reload `apps.toml` without restarting the models.
+    Reload,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
