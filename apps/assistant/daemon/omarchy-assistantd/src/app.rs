@@ -432,6 +432,7 @@ impl App {
 
     async fn reset_cancel(&self) -> CancellationToken {
         let mut g = self.cancel.lock().await;
+        g.cancel();
         let t = CancellationToken::new();
         *g = t.clone();
         t
@@ -549,10 +550,15 @@ impl App {
 
     async fn run_turn(self: &Arc<Self>, armed: tokio::sync::oneshot::Sender<()>) -> Result<()> {
         let cfg = self.cfg();
+        let fallback_energy = if cfg.vad.threshold <= 0.1 {
+            cfg.vad.threshold
+        } else {
+            0.012
+        };
         let mut vad = self.streaming_vad(
             cfg.vad.hangover_ms,
             cfg.vad.start_confirm_frames,
-            cfg.vad.threshold,
+            fallback_energy,
         );
         let stop = self.released.subscribe();
         let _ = armed.send(());
@@ -690,7 +696,7 @@ impl App {
         let gen_cancel = Arc::new(AtomicBool::new(false));
         let gc = gen_cancel.clone();
         let cancel_watch = cancel.clone();
-        tokio::spawn(async move {
+        let cancel_task = tokio::spawn(async move {
             cancel_watch.cancelled().await;
             gc.store(true, Ordering::Relaxed);
         });
@@ -765,6 +771,7 @@ impl App {
             self.audio.wait_playback().await;
         }
         barge.abort();
+        cancel_task.abort();
         tracing::info!(reply = %spoken, "spoken reply");
         if !cancel.is_cancelled() && !spoken.trim().is_empty() {
             self.remember(user_text, &spoken).await;
@@ -919,7 +926,7 @@ impl App {
                 .unwrap_or_else(|e| e.into_inner())
                 .is_some()
         {
-            self.watch_barge_in_silero(cancel, barge.hangover_ms).await;
+            self.watch_barge_in_silero(cancel, barge.hangover_ms, threshold).await;
             return;
         }
         let need = (barge.hangover_ms / 32).max(1) as u32;
@@ -947,7 +954,7 @@ impl App {
         }
     }
 
-    async fn watch_barge_in_silero(&self, cancel: CancellationToken, hangover_ms: u64) {
+    async fn watch_barge_in_silero(&self, cancel: CancellationToken, hangover_ms: u64, min_rms: f32) {
         let mut vad = self.streaming_vad(hangover_ms, self.cfg().vad.start_confirm_frames, 0.08);
         let mut aec = self.aec_samples.lock().await;
         let Some(rx) = aec.as_mut() else {
@@ -961,10 +968,18 @@ impl App {
                 chunk = rx.recv() => {
                     let Some(chunk) = chunk else { return };
                     if matches!(vad.push(&chunk), VadDecision::SpeechStart) {
-                        tracing::info!("barge-in silero");
-                        drop(aec);
-                        self.trip_barge_in(&cancel).await;
-                        return;
+                        let mut acc = 0.0f32;
+                        for s in &chunk {
+                            let x = *s as f32 / 32768.0;
+                            acc += x * x;
+                        }
+                        let rms = (acc / chunk.len().max(1) as f32).sqrt();
+                        if rms >= min_rms {
+                            tracing::info!(rms, min_rms, "barge-in silero");
+                            drop(aec);
+                            self.trip_barge_in(&cancel).await;
+                            return;
+                        }
                     }
                 }
             }
@@ -1087,10 +1102,15 @@ impl App {
     async fn collect_wake_pcm(&self) -> Option<Vec<i16>> {
         let w = self.cfg().wake_word;
         let rate = self.cfg().audio.capture_rate.max(1) as usize;
+        let fallback_energy = if w.threshold <= 0.1 {
+            w.threshold
+        } else {
+            0.012
+        };
         let mut vad = self.streaming_vad(
             w.hangover_ms,
             w.start_confirm_frames,
-            w.threshold,
+            fallback_energy,
         );
         let mut preroll = Vec::<i16>::new();
         let mut pcm = Vec::<i16>::new();
@@ -1221,15 +1241,20 @@ impl App {
         self.emit_state(AssistantState::Listening).await;
         let _ = self.audio.start_capture();
         let cfg = self.cfg();
+        let fallback_energy = if cfg.wake_word.threshold.min(cfg.vad.threshold) <= 0.1 {
+            cfg.wake_word.threshold.min(cfg.vad.threshold)
+        } else {
+            0.012
+        };
         let mut vad = self.streaming_vad(
             cfg.wake_word.hangover_ms.max(cfg.vad.hangover_ms),
             cfg.vad.start_confirm_frames.max(1),
-            cfg.wake_word.threshold.min(cfg.vad.threshold),
+            fallback_energy,
         );
         let cancel = self.reset_cancel().await;
         let (stop_tx, stop_rx) = watch::channel(false);
         let watch_cancel = cancel.clone();
-        tokio::spawn(async move {
+        let watch_task = tokio::spawn(async move {
             watch_cancel.cancelled().await;
             let _ = stop_tx.send(true);
         });
@@ -1237,6 +1262,7 @@ impl App {
             let mut samples = self.samples.lock().await;
             record_until_vad(&mut samples, stop_rx, &mut vad, 8, true).await?
         };
+        watch_task.abort();
         let _ = self.audio.stop_capture();
         if cancel.is_cancelled() {
             return Ok(());

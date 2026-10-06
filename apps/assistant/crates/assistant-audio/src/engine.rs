@@ -676,9 +676,11 @@ fn pw_thread(
     let _attached = cmd_rx.attach(mainloop.loop_(), move |cmd| match cmd {
         PwCmd::StartCapture => {
             let mut st = cap_cmd.lock().unwrap_or_else(|e| e.into_inner());
-            st.pending.clear();
-            st.armed = Some(Instant::now());
-            st.active = true;
+            if !st.active {
+                st.pending.clear();
+                st.armed = Some(Instant::now());
+                st.active = true;
+            }
         }
         PwCmd::StopCapture => {
             cap_cmd.lock().unwrap_or_else(|e| e.into_inner()).active = false;
