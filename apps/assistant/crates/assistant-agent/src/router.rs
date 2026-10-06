@@ -12,7 +12,7 @@ pub enum Intent {
     },
 }
 
-const CAN_DO: &str = "I didn't catch a command I can run. I can lock, change volume or brightness, switch workspaces 1 to 5, cycle wallpaper, or open the browser, terminal, or files.";
+const CAN_DO: &str = "I didn't catch a command I can run. I can lock, close a window, change volume or brightness, switch workspaces 1 to 5, cycle wallpaper, toggle the bar, gaps, or night light, take a screenshot, or open the browser, terminal, files, Spotify, or Signal.";
 
 pub fn route(text: &str) -> Intent {
     let key = preprocess(text);
@@ -243,6 +243,17 @@ fn looks_like_command(key: &str) -> bool {
         "dimmer",
         "stay ",
         "silence ",
+        "hide ",
+        "show ",
+        "close ",
+        "spotify",
+        "signal",
+        "fullscreen",
+        "gaps",
+        "keyboard",
+        "touchpad",
+        "discord",
+        "screensaver",
     ];
     STARTS.iter().any(|p| key == p.trim() || key.starts_with(p))
         || key.split_whitespace().any(looks_like_workspace)
@@ -328,6 +339,28 @@ const VOCAB: &[&str] = &[
     "increase",
     "decrease",
     "brighten",
+    "bar",
+    "gaps",
+    "animations",
+    "transparency",
+    "fullscreen",
+    "layout",
+    "spotify",
+    "signal",
+    "region",
+    "about",
+    "panel",
+    "touchpad",
+    "keyboard",
+    "window",
+    "close",
+    "theme",
+    "discord",
+    "screensaver",
+    "output",
+    "backlight",
+    "speakers",
+    "headphones",
 ];
 
 fn snap_vocab(w: &str) -> &str {
@@ -494,6 +527,7 @@ const TABLE: &[(&[&str], &str, &str, &[&str])] = &[
             "take screenshot",
             "capture screen",
             "capture the screen",
+            "screenshot the screen",
         ],
         "capture.screenshot",
         "Capturing.",
@@ -592,6 +626,269 @@ const TABLE: &[(&[&str], &str, &str, &[&str])] = &[
         "toggle.idle",
         "Staying awake.",
         &["toggle", "idle", "stay-awake"],
+    ),
+    (
+        &[
+            "open spotify",
+            "launch spotify",
+            "play spotify",
+            "spotify",
+        ],
+        "app.launch",
+        "Opening Spotify.",
+        &["launch", "spotify"],
+    ),
+    (
+        &["open signal", "launch signal", "signal"],
+        "app.launch",
+        "Opening Signal.",
+        &["launch", "signal"],
+    ),
+    (
+        &[
+            "toggle bar",
+            "toggle the bar",
+            "hide the bar",
+            "hide bar",
+            "show the bar",
+            "show bar",
+            "hide the panel",
+            "show the panel",
+        ],
+        "toggle.bar",
+        "Toggling the bar.",
+        &["toggle", "bar"],
+    ),
+    (
+        &[
+            "toggle gaps",
+            "toggle window gaps",
+            "no gaps",
+            "window gaps",
+        ],
+        "hypr.gaps",
+        "Toggling gaps.",
+        &["hyprland", "window", "gaps", "toggle"],
+    ),
+    (
+        &[
+            "toggle animations",
+            "toggle effects",
+            "reduce motion",
+        ],
+        "toggle.animations",
+        "Toggling animations.",
+        &["toggle", "animations"],
+    ),
+    (
+        &[
+            "toggle transparency",
+            "toggle window transparency",
+        ],
+        "hypr.transparency",
+        "Toggling transparency.",
+        &["hyprland", "window", "transparency", "toggle"],
+    ),
+    (
+        &[
+            "toggle fullscreen",
+            "fullscreen",
+            "full screen",
+        ],
+        "hypr.fullscreen",
+        "Toggling fullscreen.",
+        &["hyprland", "window", "tiled", "fullscreen", "toggle"],
+    ),
+    (
+        &[
+            "toggle layout",
+            "toggle tiling",
+            "switch layout",
+        ],
+        "hypr.layout",
+        "Toggling layout.",
+        &["hyprland", "workspace", "layout", "toggle"],
+    ),
+    (
+        &[
+            "screenshot region",
+            "region screenshot",
+            "screenshot a region",
+            "capture a region",
+        ],
+        "capture.screenshot_region",
+        "Region screenshot.",
+        &["capture", "screenshot", "region"],
+    ),
+    (
+        &[
+            "about this computer",
+            "system info",
+            "system information",
+        ],
+        "app.launch",
+        "Opening system info.",
+        &["launch", "about"],
+    ),
+    (
+        &[
+            "screenshot window",
+            "window screenshot",
+            "capture a window",
+            "screenshot a window",
+        ],
+        "capture.screenshot_window",
+        "Window screenshot.",
+        &["capture", "screenshot", "windows"],
+    ),
+    (
+        &[
+            "fullscreen screenshot",
+            "screenshot fullscreen",
+            "full screen screenshot",
+        ],
+        "capture.screenshot_fullscreen",
+        "Fullscreen screenshot.",
+        &["capture", "screenshot", "fullscreen"],
+    ),
+    (
+        &[
+            "copy text from the screen",
+            "copy text from screen",
+            "capture text",
+            "read the screen",
+            "ocr",
+        ],
+        "capture.text",
+        "Capturing text.",
+        &["capture", "text"],
+    ),
+    (
+        &[
+            "close window",
+            "close the window",
+            "close this window",
+            "close the focused window",
+        ],
+        "hypr.window_close",
+        "Closing the window.",
+        &["hyprctl", "eval", r#"hl.dispatch(hl.dsp.window.close())"#],
+    ),
+    (
+        &[
+            "next workspace",
+            "go to the next workspace",
+            "switch to the next workspace",
+        ],
+        "hypr.workspace",
+        "Next workspace.",
+        &[
+            "hyprctl",
+            "eval",
+            r#"hl.dispatch(hl.dsp.focus({ workspace = "e+1" }))"#,
+        ],
+    ),
+    (
+        &[
+            "previous workspace",
+            "last workspace",
+            "go to the previous workspace",
+            "switch to the previous workspace",
+        ],
+        "hypr.workspace",
+        "Previous workspace.",
+        &[
+            "hyprctl",
+            "eval",
+            r#"hl.dispatch(hl.dsp.focus({ workspace = "e-1" }))"#,
+        ],
+    ),
+    (
+        &[
+            "toggle touchpad",
+            "disable touchpad",
+            "enable touchpad",
+            "turn off the touchpad",
+            "turn on the touchpad",
+        ],
+        "toggle.touchpad",
+        "Toggling the touchpad.",
+        &["toggle", "touchpad"],
+    ),
+    (
+        &[
+            "toggle screensaver",
+            "screensaver",
+        ],
+        "toggle.screensaver",
+        "Toggling the screensaver.",
+        &["toggle", "screensaver"],
+    ),
+    (
+        &[
+            "fullscreen desktop",
+            "toggle fullscreen desktop",
+            "hide bar and gaps",
+        ],
+        "toggle.fullscreen_desktop",
+        "Toggling fullscreen desktop.",
+        &["toggle", "fullscreen", "desktop"],
+    ),
+    (
+        &[
+            "switch audio",
+            "switch audio output",
+            "switch speakers",
+            "switch headphones",
+            "change audio output",
+        ],
+        "audio.output_switch",
+        "Switching audio output.",
+        &["audio", "output", "switch"],
+    ),
+    (
+        &[
+            "keyboard brighter",
+            "keyboard backlight up",
+            "increase keyboard brightness",
+            "keyboard up",
+        ],
+        "display.keyboard_up",
+        "Keyboard brighter.",
+        &["brightness", "keyboard", "up"],
+    ),
+    (
+        &[
+            "keyboard dimmer",
+            "keyboard backlight down",
+            "decrease keyboard brightness",
+            "keyboard down",
+            "dim the keyboard",
+        ],
+        "display.keyboard_down",
+        "Keyboard dimmer.",
+        &["brightness", "keyboard", "down"],
+    ),
+    (
+        &[
+            "change theme",
+            "switch theme",
+            "open theme switcher",
+            "theme switcher",
+        ],
+        "theme.switcher",
+        "Opening the theme switcher.",
+        &["theme", "switcher"],
+    ),
+    (
+        &[
+            "open discord",
+            "launch discord",
+            "discord",
+        ],
+        "app.launch",
+        "Opening Discord.",
+        &["launch", "discord", "community"],
     ),
 ];
 
@@ -694,5 +991,31 @@ mod tests {
         assert!(matches!(route("go to workspace"), Intent::Say(_)));
         assert!(matches!(route("go to workspace 8"), Intent::Say(_)));
         assert!(matches!(route("go to workspace eleven"), Intent::Say(_)));
+    }
+
+    #[test]
+    fn more_omarchy_tools() {
+        assert_eq!(tool("open spotify"), Some("app.launch"));
+        assert_eq!(tool("open signal"), Some("app.launch"));
+        assert_eq!(tool("toggle bar"), Some("toggle.bar"));
+        assert_eq!(tool("hide the bar"), Some("toggle.bar"));
+        assert_eq!(tool("toggle gaps"), Some("hypr.gaps"));
+        assert_eq!(tool("toggle animations"), Some("toggle.animations"));
+        assert_eq!(tool("toggle transparency"), Some("hypr.transparency"));
+        assert_eq!(tool("toggle fullscreen"), Some("hypr.fullscreen"));
+        assert_eq!(tool("toggle layout"), Some("hypr.layout"));
+        assert_eq!(tool("screenshot region"), Some("capture.screenshot_region"));
+        assert_eq!(tool("screenshot window"), Some("capture.screenshot_window"));
+        assert_eq!(tool("about this computer"), Some("app.launch"));
+        assert_eq!(tool("close the window"), Some("hypr.window_close"));
+        assert_eq!(tool("next workspace"), Some("hypr.workspace"));
+        assert_eq!(tool("previous workspace"), Some("hypr.workspace"));
+        assert_eq!(tool("toggle touchpad"), Some("toggle.touchpad"));
+        assert_eq!(tool("switch audio output"), Some("audio.output_switch"));
+        assert_eq!(tool("keyboard brighter"), Some("display.keyboard_up"));
+        assert_eq!(tool("change theme"), Some("theme.switcher"));
+        assert_eq!(tool("open discord"), Some("app.launch"));
+        assert_eq!(tool("capture text"), Some("capture.text"));
+        assert_eq!(tool("close"), None);
     }
 }

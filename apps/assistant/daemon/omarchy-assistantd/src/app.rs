@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use assistant_agent::{route, Intent, KokoroProvider, PhraseChunker, VoxtypeProvider};
-use assistant_audio::{f32_24k_to_i16_16k, record_until, AudioEngine, EnergyVad};
+use assistant_audio::{
+    f32_24k_to_i16_16k, record_until, record_until_vad, AudioEngine, EnergyVad,
+};
 use assistant_core::config::Config;
 use assistant_core::event::Event;
 use assistant_core::state::{AssistantState, StateMachine};
@@ -51,6 +53,7 @@ pub async fn run(cfg: Config) -> Result<()> {
         last_hold: std::sync::Mutex::new(Instant::now()),
         history: Mutex::new(Vec::new()),
         cancel: Mutex::new(CancellationToken::new()),
+        barged_in: AtomicBool::new(false),
         shutdown: shutdown_tx,
     });
 
@@ -111,6 +114,7 @@ struct App {
     last_hold: std::sync::Mutex<Instant>,
     history: Mutex<Vec<(String, String)>>,
     cancel: Mutex<CancellationToken>,
+    barged_in: AtomicBool,
     shutdown: watch::Sender<bool>,
 }
 
@@ -293,6 +297,7 @@ impl App {
     }
 
     async fn cancel_turn(&self) {
+        self.barged_in.store(false, Ordering::SeqCst);
         self.cancel.lock().await.cancel();
         *self.cancel.lock().await = CancellationToken::new();
         let _ = self.audio.cancel_playback();
@@ -374,14 +379,32 @@ impl App {
             "app.launch" => self.cfg.permissions.launch_app == "allow",
             "system.lock"
             | "capture.screenshot"
+            | "capture.screenshot_region"
+            | "capture.screenshot_window"
+            | "capture.screenshot_fullscreen"
+            | "capture.text"
             | "toggle.nightlight"
             | "display.brightness_up"
             | "display.brightness_down"
+            | "display.keyboard_up"
+            | "display.keyboard_down"
             | "theme.bg_next"
+            | "theme.switcher"
             | "hypr.workspace"
+            | "hypr.gaps"
+            | "hypr.transparency"
+            | "hypr.fullscreen"
+            | "hypr.layout"
+            | "hypr.window_close"
             | "bluetooth.toggle"
             | "toggle.dnd"
-            | "toggle.idle" => true,
+            | "toggle.idle"
+            | "toggle.bar"
+            | "toggle.animations"
+            | "toggle.touchpad"
+            | "toggle.screensaver"
+            | "toggle.fullscreen_desktop"
+            | "audio.output_switch" => true,
             _ => false,
         }
     }
@@ -453,6 +476,7 @@ impl App {
         let mut first_audio = true;
         let mut spoken = String::new();
         let tts = Arc::clone(&self.tts);
+        let barge = self.spawn_barge_in(cancel.clone());
 
         while let Some(tok) = tokens.recv().await {
             if cancel.is_cancelled() {
@@ -472,12 +496,15 @@ impl App {
                     .await?;
             }
         }
-        if let Some(phrase) = chunker.flush() {
-            self.speak_phrase(&tts, &phrase, &mut timing, &mut first_audio)
-                .await?;
+        if !cancel.is_cancelled() {
+            if let Some(phrase) = chunker.flush() {
+                self.speak_phrase(&tts, &phrase, &mut timing, &mut first_audio)
+                    .await?;
+            }
         }
 
         self.audio.wait_playback().await;
+        barge.abort();
         tracing::info!(reply = %spoken, "spoken reply");
         if !cancel.is_cancelled() && !spoken.trim().is_empty() {
             self.remember(user_text, &spoken).await;
@@ -488,8 +515,7 @@ impl App {
         });
         tracing::info!("{}", timing.format_trace());
         self.emit(Event::from_timing(&timing));
-        self.emit_state(AssistantState::Idle).await;
-        Ok(())
+        self.finish_speech(&cancel).await
     }
 
     async fn run_desktop(
@@ -528,17 +554,19 @@ impl App {
         });
         let tts = Arc::clone(&self.tts);
         let mut first_audio = true;
+        let cancel = self.cancel.lock().await.clone();
+        let barge = self.spawn_barge_in(cancel.clone());
         self.speak_phrase(&tts, spoken, &mut timing, &mut first_audio)
             .await?;
         self.audio.wait_playback().await;
+        barge.abort();
         self.emit(Event::AssistantText {
             text: spoken.to_string(),
             done: true,
         });
         tracing::info!("{}", timing.format_trace());
         self.emit(Event::from_timing(&timing));
-        self.emit_state(AssistantState::Idle).await;
-        Ok(())
+        self.finish_speech(&cancel).await
     }
 
     async fn speak_phrase(
@@ -548,12 +576,18 @@ impl App {
         timing: &mut TurnTiming,
         first_audio: &mut bool,
     ) -> Result<()> {
+        if self.cancel.lock().await.is_cancelled() {
+            return Ok(());
+        }
         let phrase = phrase.to_string();
         let tts = Arc::clone(tts);
         let pcm = tokio::task::spawn_blocking(move || tts.speak(&phrase))
             .await
             .context("tts join")??;
         if pcm.is_empty() {
+            return Ok(());
+        }
+        if self.cancel.lock().await.is_cancelled() {
             return Ok(());
         }
         if *first_audio {
@@ -566,5 +600,124 @@ impl App {
         }
         self.audio.play(pcm)?;
         Ok(())
+    }
+
+    fn spawn_barge_in(self: &Arc<Self>, cancel: CancellationToken) -> tokio::task::JoinHandle<()> {
+        let app = Arc::clone(self);
+        tokio::spawn(async move {
+            app.watch_barge_in(cancel).await;
+        })
+    }
+
+    async fn watch_barge_in(&self, cancel: CancellationToken) {
+        if !self.cfg.barge_in.enabled {
+            return;
+        }
+        let _ = self.audio.start_capture();
+        tokio::select! {
+            _ = cancel.cancelled() => return,
+            _ = tokio::time::sleep(Duration::from_millis(self.cfg.barge_in.grace_ms.max(1))) => {}
+        }
+        if cancel.is_cancelled() {
+            return;
+        }
+        let mut levels = self.audio.levels();
+        let threshold = self.cfg.barge_in.threshold;
+        let need = (self.cfg.barge_in.hangover_ms / 32).max(1) as u32;
+        let mut loud = 0u32;
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => return,
+                changed = levels.changed() => {
+                    if changed.is_err() {
+                        return;
+                    }
+                    let rms = *levels.borrow();
+                    if rms >= threshold {
+                        loud = loud.saturating_add(1);
+                        if loud >= need {
+                            tracing::info!(rms, "barge-in");
+                            self.barged_in.store(true, Ordering::SeqCst);
+                            let _ = self.audio.cancel_playback();
+                            cancel.cancel();
+                            if let Err(err) = self.stt.begin().await {
+                                tracing::warn!(%err, "barge-in parakeet listen");
+                            }
+                            self.emit_state(AssistantState::Interrupted).await;
+                            return;
+                        }
+                    } else {
+                        loud = 0;
+                    }
+                }
+            }
+        }
+    }
+
+    async fn finish_speech(self: &Arc<Self>, cancel: &CancellationToken) -> Result<()> {
+        if cancel.is_cancelled() {
+            let taken_over = {
+                let s = self.state.lock().await.current();
+                matches!(
+                    s,
+                    AssistantState::Listening | AssistantState::Transcribing
+                )
+            };
+            if !taken_over && self.barged_in.swap(false, Ordering::SeqCst) {
+                return self.follow_up_listen().await;
+            }
+            self.barged_in.store(false, Ordering::SeqCst);
+            return Ok(());
+        }
+        let _ = self.audio.stop_capture();
+        self.discard_pending_samples().await;
+        self.emit_state(AssistantState::Idle).await;
+        Ok(())
+    }
+
+    async fn discard_pending_samples(&self) {
+        let mut samples = self.samples.lock().await;
+        while samples.try_recv().is_ok() {}
+    }
+
+    async fn follow_up_listen(self: &Arc<Self>) -> Result<()> {
+        tracing::info!("barge-in follow-up listen");
+        self.emit_state(AssistantState::Listening).await;
+        let _ = self.audio.start_capture();
+        let mut vad = EnergyVad::new(self.cfg.vad.threshold, self.cfg.vad.hangover_ms, 32);
+        let cancel = self.cancel.lock().await.clone();
+        let (stop_tx, stop_rx) = watch::channel(false);
+        let watch_cancel = cancel.clone();
+        tokio::spawn(async move {
+            watch_cancel.cancelled().await;
+            let _ = stop_tx.send(true);
+        });
+        let (pcm, _ended) = {
+            let mut samples = self.samples.lock().await;
+            record_until_vad(&mut samples, stop_rx, &mut vad, 8, true).await?
+        };
+        let _ = self.audio.stop_capture();
+        if cancel.is_cancelled() {
+            return Ok(());
+        }
+        if pcm.len() < 3_200 {
+            tracing::info!(samples = pcm.len(), "barge-in follow-up too short");
+            self.emit_state(AssistantState::Idle).await;
+            return Ok(());
+        }
+        self.emit_state(AssistantState::Transcribing).await;
+        let tr = self.stt.finish(&pcm, cancel).await?;
+        tracing::info!(transcript = %tr.text, "heard barge-in");
+        self.emit(Event::Transcript {
+            text: tr.text.clone(),
+        });
+        if tr.text.trim().is_empty() {
+            self.emit_state(AssistantState::Idle).await;
+            return Ok(());
+        }
+        let mut timing = TurnTiming::new();
+        timing.mark_vad_end();
+        timing.stt_done = Some(Instant::now());
+        Box::pin(self.respond(&tr.text, timing)).await
     }
 }

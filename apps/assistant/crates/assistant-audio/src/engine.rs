@@ -366,6 +366,8 @@ pub async fn record_until(
         }
         return Ok((pcm, false));
     }
+    // Drop frames captured while we were speaking (barge-in monitor).
+    while samples.try_recv().is_ok() {}
     loop {
         tokio::select! {
             _ = stop.changed() => {
@@ -377,6 +379,53 @@ pub async fn record_until(
                 let Some(chunk) = chunk else { break };
                 let _ = vad.push(&chunk);
                 pcm.extend_from_slice(&chunk);
+            }
+            _ = tokio::time::sleep_until(deadline) => break,
+        }
+    }
+    while let Ok(chunk) = samples.try_recv() {
+        pcm.extend_from_slice(&chunk);
+    }
+    Ok((pcm, false))
+}
+
+/// Collect PCM until energy VAD reports speech end, cancel, or timeout.
+/// `keep_pending` keeps frames already in the channel (the barge-in utterance).
+pub async fn record_until_vad(
+    samples: &mut mpsc::Receiver<Vec<i16>>,
+    mut stop: tokio::sync::watch::Receiver<bool>,
+    vad: &mut crate::EnergyVad,
+    max_secs: u64,
+    keep_pending: bool,
+) -> Result<(Vec<i16>, bool)> {
+    use crate::VadDecision;
+    let mut pcm = Vec::new();
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(max_secs.max(1));
+    if keep_pending {
+        while let Ok(chunk) = samples.try_recv() {
+            let d = vad.push(&chunk);
+            pcm.extend_from_slice(&chunk);
+            if matches!(d, VadDecision::SpeechEnd) {
+                return Ok((pcm, true));
+            }
+        }
+    } else {
+        while samples.try_recv().is_ok() {}
+    }
+    loop {
+        tokio::select! {
+            _ = stop.changed() => {
+                if *stop.borrow() {
+                    break;
+                }
+            }
+            chunk = samples.recv() => {
+                let Some(chunk) = chunk else { break };
+                let d = vad.push(&chunk);
+                pcm.extend_from_slice(&chunk);
+                if matches!(d, VadDecision::SpeechEnd) {
+                    return Ok((pcm, true));
+                }
             }
             _ = tokio::time::sleep_until(deadline) => break,
         }

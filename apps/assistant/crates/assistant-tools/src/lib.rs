@@ -94,6 +94,96 @@ pub fn builtin_tools() -> Vec<ToolSpec> {
             description: "Stay awake / block idle".into(),
         },
         ToolSpec {
+            name: "toggle.bar".into(),
+            permission: Permission::Safe,
+            description: "Toggle the Omarchy bar".into(),
+        },
+        ToolSpec {
+            name: "hypr.gaps".into(),
+            permission: Permission::Safe,
+            description: "Toggle window gaps".into(),
+        },
+        ToolSpec {
+            name: "toggle.animations".into(),
+            permission: Permission::Safe,
+            description: "Toggle animations and effects".into(),
+        },
+        ToolSpec {
+            name: "hypr.transparency".into(),
+            permission: Permission::Safe,
+            description: "Toggle window transparency".into(),
+        },
+        ToolSpec {
+            name: "hypr.fullscreen".into(),
+            permission: Permission::Safe,
+            description: "Toggle tiled fullscreen".into(),
+        },
+        ToolSpec {
+            name: "hypr.layout".into(),
+            permission: Permission::Safe,
+            description: "Toggle dwindle/master layout".into(),
+        },
+        ToolSpec {
+            name: "capture.screenshot_region".into(),
+            permission: Permission::Safe,
+            description: "Screenshot a selected region".into(),
+        },
+        ToolSpec {
+            name: "capture.screenshot_window".into(),
+            permission: Permission::Safe,
+            description: "Screenshot a window".into(),
+        },
+        ToolSpec {
+            name: "capture.screenshot_fullscreen".into(),
+            permission: Permission::Safe,
+            description: "Screenshot the whole screen".into(),
+        },
+        ToolSpec {
+            name: "capture.text".into(),
+            permission: Permission::Safe,
+            description: "OCR text from a screen region".into(),
+        },
+        ToolSpec {
+            name: "hypr.window_close".into(),
+            permission: Permission::Safe,
+            description: "Close the focused window".into(),
+        },
+        ToolSpec {
+            name: "toggle.touchpad".into(),
+            permission: Permission::Safe,
+            description: "Toggle the touchpad".into(),
+        },
+        ToolSpec {
+            name: "toggle.screensaver".into(),
+            permission: Permission::Safe,
+            description: "Toggle screensaver availability".into(),
+        },
+        ToolSpec {
+            name: "toggle.fullscreen_desktop".into(),
+            permission: Permission::Safe,
+            description: "Toggle fullscreen desktop (bar + gaps)".into(),
+        },
+        ToolSpec {
+            name: "audio.output_switch".into(),
+            permission: Permission::Safe,
+            description: "Switch audio output device".into(),
+        },
+        ToolSpec {
+            name: "display.keyboard_up".into(),
+            permission: Permission::Safe,
+            description: "Raise keyboard backlight".into(),
+        },
+        ToolSpec {
+            name: "display.keyboard_down".into(),
+            permission: Permission::Safe,
+            description: "Lower keyboard backlight".into(),
+        },
+        ToolSpec {
+            name: "theme.switcher".into(),
+            permission: Permission::Safe,
+            description: "Open the theme switcher".into(),
+        },
+        ToolSpec {
             name: "system.shutdown".into(),
             permission: Permission::Confirm,
             description: "Shut down the machine".into(),

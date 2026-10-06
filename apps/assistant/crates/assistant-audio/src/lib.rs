@@ -1,7 +1,7 @@
 mod engine;
 mod vad;
 
-pub use engine::{record_until, AudioEngine};
+pub use engine::{record_until, record_until_vad, AudioEngine};
 pub use vad::{EnergyVad, VadDecision};
 
 /// Linear resample Kokoro 24 kHz f32 mono → Voxtype 16 kHz i16 mono.

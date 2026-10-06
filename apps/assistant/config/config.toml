@@ -31,6 +31,12 @@ playback_rate = 24000
 source = "default"
 sink = "default"
 
+[barge_in]
+enabled = true
+grace_ms = 500
+threshold = 0.08
+hangover_ms = 160
+
 [wake_word]
 enabled = false
 

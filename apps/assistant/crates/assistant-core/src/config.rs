@@ -12,6 +12,7 @@ pub struct Config {
     pub tts: TtsCfg,
     pub vad: VadCfg,
     pub audio: AudioCfg,
+    pub barge_in: BargeInCfg,
     pub wake_word: WakeWordCfg,
     pub ui: UiCfg,
     pub permissions: PermissionsCfg,
@@ -26,6 +27,7 @@ impl Default for Config {
             tts: TtsCfg::default(),
             vad: VadCfg::default(),
             audio: AudioCfg::default(),
+            barge_in: BargeInCfg::default(),
             wake_word: WakeWordCfg::default(),
             ui: UiCfg::default(),
             permissions: PermissionsCfg::default(),
@@ -146,6 +148,26 @@ impl Default for AudioCfg {
             playback_rate: 24_000,
             source: "default".into(),
             sink: "default".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BargeInCfg {
+    pub enabled: bool,
+    pub grace_ms: u64,
+    pub threshold: f32,
+    pub hangover_ms: u64,
+}
+
+impl Default for BargeInCfg {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            grace_ms: 500,
+            threshold: 0.08,
+            hangover_ms: 160,
         }
     }
 }
@@ -278,5 +300,7 @@ mod tests {
         assert_eq!(cfg.llm.backend, "llama.cpp");
         assert_eq!(cfg.tts.provider, "kokoro");
         assert_eq!(cfg.permissions.shell, "deny");
+        assert!(cfg.barge_in.enabled);
+        assert_eq!(cfg.barge_in.grace_ms, 500);
     }
 }
