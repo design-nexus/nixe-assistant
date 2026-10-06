@@ -1,0 +1,15 @@
+[package]
+name = "assistant-inference"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Local GGUF inference for Nyx (llama.cpp CUDA)"
+
+[dependencies]
+anyhow.workspace = true
+assistant-core.workspace = true
+encoding_rs = "0.8"
+llama-cpp-2 = { version = "0.1.158", features = ["cuda"] }
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true

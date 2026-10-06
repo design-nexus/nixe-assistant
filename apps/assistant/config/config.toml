@@ -1,0 +1,46 @@
+[assistant]
+name = "Nyx"
+mode = "push-to-talk"
+
+[stt]
+provider = "voxtype"
+
+[llm]
+backend = "llama.cpp"
+model = "auto"
+n_gpu_layers = -1
+ctx = 4096
+n_predict = 256
+temperature = 0.7
+
+[tts]
+provider = "kokoro"
+voice = "af_heart"
+speed = 1.0
+device = "cuda"
+
+[vad]
+enabled = true
+backend = "energy"
+threshold = 0.012
+hangover_ms = 400
+
+[audio]
+capture_rate = 16000
+playback_rate = 24000
+source = "default"
+sink = "default"
+
+[wake_word]
+enabled = false
+
+[ui]
+enabled = true
+
+[permissions]
+launch_app = "allow"
+volume = "allow"
+files_read = "allow"
+files_write = "confirm"
+shell = "deny"
+shutdown = "confirm"

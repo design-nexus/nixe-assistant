@@ -1,0 +1,16 @@
+[Unit]
+Description=Nyx local voice assistant
+After=pipewire.service nyx-parakeet.service
+Wants=pipewire.service nyx-parakeet.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/omarchy-assistantd
+Restart=on-failure
+RestartSec=2
+Environment=RUST_LOG=info
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
+Environment=LD_LIBRARY_PATH=/opt/cuda/lib64
+
+[Install]
+WantedBy=default.target

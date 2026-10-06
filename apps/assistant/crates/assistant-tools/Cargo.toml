@@ -1,0 +1,11 @@
+[package]
+name = "assistant-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Typed tools and permission classes for Nyx"
+
+[dependencies]
+assistant-core.workspace = true
+serde.workspace = true
+thiserror.workspace = true

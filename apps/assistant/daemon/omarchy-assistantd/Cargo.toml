@@ -1,0 +1,28 @@
+[package]
+name = "omarchy-assistantd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Nyx voice assistant daemon for Omarchy"
+
+[[bin]]
+name = "omarchy-assistantd"
+path = "src/main.rs"
+
+[[bin]]
+name = "omarchy-assistant"
+path = "src/cli.rs"
+
+[dependencies]
+anyhow.workspace = true
+assistant-agent.workspace = true
+assistant-audio.workspace = true
+assistant-core.workspace = true
+assistant-inference.workspace = true
+assistant-ipc.workspace = true
+assistant-omarchy.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

@@ -1,0 +1,43 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/assistant-core",
+    "crates/assistant-audio",
+    "crates/assistant-inference",
+    "crates/assistant-agent",
+    "crates/assistant-tools",
+    "crates/assistant-ipc",
+    "crates/assistant-omarchy",
+    "daemon/omarchy-assistantd",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/design-nexus/omarchy-assistant"
+authors = ["Ken Smith <ken@kensmith.dev>"]
+
+[workspace.dependencies]
+anyhow = "1"
+assistant-agent = { path = "crates/assistant-agent" }
+assistant-audio = { path = "crates/assistant-audio" }
+assistant-core = { path = "crates/assistant-core" }
+assistant-inference = { path = "crates/assistant-inference" }
+assistant-ipc = { path = "crates/assistant-ipc" }
+assistant-omarchy = { path = "crates/assistant-omarchy" }
+assistant-tools = { path = "crates/assistant-tools" }
+dirs = "6"
+hound = "3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "sync", "time", "process", "signal", "fs"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

@@ -1,0 +1,12 @@
+[package]
+name = "assistant-omarchy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Thin Hyprland/Omarchy wrappers for Nyx tools"
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true

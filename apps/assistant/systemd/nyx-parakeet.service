@@ -1,0 +1,16 @@
+[Unit]
+Description=Nyx Parakeet STT (Voxtype ONNX, isolated from F9)
+After=pipewire.service
+Wants=pipewire.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/mkdir -p %t/nyx-voxtype
+Environment=XDG_RUNTIME_DIR=%t/nyx-voxtype
+Environment=PIPEWIRE_RUNTIME_DIR=%t
+ExecStart=/usr/lib/voxtype/voxtype-onnx-avx2 -c %h/.config/omarchy-assistant/voxtype-parakeet.toml daemon
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,14 @@
+[package]
+name = "assistant-audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PipeWire capture/playback and VAD for Nyx"
+
+[dependencies]
+anyhow.workspace = true
+assistant-core.workspace = true
+pipewire = "0.9"
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true

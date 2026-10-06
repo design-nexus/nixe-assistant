@@ -1,0 +1,3 @@
+# Blackwell (RTX 5080 / sm_120) needs 120a-real so MXFP4 kernels compile under CUDA 13.
+[env]
+CMAKE_CUDA_ARCHITECTURES = "120a-real"

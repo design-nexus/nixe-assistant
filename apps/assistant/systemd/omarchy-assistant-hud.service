@@ -1,0 +1,15 @@
+[Unit]
+Description=Nyx HUD overlay
+After=graphical-session.target omarchy-assistantd.service
+Wants=omarchy-assistantd.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/qs --path %h/Projects/omarchy-assistant/quickshell --no-duplicate
+Restart=on-failure
+RestartSec=2
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
+
+[Install]
+WantedBy=graphical-session.target
