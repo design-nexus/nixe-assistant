@@ -5,7 +5,7 @@ use assistant_agent::{
 };
 use assistant_audio::{
     aec_barge_threshold, f32_24k_to_i16_16k, record_until, record_until_vad, AudioEngine,
-    EnergyVad, VadDecision,
+    Silero, StreamingVad, VadDecision, VadGate,
 };
 use assistant_core::apps::AppsFile;
 use assistant_core::commands::CommandsFile;
@@ -42,6 +42,8 @@ pub async fn run(cfg: Config) -> Result<()> {
     .await??;
 
     let samples = audio.take_samples().context("capture channel")?;
+    let aec_samples = audio.take_aec_samples();
+    let silero = load_silero(&cfg);
     let (release_tx, release_rx) = watch::channel(true);
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
     let apps = AppsFile::load().unwrap_or_else(|err| {
@@ -65,6 +67,8 @@ pub async fn run(cfg: Config) -> Result<()> {
         llm,
         tts: Arc::new(tts),
         samples: Mutex::new(samples),
+        aec_samples: Mutex::new(aec_samples),
+        silero: std::sync::Mutex::new(silero),
         released: release_tx,
         _released_rx: release_rx,
         turn_busy: AtomicBool::new(false),
@@ -160,6 +164,8 @@ struct App {
     llm: LlamaCppBackend,
     tts: Arc<KokoroProvider>,
     samples: Mutex<tokio::sync::mpsc::Receiver<Vec<i16>>>,
+    aec_samples: Mutex<Option<tokio::sync::mpsc::Receiver<Vec<i16>>>>,
+    silero: std::sync::Mutex<Option<Arc<Silero>>>,
     released: watch::Sender<bool>,
     /// Must stay alive: tokio watch `send` is a no-op with zero receivers.
     _released_rx: watch::Receiver<bool>,
@@ -172,6 +178,23 @@ struct App {
     barged_in: AtomicBool,
     shutdown: watch::Sender<bool>,
     wake_hush_until: Mutex<Instant>,
+}
+
+fn load_silero(cfg: &Config) -> Option<Arc<Silero>> {
+    if !cfg.vad.wants_silero() {
+        tracing::info!("VAD backend energy");
+        return None;
+    }
+    match Silero::load(&cfg.vad) {
+        Ok(s) => {
+            tracing::info!("Silero VAD ready");
+            Some(Arc::new(s))
+        }
+        Err(err) => {
+            tracing::warn!(%err, "Silero VAD failed; energy fallback");
+            None
+        }
+    }
 }
 
 fn now_ms() -> u64 {
@@ -191,6 +214,27 @@ impl App {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone()
+    }
+
+    fn streaming_vad(
+        &self,
+        hangover_ms: u64,
+        confirm: u32,
+        energy_threshold: f32,
+    ) -> StreamingVad {
+        let cfg = self.cfg();
+        let silero = self
+            .silero
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        StreamingVad::new(
+            &cfg.vad,
+            silero,
+            hangover_ms,
+            confirm.max(1),
+            energy_threshold,
+        )
     }
 
     fn emit_health(&self) {
@@ -226,7 +270,10 @@ impl App {
                     );
                 }
                 tracing::info!(prompt = %new.assistant.prompt, "reloaded config.toml");
+                let silero = load_silero(&new);
                 *guard = new;
+                drop(guard);
+                *self.silero.lock().unwrap_or_else(|e| e.into_inner()) = silero;
             }
             Err(err) => {
                 tracing::error!(%err, "reload config.toml failed; keeping previous config");
@@ -502,7 +549,11 @@ impl App {
 
     async fn run_turn(self: &Arc<Self>, armed: tokio::sync::oneshot::Sender<()>) -> Result<()> {
         let cfg = self.cfg();
-        let mut vad = EnergyVad::new(cfg.vad.threshold, cfg.vad.hangover_ms, 32);
+        let mut vad = self.streaming_vad(
+            cfg.vad.hangover_ms,
+            cfg.vad.start_confirm_frames,
+            cfg.vad.threshold,
+        );
         let stop = self.released.subscribe();
         let _ = armed.send(());
         let (pcm, _by_vad) = {
@@ -675,7 +726,7 @@ impl App {
                     break;
                 }
                 tts_app
-                    .speak_phrase(&tts_w, &phrase, &*timing_w, &first_w)
+                    .speak_phrase(&tts_w, &phrase, &timing_w, &first_w)
                     .await?;
             }
             Ok::<(), anyhow::Error>(())
@@ -861,6 +912,16 @@ impl App {
             configured
         };
         tracing::info!(residual, threshold, aec, "barge-in armed");
+        if self.cfg().vad.wants_silero()
+            && self
+                .silero
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_some()
+        {
+            self.watch_barge_in_silero(cancel, barge.hangover_ms).await;
+            return;
+        }
         let need = (barge.hangover_ms / 32).max(1) as u32;
         let mut loud = 0u32;
         loop {
@@ -875,13 +936,7 @@ impl App {
                         loud = loud.saturating_add(1);
                         if loud >= need {
                             tracing::info!(rms, "barge-in");
-                            self.barged_in.store(true, Ordering::SeqCst);
-                            let _ = self.audio.cancel_playback();
-                            cancel.cancel();
-                            if let Err(err) = self.stt.begin().await {
-                                tracing::warn!(%err, "barge-in parakeet listen");
-                            }
-                            self.emit_state(AssistantState::Interrupted).await;
+                            self.trip_barge_in(&cancel).await;
                             return;
                         }
                     } else {
@@ -890,6 +945,40 @@ impl App {
                 }
             }
         }
+    }
+
+    async fn watch_barge_in_silero(&self, cancel: CancellationToken, hangover_ms: u64) {
+        let mut vad = self.streaming_vad(hangover_ms, self.cfg().vad.start_confirm_frames, 0.08);
+        let mut aec = self.aec_samples.lock().await;
+        let Some(rx) = aec.as_mut() else {
+            tracing::warn!("no AEC pcm; barge-in silero skipped");
+            return;
+        };
+        while rx.try_recv().is_ok() {}
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => return,
+                chunk = rx.recv() => {
+                    let Some(chunk) = chunk else { return };
+                    if matches!(vad.push(&chunk), VadDecision::SpeechStart) {
+                        tracing::info!("barge-in silero");
+                        drop(aec);
+                        self.trip_barge_in(&cancel).await;
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    async fn trip_barge_in(&self, cancel: &CancellationToken) {
+        self.barged_in.store(true, Ordering::SeqCst);
+        let _ = self.audio.cancel_playback();
+        cancel.cancel();
+        if let Err(err) = self.stt.begin().await {
+            tracing::warn!(%err, "barge-in parakeet listen");
+        }
+        self.emit_state(AssistantState::Interrupted).await;
     }
 
     async fn finish_speech(self: &Arc<Self>, cancel: &CancellationToken) -> Result<()> {
@@ -998,11 +1087,10 @@ impl App {
     async fn collect_wake_pcm(&self) -> Option<Vec<i16>> {
         let w = self.cfg().wake_word;
         let rate = self.cfg().audio.capture_rate.max(1) as usize;
-        let mut vad = EnergyVad::with_confirm(
-            w.threshold,
+        let mut vad = self.streaming_vad(
             w.hangover_ms,
-            32,
             w.start_confirm_frames,
+            w.threshold,
         );
         let mut preroll = Vec::<i16>::new();
         let mut pcm = Vec::<i16>::new();
@@ -1042,6 +1130,12 @@ impl App {
                     }
                 }
             };
+            if self.turn_busy.load(Ordering::SeqCst) || self.wake_hushed() {
+                if began && !self.turn_busy.load(Ordering::SeqCst) {
+                    self.stt.cancel_listen().await;
+                }
+                return None;
+            }
             let d = vad.push(&chunk);
             match d {
                 VadDecision::SpeechStart => {
@@ -1127,10 +1221,10 @@ impl App {
         self.emit_state(AssistantState::Listening).await;
         let _ = self.audio.start_capture();
         let cfg = self.cfg();
-        let mut vad = EnergyVad::new(
-            cfg.wake_word.threshold.min(cfg.vad.threshold),
+        let mut vad = self.streaming_vad(
             cfg.wake_word.hangover_ms.max(cfg.vad.hangover_ms),
-            32,
+            cfg.vad.start_confirm_frames.max(1),
+            cfg.wake_word.threshold.min(cfg.vad.threshold),
         );
         let cancel = self.reset_cancel().await;
         let (stop_tx, stop_rx) = watch::channel(false);
@@ -1168,5 +1262,36 @@ impl App {
         timing.mark_vad_end();
         timing.stt_done = Some(Instant::now());
         Box::pin(self.respond(&tr.text, timing)).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn silero_detects_speech_audio() {
+        let cfg = Config::default();
+        let silero = match load_silero(&cfg) {
+            Some(s) => s,
+            None => return,
+        };
+        let tts = KokoroProvider::load(&cfg).expect("load kokoro");
+        let pcm_f32 = tts.speak("Hey Nyx, what time is it?").expect("synthesize");
+        let pcm_16k = f32_24k_to_i16_16k(&pcm_f32);
+        let mut gate = assistant_audio::StreamingVad::new(
+            &cfg.vad,
+            Some(silero.clone()),
+            cfg.wake_word.hangover_ms,
+            cfg.wake_word.start_confirm_frames,
+            cfg.wake_word.threshold,
+        );
+        let mut decisions = Vec::new();
+        for chunk in pcm_16k.chunks(512) {
+            let dec = gate.push(chunk);
+            decisions.push(dec);
+        }
+        let speech_starts = decisions.iter().filter(|d| matches!(d, VadDecision::SpeechStart)).count();
+        assert!(speech_starts > 0, "Silero should detect speech start in synthesized speech");
     }
 }

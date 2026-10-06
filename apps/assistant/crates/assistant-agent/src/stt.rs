@@ -25,7 +25,7 @@ impl VoxtypeProvider {
             bin: cfg.stt.voxtype_bin.clone(),
             config_path: paths::config_dir().join("voxtype-parakeet.toml"),
             runtime_dir: paths::nyx_voxtype_runtime(),
-            stt_file: PathBuf::from("/tmp/omarchy-assistant/stt.txt"),
+            stt_file: paths::runtime_dir().join("stt.txt"),
         }
     }
 
@@ -115,9 +115,11 @@ impl VoxtypeProvider {
         pcm_16k_mono: &[i16],
         cancel: CancellationToken,
     ) -> Result<Transcript> {
-        let dir = std::env::temp_dir().join("omarchy-assistant");
+        let dir = paths::runtime_dir();
         tokio::fs::create_dir_all(&dir).await?;
-        let wav_path: PathBuf = dir.join(format!("utt-{}.wav", std::process::id()));
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let wav_path: PathBuf = dir.join(format!("utt-{}-{}.wav", std::process::id(), seq));
         write_wav(&wav_path, pcm_16k_mono)?;
 
         let child = Command::new(&self.bin)

@@ -239,9 +239,7 @@ fn workspace_num(key: &str, max: u8) -> Option<u8> {
         }
         return None;
     }
-    let Some((last, rest)) = words.split_last() else {
-        return None;
-    };
+    let (last, rest) = words.split_last()?;
     let n = parse_ws_num(last, max)?;
     if rest
         .iter()

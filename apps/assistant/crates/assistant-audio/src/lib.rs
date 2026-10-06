@@ -1,8 +1,10 @@
 mod engine;
+mod silero;
 mod vad;
 
 pub use engine::{aec_barge_threshold, record_until, record_until_vad, AudioEngine};
-pub use vad::{EnergyVad, VadDecision};
+pub use silero::{Silero, SileroState};
+pub use vad::{EnergyVad, StreamingVad, VadDecision, VadGate};
 
 /// Linear resample Kokoro 24 kHz f32 mono → Voxtype 16 kHz i16 mono.
 pub fn f32_24k_to_i16_16k(pcm: &[f32]) -> Vec<i16> {

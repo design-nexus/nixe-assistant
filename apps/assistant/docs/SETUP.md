@@ -71,6 +71,21 @@ The system prompt, HUD label, and wake phrase follow this name. `{name}` in
 `[assistant] prompt` is replaced at reply time. Edit the prompt in
 `config.toml`, then `omarchy-assistant reload`.
 
+## VAD
+
+`[vad] backend = "silero"` (default) runs Silero v5 on CPU through the same
+ONNX Runtime as Kokoro. `threshold` is speech probability (try `0.5`). Wake,
+follow-up listen, and barge-in use it. If the ONNX fails to load, Nyx falls
+back to energy/RMS. Force energy:
+
+```toml
+[vad]
+backend = "energy"
+threshold = 0.012
+```
+
+Then `omarchy-assistant reload`.
+
 ## Hands-free wake
 
 Say **Hey Nyx** (or just **Nyx**) while idle, then the request. Anything after

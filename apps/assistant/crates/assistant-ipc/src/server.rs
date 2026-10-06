@@ -73,7 +73,15 @@ async fn handle_client(
     let mut lines = BufReader::new(read).lines();
 
     let writer = tokio::spawn(async move {
-        while let Ok(ev) = ev_rx.recv().await {
+        loop {
+            let ev = match ev_rx.recv().await {
+                Ok(ev) => ev,
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::debug!(skipped, "ipc client lagged");
+                    continue;
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+            };
             match protocol::encode_event(&ev) {
                 Ok(line) => {
                     if write.write_all(line.as_bytes()).await.is_err() {

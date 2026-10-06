@@ -178,14 +178,14 @@ fn generate_one(
     tokens_tx: mpsc::Sender<String>,
     cancel: Arc<AtomicBool>,
 ) -> Result<()> {
-    let _ = ctx.clear_kv_cache();
+    ctx.clear_kv_cache();
     let prompt = chat_prompt(model, system, history, user)?;
     let tokens_list = model.vocab().tokenize(prompt.as_bytes(), true, true);
 
     let n_prompt = tokens_list.len() as i32;
     let mut batch = LlamaBatch::new(n_prompt.max(512) as usize, 1);
     let last = n_prompt - 1;
-    for (i, token) in (0_i32..).zip(tokens_list.into_iter()) {
+    for (i, token) in (0_i32..).zip(tokens_list) {
         batch.add(token, i, &[0], i == last)?;
     }
     ctx.decode(&mut batch).context("decode prompt")?;

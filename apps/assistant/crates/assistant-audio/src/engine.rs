@@ -1,6 +1,6 @@
 //! PipeWire capture (16 kHz S16 mono) and playback (24 kHz F32 mono).
 
-use crate::vad::EnergyVad;
+use crate::vad::VadGate;
 use anyhow::{Context, Result};
 use assistant_core::config::Config;
 use pipewire as pw;
@@ -28,10 +28,16 @@ pub struct AudioEngine {
     samples_rx: Mutex<Option<mpsc::Receiver<Vec<i16>>>>,
     levels: watch::Receiver<f32>,
     aec_levels: Option<watch::Receiver<f32>>,
+    aec_samples_rx: Mutex<Option<mpsc::Receiver<Vec<i16>>>>,
     queued: Arc<AtomicUsize>,
     play_epoch: Arc<AtomicU64>,
     echo_module: Option<u32>,
     echo_wire: Option<Arc<AtomicBool>>,
+}
+
+struct AecCapture {
+    tx: mpsc::Sender<Vec<i16>>,
+    pending: Vec<i16>,
 }
 
 struct CaptureState {
@@ -75,6 +81,12 @@ impl AudioEngine {
         } else {
             (None, None)
         };
+        let (aec_samples_tx, aec_samples_rx) = if aec {
+            let (tx, rx) = mpsc::channel::<Vec<i16>>(32);
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
+        };
         let queued = Arc::new(AtomicUsize::new(0));
         let play_epoch = Arc::new(AtomicU64::new(0));
         let (ready_tx, ready_rx) = oneshot::channel::<Result<pw::channel::Sender<PwCmd>>>();
@@ -84,7 +96,14 @@ impl AudioEngine {
             .name("nyx-pipewire".into())
             .spawn(move || {
                 if let Err(err) =
-                    pw_thread(samples_tx, level_tx, aec_level_tx, queued_thread, ready_tx)
+                    pw_thread(
+                        samples_tx,
+                        level_tx,
+                        aec_level_tx,
+                        aec_samples_tx,
+                        queued_thread,
+                        ready_tx,
+                    )
                 {
                     tracing::error!(%err, "pipewire thread exited");
                 }
@@ -100,6 +119,7 @@ impl AudioEngine {
             samples_rx: Mutex::new(Some(samples_rx)),
             levels: level_rx,
             aec_levels: aec_level_rx,
+            aec_samples_rx: Mutex::new(aec_samples_rx),
             queued,
             play_epoch,
             echo_module,
@@ -117,6 +137,10 @@ impl AudioEngine {
 
     pub fn aec_levels(&self) -> Option<watch::Receiver<f32>> {
         self.aec_levels.clone()
+    }
+
+    pub fn take_aec_samples(&self) -> Option<mpsc::Receiver<Vec<i16>>> {
+        self.aec_samples_rx.lock().ok().and_then(|mut g| g.take())
     }
 
     pub fn start_capture(&self) -> Result<()> {
@@ -388,6 +412,7 @@ fn pw_thread(
     samples_tx: mpsc::Sender<Vec<i16>>,
     level_tx: watch::Sender<f32>,
     aec_level_tx: Option<watch::Sender<f32>>,
+    aec_samples_tx: Option<mpsc::Sender<Vec<i16>>>,
     queued: Arc<AtomicUsize>,
     ready: oneshot::Sender<Result<pw::channel::Sender<PwCmd>>>,
 ) -> Result<()> {
@@ -448,7 +473,7 @@ fn pw_thread(
             tracing::debug!(?old, ?new, "capture state");
         })
         .process(move |stream, _| {
-            let mut st = cap_data.lock().unwrap();
+            let mut st = cap_data.lock().unwrap_or_else(|e| e.into_inner());
             if !st.active {
                 if let Some(buf) = stream.dequeue_buffer() {
                     drop(buf);
@@ -505,7 +530,14 @@ fn pw_thread(
     } else {
         None
     };
+    let aec_pcm = aec_samples_tx.map(|tx| {
+        Arc::new(Mutex::new(AecCapture {
+            tx,
+            pending: Vec::new(),
+        }))
+    });
     let _aec_listener = if let (Some(stream), Some(tx)) = (aec_stream.as_ref(), aec_level_tx) {
+        let pcm = aec_pcm.clone();
         Some(
             stream
                 .add_local_listener_with_user_data(())
@@ -526,15 +558,26 @@ fn pw_thread(
                     let mut acc = 0.0f32;
                     let mut count = 0u32;
                     let mut i = 0;
+                    let mut samples = Vec::new();
                     while i + 1 < bytes.len() {
                         let s = i16::from_le_bytes([bytes[i], bytes[i + 1]]);
                         let x = s as f32 / 32768.0;
                         acc += x * x;
                         count += 1;
+                        samples.push(s);
                         i += 2;
                     }
                     if count > 0 {
                         let _ = tx.send((acc / count as f32).sqrt());
+                    }
+                    if let Some(pcm) = &pcm {
+                        if let Ok(mut st) = pcm.lock() {
+                            st.pending.extend_from_slice(&samples);
+                            while st.pending.len() >= FRAME {
+                                let frame: Vec<i16> = st.pending.drain(..FRAME).collect();
+                                let _ = st.tx.try_send(frame);
+                            }
+                        }
                     }
                 })
                 .register()
@@ -551,7 +594,7 @@ fn pw_thread(
             tracing::debug!(?old, ?new, "playback state");
         })
         .process(move |stream, _| {
-            let mut st = play_data.lock().unwrap();
+            let mut st = play_data.lock().unwrap_or_else(|e| e.into_inner());
             let Some(mut buf) = stream.dequeue_buffer() else {
                 return;
             };
@@ -632,16 +675,16 @@ fn pw_thread(
     let loop_clone = mainloop.clone();
     let _attached = cmd_rx.attach(mainloop.loop_(), move |cmd| match cmd {
         PwCmd::StartCapture => {
-            let mut st = cap_cmd.lock().unwrap();
+            let mut st = cap_cmd.lock().unwrap_or_else(|e| e.into_inner());
             st.pending.clear();
             st.armed = Some(Instant::now());
             st.active = true;
         }
         PwCmd::StopCapture => {
-            cap_cmd.lock().unwrap().active = false;
+            cap_cmd.lock().unwrap_or_else(|e| e.into_inner()).active = false;
         }
         PwCmd::QueuePlay { epoch, pcm } => {
-            let mut st = play_cmd.lock().unwrap();
+            let mut st = play_cmd.lock().unwrap_or_else(|e| e.into_inner());
             if epoch != st.epoch {
                 return;
             }
@@ -650,7 +693,7 @@ fn pw_thread(
         }
         PwCmd::CancelPlay { epoch } => {
             let t0 = Instant::now();
-            let mut st = play_cmd.lock().unwrap();
+            let mut st = play_cmd.lock().unwrap_or_else(|e| e.into_inner());
             st.epoch = epoch;
             st.queue.clear();
             st.queued.store(0, Ordering::Relaxed);
@@ -689,12 +732,12 @@ fn format_bytes(rate: u32, format: spa::param::audio::AudioFormat) -> Result<Vec
     Ok(values)
 }
 
-/// Collect PCM until PTT key-up (`stop` becomes true). Energy VAD is updated
+/// Collect PCM until PTT key-up (`stop` becomes true). VAD is updated
 /// for levels/logging but does not end a hold-to-talk take.
 pub async fn record_until(
     samples: &mut mpsc::Receiver<Vec<i16>>,
     mut stop: tokio::sync::watch::Receiver<bool>,
-    vad: &mut EnergyVad,
+    vad: &mut impl VadGate,
     max_secs: u64,
 ) -> Result<(Vec<i16>, bool)> {
     let mut pcm = Vec::new();
@@ -728,12 +771,12 @@ pub async fn record_until(
     Ok((pcm, false))
 }
 
-/// Collect PCM until energy VAD reports speech end, cancel, or timeout.
+/// Collect PCM until VAD reports speech end, cancel, or timeout.
 /// `keep_pending` keeps frames already in the channel (the barge-in utterance).
 pub async fn record_until_vad(
     samples: &mut mpsc::Receiver<Vec<i16>>,
     mut stop: tokio::sync::watch::Receiver<bool>,
-    vad: &mut crate::EnergyVad,
+    vad: &mut impl VadGate,
     max_secs: u64,
     keep_pending: bool,
 ) -> Result<(Vec<i16>, bool)> {

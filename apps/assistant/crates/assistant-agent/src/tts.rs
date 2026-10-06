@@ -106,7 +106,7 @@ impl KokoroProvider {
         if text.trim().is_empty() {
             return Ok(Vec::new());
         }
-        let _g = self.lock.lock().unwrap();
+        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
         let mut req = SpeakRequest::new(text);
         req.voice = self.voice.clone();
         req.speed = self.speed;
@@ -138,12 +138,13 @@ fn wav_to_f32(bytes: &[u8]) -> Result<Vec<f32>> {
             }
         }
     } else {
-        if bytes.len() % 4 != 0 {
+        if !bytes.len().is_multiple_of(4) {
             anyhow::bail!("unexpected kokoro pcm size {}", bytes.len());
         }
-        let mut out = Vec::with_capacity(bytes.len() / 4);
-        for c in bytes.chunks_exact(4) {
-            out.push(f32::from_le_bytes([c[0], c[1], c[2], c[3]]));
+        let (chunks, _) = bytes.as_chunks::<4>();
+        let mut out = Vec::with_capacity(chunks.len());
+        for &c in chunks {
+            out.push(f32::from_le_bytes(c));
         }
         Ok(out)
     }

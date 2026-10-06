@@ -6,7 +6,7 @@ pub fn strip_wake(text: &str, name: &str, prefixes: &[String], phrases: &[String
         return None;
     }
     let prefixes: Vec<&str> = prefixes.iter().map(String::as_str).collect();
-    let mut names: Vec<String> = phrases.iter().cloned().collect();
+    let mut names: Vec<String> = phrases.to_vec();
     let n = name.trim().to_lowercase();
     if !n.is_empty() && !names.iter().any(|p| p == &n) {
         names.insert(0, n);
@@ -15,7 +15,7 @@ pub fn strip_wake(text: &str, name: &str, prefixes: &[String], phrases: &[String
     let mut found = false;
     while i < words.len() {
         let w = words[i].as_str();
-        if prefixes.iter().any(|p| *p == w) {
+        if prefixes.contains(&w) {
             i += 1;
             continue;
         }

@@ -61,7 +61,7 @@ No localhost HTTP between our components. llama.cpp is in-process. Voxtype is a 
 | LLM | `llama-cpp-2` 0.1.158, feature `cuda` | persistent `llama-server` on a unix socket |
 | TTS | `loqui` 0.3.0 Kokoro ONNX, feature `cuda` | skip CUDA on compute 12.* (or `kokoro-cuda-skip` stamp); else probe then CPU if infer fails / `libcudnn.so` is missing |
 | Audio | official `pipewire` 0.9 | `cpal` via PipeWire |
-| VAD | energy/RMS hysteresis (levels + barge-in) | Silero later (ort version clash with loqui) |
+| VAD | Silero VAD v5 ONNX CPU (sharing `ort` with Kokoro) | energy/RMS fallback |
 | STT | warm Parakeet (`nyx-parakeet.service`, `voxtype-onnx-avx2`) | cold `transcribe --engine parakeet` if the daemon take is empty |
 
 Blackwell (RTX 5080, sm_120): `.cargo/config.toml` sets `CMAKE_CUDA_ARCHITECTURES=120a-real`.
@@ -125,7 +125,7 @@ listen. Unmatched speech stays idle. Alt+Space PTT is unchanged.
 
 ## Later phases
 
-See `docs/plan.md`: dual-model, Silero VAD, MCP, HTTP, TensorRT,
+See `docs/plan.md`: dual-model (skipped), MCP, HTTP, TensorRT,
 Kokoro sm_120, F9/Voxtype/Omarchy system trees. One phase at a time.
 
 Last eight LLM turns stay in RAM for follow-ups. Say "forget everything" or "start over" to clear. Not written to disk.

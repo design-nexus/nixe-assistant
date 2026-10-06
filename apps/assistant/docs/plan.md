@@ -47,15 +47,18 @@ the same way. Disable with `enabled = false` and `omarchy-assistant reload`.
 STT-as-KWS (no dedicated wake model). Escape on the HUD overlay cancels a
 busy turn; it is not a Hyprland bind.
 
-## Phase 4 — dual-model cascade
+## Phase 4 — dual-model cascade (skipped)
 
-Small fast model first, larger model when needed. Resident GGUF stays one model
-until this phase.
+Small fast model first, larger model when needed. Skipped while Gemma 4 E4B Q4
+is fast enough. Resident GGUF stays one model.
 
-## Phase 5 — Silero VAD
+## Phase 5 — Silero VAD (done)
 
-Replace energy VAD for end-of-speech / barge-in if ort can coexist with loqui.
-Energy VAD stays until then.
+Silero VAD v5 ONNX on CPU via the same `ort` 2.0 as Kokoro. Used for wake
+utterance bounds, follow-up listen, and barge-in on AEC PCM. `[vad] backend =
+"silero"` (threshold is speech probability). Load failure or `backend =
+"energy"` keeps the RMS gate. Model: `~/.cache/omarchy-assistant/silero/silero_vad.onnx`
+(downloaded on first run from `[vad] url`).
 
 ## Phase 6 — MCP / coding-agent handoff
 

@@ -8,6 +8,7 @@ description = "PipeWire capture/playback and VAD for Nyx"
 [dependencies]
 anyhow.workspace = true
 assistant-core.workspace = true
+ort.workspace = true
 pipewire = "0.9"
 thiserror.workspace = true
 tokio.workspace = true

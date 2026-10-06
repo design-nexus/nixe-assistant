@@ -22,9 +22,12 @@ device = "cuda"
 
 [vad]
 enabled = true
-backend = "energy"
-threshold = 0.012
+backend = "silero"
+threshold = 0.5
 hangover_ms = 400
+start_confirm_frames = 2
+model = ""
+url = "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx"
 
 [audio]
 capture_rate = 16000

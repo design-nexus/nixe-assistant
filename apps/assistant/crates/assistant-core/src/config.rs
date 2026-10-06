@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct Config {
     pub assistant: AssistantCfg,
@@ -17,24 +17,6 @@ pub struct Config {
     pub clock: ClockCfg,
     pub ui: UiCfg,
     pub permissions: PermissionsCfg,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            assistant: AssistantCfg::default(),
-            stt: SttCfg::default(),
-            llm: LlmCfg::default(),
-            tts: TtsCfg::default(),
-            vad: VadCfg::default(),
-            audio: AudioCfg::default(),
-            barge_in: BargeInCfg::default(),
-            wake_word: WakeWordCfg::default(),
-            clock: ClockCfg::default(),
-            ui: UiCfg::default(),
-            permissions: PermissionsCfg::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,16 +114,40 @@ pub struct VadCfg {
     pub backend: String,
     pub threshold: f32,
     pub hangover_ms: u64,
+    #[serde(default = "default_vad_confirm")]
+    pub start_confirm_frames: u32,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default = "default_silero_url")]
+    pub url: String,
+}
+
+fn default_vad_confirm() -> u32 {
+    2
 }
 
 impl Default for VadCfg {
     fn default() -> Self {
         Self {
             enabled: true,
-            backend: "energy".into(),
-            threshold: 0.012,
+            backend: "silero".into(),
+            threshold: 0.5,
             hangover_ms: 400,
+            start_confirm_frames: 2,
+            model: String::new(),
+            url: default_silero_url(),
         }
+    }
+}
+
+pub fn default_silero_url() -> String {
+    "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx"
+        .into()
+}
+
+impl VadCfg {
+    pub fn wants_silero(&self) -> bool {
+        self.enabled && self.backend.trim().eq_ignore_ascii_case("silero")
     }
 }
 
@@ -518,6 +524,8 @@ mod tests {
         assert!(cfg.clock.enabled);
         assert!(cfg.clock.inject_prompt);
         assert!(cfg.clock.time_phrases.iter().any(|p| p == "what time is it"));
+        assert_eq!(cfg.vad.backend, "silero");
+        assert!((cfg.vad.threshold - 0.5).abs() < f32::EPSILON);
     }
 
     #[test]
