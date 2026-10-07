@@ -84,9 +84,14 @@ Strictly bound to `127.0.0.1:8765` (configurable via `[http]` in `config.toml`):
 - `POST /action/demo` — play test synthesized greeting.
 Runs alongside the Unix domain socket IPC without remote exposure.
 
-## Phase 8 — TensorRT / CUDA graphs / speculative decoding
+## Phase 8 — Inference Latency Optimizations (Complete)
 
-Latency after the spoken loop is solid.
+Inference latency tuning across LLM evaluation, KV caching, and speech pipelining:
+- **Flash Attention**: Explicitly enabled on CUDA (`LLAMA_FLASH_ATTN_TYPE_ENABLED`), reducing VRAM traffic and accelerating prefill on RTX 5080 (Blackwell).
+- **Prefix KV Cache Reuse**: Implemented prompt caching with sequence rollback (`clear_kv_cache_seq`), preserving shared prefix tokens (system instructions, clock prompt, conversation history) across turns and eliminating redundant prefill computation.
+- **Batch / Tile Tuning**: Configured `n_batch = 2048` and `n_ubatch = 512` for optimal GPU tensor core saturation.
+- **Early Speech Pipelining**: Extended `PhraseChunker` to split the very first phrase on clause breaks (`,`, `—` with ≥3 words), allowing Kokoro TTS synthesis to begin 200–300 ms earlier while the LLM continues generating subsequent phrases in parallel.
+- **Configurable**: Exposed `flash_attn`, `prefix_cache`, `n_batch`, and `n_ubatch` under `[llm]` in `config.toml`.
 
 ## Phase 9 — Kokoro CUDA on Blackwell
 

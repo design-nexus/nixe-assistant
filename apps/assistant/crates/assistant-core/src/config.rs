@@ -75,6 +75,10 @@ pub struct LlmCfg {
     pub ctx: u32,
     pub n_predict: i32,
     pub temperature: f32,
+    pub flash_attn: bool,
+    pub prefix_cache: bool,
+    pub n_batch: u32,
+    pub n_ubatch: u32,
 }
 
 impl Default for LlmCfg {
@@ -86,6 +90,10 @@ impl Default for LlmCfg {
             ctx: 4096,
             n_predict: 256,
             temperature: 0.7,
+            flash_attn: true,
+            prefix_cache: true,
+            n_batch: 2048,
+            n_ubatch: 512,
         }
     }
 }

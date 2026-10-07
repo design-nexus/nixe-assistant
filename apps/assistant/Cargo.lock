@@ -99,6 +99,7 @@ dependencies = [
  "assistant-core",
  "encoding_rs",
  "llama-cpp-2",
+ "llama-cpp-sys-2",
  "thiserror",
  "tokio",
  "tracing",
