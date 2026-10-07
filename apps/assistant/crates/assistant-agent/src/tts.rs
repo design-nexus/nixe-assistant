@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use assistant_core::config::Config;
 use assistant_core::paths;
-use loqui::{Engine, Format, SpeakRequest, TtsConfig, TtsDevice};
+use loqui::{Engine, Format, KokoroVariant, SpeakRequest, TtsConfig, TtsDevice};
 use std::io::Cursor;
 use std::path::Path;
 use std::sync::Mutex;
@@ -10,8 +10,19 @@ fn cuda_skip_stamp() -> std::path::PathBuf {
     paths::cache_dir().join("kokoro-cuda-skip")
 }
 
-/// ORT CUDA EP has no Blackwell (sm_120) kernels. Skip the load+probe that always fails.
-fn skip_cuda_tts() -> bool {
+fn parse_variant(s: &str) -> KokoroVariant {
+    match s.to_ascii_lowercase().as_str() {
+        "quantized" | "int8" | "q8" => KokoroVariant::Quantized,
+        "fp16" => KokoroVariant::Fp16,
+        _ => KokoroVariant::Fp32,
+    }
+}
+
+/// ORT CUDA EP has no Blackwell (sm_120) kernels. Skip the load+probe that always fails unless forced.
+fn skip_cuda_tts(force: bool) -> bool {
+    if force {
+        return false;
+    }
     if cuda_skip_stamp().exists() {
         return true;
     }
@@ -31,11 +42,18 @@ fn remember_cuda_tts_broken() {
     let _ = std::fs::write(cuda_skip_stamp(), b"ort-cuda has no sm_120 kernels\n");
 }
 
-fn load_engine(cache: &Path, device: TtsDevice) -> Result<Engine> {
+fn load_engine(
+    cache: &Path,
+    device: TtsDevice,
+    variant: KokoroVariant,
+    threads: Option<usize>,
+) -> Result<Engine> {
     Engine::builder()
         .cache_dir(cache)
         .tts(Some(TtsConfig {
             device,
+            variant,
+            threads,
             ..TtsConfig::default()
         }))
         .speaker(None)
@@ -57,6 +75,8 @@ pub struct KokoroProvider {
     engine: Engine,
     voice: String,
     speed: f32,
+    device: String,
+    variant: String,
     lock: Mutex<()>,
 }
 
@@ -64,13 +84,21 @@ impl KokoroProvider {
     pub fn load(cfg: &Config) -> Result<Self> {
         let cache = paths::cache_dir().join("loqui");
         std::fs::create_dir_all(&cache)?;
-        tracing::info!("loading Kokoro (this downloads weights on first run)");
+        let variant = parse_variant(&cfg.tts.variant);
+        let threads = cfg.tts.threads;
+        tracing::info!(
+            variant = ?variant,
+            threads = ?threads,
+            device = %cfg.tts.device,
+            force_cuda = cfg.tts.force_cuda,
+            "loading Kokoro (this downloads weights on first run)"
+        );
         let t0 = std::time::Instant::now();
-        let want_cuda = cfg.tts.device != "cpu" && !skip_cuda_tts();
-        let engine = if want_cuda {
-            match load_engine(&cache, TtsDevice::Cuda(0)) {
+        let want_cuda = cfg.tts.device != "cpu" && !skip_cuda_tts(cfg.tts.force_cuda);
+        let (engine, active_device) = if want_cuda {
+            match load_engine(&cache, TtsDevice::Cuda(0), variant, threads) {
                 Ok(engine) => match probe_speak(&engine, &cfg.tts.voice) {
-                    Ok(()) => engine,
+                    Ok(()) => (engine, "cuda:0".to_string()),
                     Err(err) => {
                         tracing::warn!(
                             %err,
@@ -78,28 +106,47 @@ impl KokoroProvider {
                         );
                         remember_cuda_tts_broken();
                         drop(engine);
-                        load_engine(&cache, TtsDevice::Cpu)
-                            .context("loqui Kokoro CPU fallback")?
+                        let eng = load_engine(&cache, TtsDevice::Cpu, variant, threads)
+                            .context("loqui Kokoro CPU fallback")?;
+                        (eng, "cpu (cuda probe failed)".to_string())
                     }
                 },
                 Err(err) => {
                     tracing::warn!(%err, "Kokoro CUDA failed; falling back to CPU (needs libcudnn for CUDA)");
-                    load_engine(&cache, TtsDevice::Cpu).context("loqui Kokoro CPU fallback")?
+                    let eng = load_engine(&cache, TtsDevice::Cpu, variant, threads)
+                        .context("loqui Kokoro CPU fallback")?;
+                    (eng, "cpu (cuda init failed)".to_string())
                 }
             }
         } else {
-            if cfg.tts.device != "cpu" {
+            if cfg.tts.device != "cpu" && !cfg.tts.force_cuda {
                 tracing::info!("Kokoro CUDA skipped on this GPU (no sm_120 ORT kernels); using CPU");
             }
-            load_engine(&cache, TtsDevice::Cpu).context("loqui Kokoro CPU")?
+            let eng = load_engine(&cache, TtsDevice::Cpu, variant, threads)
+                .context("loqui Kokoro CPU")?;
+            (eng, "cpu".to_string())
         };
-        tracing::info!(ms = t0.elapsed().as_millis(), "Kokoro ready");
+        tracing::info!(ms = t0.elapsed().as_millis(), active_device = %active_device, "Kokoro ready");
         Ok(Self {
             engine,
             voice: cfg.tts.voice.clone(),
             speed: cfg.tts.speed,
+            device: active_device,
+            variant: cfg.tts.variant.clone(),
             lock: Mutex::new(()),
         })
+    }
+
+    pub fn device(&self) -> &str {
+        &self.device
+    }
+
+    pub fn variant(&self) -> &str {
+        &self.variant
+    }
+
+    pub fn voice(&self) -> &str {
+        &self.voice
     }
 
     pub fn speak(&self, text: &str) -> Result<Vec<f32>> {

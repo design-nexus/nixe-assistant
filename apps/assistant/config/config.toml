@@ -23,6 +23,10 @@ provider = "kokoro"
 voice = "af_heart"
 speed = 1.0
 device = "cuda"
+variant = "fp32"
+# variant = "quantized" # Int8 quantized ONNX, 92MB, faster CPU synthesis with AVX-VNNI
+# threads = 4          # Intra-op CPU threads (default: ONNX Runtime auto)
+force_cuda = false    # Force CUDA attempt on Blackwell sm_120 despite missing ORT cubins
 
 [vad]
 enabled = true

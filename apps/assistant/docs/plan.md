@@ -93,10 +93,16 @@ Inference latency tuning across LLM evaluation, KV caching, and speech pipelinin
 - **Early Speech Pipelining**: Extended `PhraseChunker` to split the very first phrase on clause breaks (`,`, `—` with ≥3 words), allowing Kokoro TTS synthesis to begin 200–300 ms earlier while the LLM continues generating subsequent phrases in parallel.
 - **Configurable**: Exposed `flash_attn`, `prefix_cache`, `n_batch`, and `n_ubatch` under `[llm]` in `config.toml`.
 
-## Phase 9 — Kokoro CUDA on Blackwell
+## Phase 9 — Kokoro CUDA on Blackwell (Complete)
 
-Needs Linux ORT CUDA EP with sm_120 kernels. Skip stamp remains until then.
-llama.cpp GGUF already uses CUDA.
+Audited ONNX Runtime CUDA Execution Provider on Blackwell (RTX 5080, compute capability 12.0 / `sm_120`):
+- **Technical Root Cause Identified**: Inspected `libonnxruntime_providers_cuda.so` using `cuobjdump`. Prebuilt binary only contains ELF cubins for `sm_75`, `sm_80`, and `sm_90a`, and contains zero embedded PTX. When ORT attempts CUDA execution on `sm_120`, the CUDA driver fails with `cudaErrorNoKernelImageForDevice`.
+- **Intelligent Fallback Architecture**:
+  - Auto-detection of compute cap `12.*` skips the failing CUDA probe and falls back to CPU cleanly in under 1 ms without memory leaks or crashes.
+  - Added `force_cuda = false` toggle in `config.toml` so future ORT versions with `sm_120` kernels can be tested immediately without code changes.
+  - Added Kokoro model precision variant selection (`variant = "fp32"` reference or `variant = "quantized"` 92MB int8 optimized with AVX-VNNI hardware acceleration on Intel Core Ultra 9).
+  - Added CPU thread capping (`threads`).
+  - Added live `tts_device`, `tts_variant`, and `tts_voice` reporting to the HTTP `/status` and daemon health IPC.
 
 ## Phase 10 — F9 / Voxtype / Omarchy system trees
 

@@ -288,6 +288,9 @@ impl App {
             "model": self.llm.model_path().display().to_string(),
             "model_loaded": self.llm.is_loaded(),
             "silero_loaded": self.silero.lock().unwrap_or_else(|e| e.into_inner()).is_some(),
+            "tts_device": self.tts.device(),
+            "tts_variant": self.tts.variant(),
+            "tts_voice": self.tts.voice(),
         })
     }
 

@@ -105,6 +105,9 @@ pub struct TtsCfg {
     pub voice: String,
     pub speed: f32,
     pub device: String,
+    pub variant: String,
+    pub threads: Option<usize>,
+    pub force_cuda: bool,
 }
 
 impl Default for TtsCfg {
@@ -114,6 +117,9 @@ impl Default for TtsCfg {
             voice: "af_heart".into(),
             speed: 1.0,
             device: "cuda".into(),
+            variant: "fp32".into(),
+            threads: None,
+            force_cuda: false,
         }
     }
 }
