@@ -12,6 +12,7 @@ pub type Subscriber = broadcast::Receiver<Event>;
 
 pub struct Ipc {
     pub commands: mpsc::Receiver<Command>,
+    pub command_tx: mpsc::Sender<Command>,
     pub events: broadcast::Sender<Event>,
 }
 
@@ -43,11 +44,12 @@ pub async fn bind() -> anyhow::Result<Ipc> {
     let (ev_tx, _) = broadcast::channel(256);
     let events = ev_tx.clone();
 
+    let listener_cmd_tx = cmd_tx.clone();
     tokio::spawn(async move {
         loop {
             match listener.accept().await {
                 Ok((stream, _)) => {
-                    let cmd_tx = cmd_tx.clone();
+                    let cmd_tx = listener_cmd_tx.clone();
                     let ev_rx = events.subscribe();
                     tokio::spawn(handle_client(stream, cmd_tx, ev_rx));
                 }
@@ -60,6 +62,7 @@ pub async fn bind() -> anyhow::Result<Ipc> {
 
     Ok(Ipc {
         commands: cmd_rx,
+        command_tx: cmd_tx,
         events: ev_tx,
     })
 }

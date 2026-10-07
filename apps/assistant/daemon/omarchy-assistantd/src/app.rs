@@ -26,6 +26,7 @@ pub async fn run(cfg: Config) -> Result<()> {
     let ipc = assistant_ipc::bind().await.context("ipc bind")?;
     let Ipc {
         mut commands,
+        command_tx,
         events,
     } = ipc;
     let audio = tokio::task::spawn_blocking({
@@ -89,6 +90,25 @@ pub async fn run(cfg: Config) -> Result<()> {
     app.emit_state(AssistantState::Idle).await;
     app.emit_health();
 
+    let _http_handle = if app.cfg().http.enabled {
+        let app_status = Arc::clone(&app);
+        let http_state = assistant_ipc::HttpState {
+            cmd_tx: command_tx,
+            ev_tx: app.events.clone(),
+            status_fn: Arc::new(move || app_status.health_json()),
+        };
+        let http_cfg = app.cfg().http;
+        match assistant_ipc::start_http_server(&http_cfg.bind, http_cfg.port, http_state).await {
+            Ok(handle) => Some(handle),
+            Err(err) => {
+                tracing::warn!(%err, "failed to start HTTP server");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     {
         let app = Arc::clone(&app);
         let mut shutdown = app.shutdown.subscribe();
@@ -149,6 +169,9 @@ pub async fn run(cfg: Config) -> Result<()> {
                 }
             }
         }
+    }
+    if let Some(handle) = _http_handle {
+        handle.abort();
     }
     Ok(())
 }
@@ -250,6 +273,22 @@ impl App {
             model: self.llm.model_path().display().to_string(),
             model_loaded: self.llm.is_loaded(),
         });
+    }
+
+    fn health_json(&self) -> serde_json::Value {
+        let state = self
+            .state
+            .try_lock()
+            .map(|s| s.current())
+            .unwrap_or(AssistantState::Idle);
+        serde_json::json!({
+            "ok": true,
+            "state": state,
+            "name": self.cfg().assistant.name,
+            "model": self.llm.model_path().display().to_string(),
+            "model_loaded": self.llm.is_loaded(),
+            "silero_loaded": self.silero.lock().unwrap_or_else(|e| e.into_inner()).is_some(),
+        })
     }
 
     async fn reload(&self) {

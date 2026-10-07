@@ -19,6 +19,7 @@ pub struct Config {
     pub permissions: PermissionsCfg,
     pub agent: AgentCfg,
     pub mcp: McpCfg,
+    pub http: HttpCfg,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -465,6 +466,24 @@ pub struct McpServerCfg {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HttpCfg {
+    pub enabled: bool,
+    pub bind: String,
+    pub port: u16,
+}
+
+impl Default for HttpCfg {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            bind: "127.0.0.1".into(),
+            port: 8765,
+        }
+    }
 }
 
 impl Config {

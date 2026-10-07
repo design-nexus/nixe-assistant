@@ -71,9 +71,18 @@ aloud ("Handing off to Antigravity."). Stdio JSON-RPC 2.0 MCP client and
 sandboxed typed tools (`files.read`, `git.status`, `agent.handoff`) implemented
 in `assistant-tools`. Configurable via `[agent]` and `[mcp]` tables in `config.toml`.
 
-## Phase 7 — HTTP API
+## Phase 7 — HTTP API (Complete)
 
-Local HTTP for HUD/debug if Unix socket is not enough. Avoid remote.
+Localhost-only HTTP server for HUD, web dashboards, and debug tools.
+Strictly bound to `127.0.0.1:8765` (configurable via `[http]` in `config.toml`):
+- `GET /health` and `GET /status` — returns real-time JSON status (state, persona name, loaded LLM path, Silero VAD status).
+- `GET /events` — Server-Sent Events (`text/event-stream`) streaming live daemon events to HUD/web clients.
+- `POST /action/say` (`{"text": "..."}`) — inject speech.
+- `POST /action/cancel` — cancel current turn/playback.
+- `POST /action/reload` — hot-reload configuration and apps.
+- `POST /action/ptt` (`{"active": true|false}`) — trigger push-to-talk.
+- `POST /action/demo` — play test synthesized greeting.
+Runs alongside the Unix domain socket IPC without remote exposure.
 
 ## Phase 8 — TensorRT / CUDA graphs / speculative decoding
 

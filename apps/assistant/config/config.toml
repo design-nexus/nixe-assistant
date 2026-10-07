@@ -112,3 +112,9 @@ enabled = true
 # command = "npx"
 # args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/ken"]
 
+[http]
+enabled = true
+bind = "127.0.0.1"
+port = 8765
+
+
