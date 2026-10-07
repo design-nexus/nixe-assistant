@@ -6,6 +6,11 @@ license.workspace = true
 description = "Typed tools and permission classes for Nyx"
 
 [dependencies]
+anyhow.workspace = true
 assistant-core.workspace = true
+assistant-omarchy.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true

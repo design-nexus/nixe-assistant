@@ -60,9 +60,16 @@ utterance bounds, follow-up listen, and barge-in on AEC PCM. `[vad] backend =
 "energy"` keeps the RMS gate. Model: `~/.cache/omarchy-assistant/silero/silero_vad.onnx`
 (downloaded on first run from `[vad] url`).
 
-## Phase 6 — MCP / coding-agent handoff
+## Phase 6 — MCP / coding-agent handoff (done)
 
-Typed MCP tools. No unrestricted shell.
+Typed MCP tools. No unrestricted shell (`permissions.shell = "deny"`).
+Fast-path router detects agent handoffs ("ask claude to...", "ask agy to...",
+"code <prompt>", "open coding agent"). Spawns interactive agent (`agy`,
+`claude`, `codex`, `cursor`) in a dedicated terminal window on the active
+workspace via Hyprland dispatch (`omarchy-launch-terminal`), speaking
+aloud ("Handing off to Antigravity."). Stdio JSON-RPC 2.0 MCP client and
+sandboxed typed tools (`files.read`, `git.status`, `agent.handoff`) implemented
+in `assistant-tools`. Configurable via `[agent]` and `[mcp]` tables in `config.toml`.
 
 ## Phase 7 — HTTP API
 

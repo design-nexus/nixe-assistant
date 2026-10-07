@@ -679,6 +679,32 @@ impl App {
                 }
                 return self.run_desktop(&tool, &spoken, omarchy, timing).await;
             }
+            Intent::AgentHandoff {
+                agent,
+                prompt,
+                spoken,
+            } => {
+                timing.route_done = Some(Instant::now());
+                if !cfg.agent.enabled {
+                    return self.speak_reply("Coding agent handoff is disabled.", timing).await;
+                }
+                let target_agent = if agent.is_empty() {
+                    &cfg.agent.default_agent
+                } else {
+                    &agent
+                };
+                if let Err(err) = assistant_tools::agent::launch_coding_agent(
+                    target_agent,
+                    &prompt,
+                    &cfg.agent.terminal,
+                )
+                .await
+                {
+                    tracing::error!(%err, "failed to launch coding agent");
+                    return self.speak_reply("Failed to launch coding agent.", timing).await;
+                }
+                return self.speak_reply(&spoken, timing).await;
+            }
             Intent::Chat => {}
         }
 

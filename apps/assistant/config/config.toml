@@ -99,3 +99,16 @@ files_read = "allow"
 files_write = "confirm"
 shell = "deny"
 shutdown = "confirm"
+
+[agent]
+enabled = true
+default_agent = "agy" # "agy", "claude", "codex", "cursor"
+terminal = "omarchy-launch-terminal"
+
+[mcp]
+enabled = true
+# Configure external MCP servers over stdio here if desired:
+# [mcp.servers.filesystem]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/ken"]
+

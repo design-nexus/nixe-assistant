@@ -9,6 +9,7 @@ description = "Nyx turn pipeline: STT, LLM stream, phrase chunker, TTS glue"
 anyhow.workspace = true
 assistant-core.workspace = true
 assistant-inference.workspace = true
+assistant-tools.workspace = true
 hound.workspace = true
 loqui = { version = "0.3.0", features = ["cuda"] }
 thiserror.workspace = true

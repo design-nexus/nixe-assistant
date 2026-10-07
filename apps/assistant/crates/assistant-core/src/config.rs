@@ -17,6 +17,8 @@ pub struct Config {
     pub clock: ClockCfg,
     pub ui: UiCfg,
     pub permissions: PermissionsCfg,
+    pub agent: AgentCfg,
+    pub mcp: McpCfg,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -429,6 +431,40 @@ impl Default for PermissionsCfg {
             shutdown: "confirm".into(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentCfg {
+    pub enabled: bool,
+    pub default_agent: String,
+    pub terminal: String,
+}
+
+impl Default for AgentCfg {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            default_agent: "agy".into(),
+            terminal: "omarchy-launch-terminal".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct McpCfg {
+    pub enabled: bool,
+    pub servers: std::collections::HashMap<String, McpServerCfg>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerCfg {
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: std::collections::HashMap<String, String>,
 }
 
 impl Config {

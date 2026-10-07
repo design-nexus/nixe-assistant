@@ -55,6 +55,7 @@ dependencies = [
  "anyhow",
  "assistant-core",
  "assistant-inference",
+ "assistant-tools",
  "hound",
  "loqui",
  "thiserror",
@@ -130,9 +131,14 @@ dependencies = [
 name = "assistant-tools"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "assistant-core",
+ "assistant-omarchy",
  "serde",
+ "serde_json",
  "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

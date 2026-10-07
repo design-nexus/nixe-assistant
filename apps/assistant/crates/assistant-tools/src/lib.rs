@@ -1,3 +1,7 @@
+pub mod agent;
+pub mod mcp;
+pub mod typed;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,6 +22,26 @@ pub struct ToolSpec {
 
 pub fn builtin_tools() -> Vec<ToolSpec> {
     vec![
+        ToolSpec {
+            name: "agent.handoff".into(),
+            permission: Permission::Safe,
+            description: "Hand off a task to an interactive terminal coding agent".into(),
+        },
+        ToolSpec {
+            name: "files.read".into(),
+            permission: Permission::Safe,
+            description: "Read the contents of a local file safely".into(),
+        },
+        ToolSpec {
+            name: "git.status".into(),
+            permission: Permission::Safe,
+            description: "Check git repository status".into(),
+        },
+        ToolSpec {
+            name: "system.status".into(),
+            permission: Permission::Safe,
+            description: "Inspect system hardware and resource status".into(),
+        },
         ToolSpec {
             name: "audio.volume_down".into(),
             permission: Permission::Safe,
