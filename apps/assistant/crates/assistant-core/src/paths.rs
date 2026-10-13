@@ -7,7 +7,7 @@ pub fn xdg_runtime() -> PathBuf {
 }
 
 pub fn runtime_dir() -> PathBuf {
-    xdg_runtime().join("omarchy-assistant")
+    xdg_runtime().join("nixe-assistant")
 }
 
 /// Isolated Voxtype runtime so the assistant's Parakeet daemon does not share F9's lock.
@@ -36,7 +36,7 @@ pub fn socket_path() -> PathBuf {
 pub fn config_dir() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from(".").join(".config"))
-        .join("omarchy-assistant")
+        .join("nixe-assistant")
 }
 
 pub fn config_path() -> PathBuf {
@@ -58,7 +58,7 @@ pub fn commands_path() -> PathBuf {
 pub fn data_dir() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from(".").join(".local/share"))
-        .join("omarchy-assistant")
+        .join("nixe-assistant")
 }
 
 pub fn models_dir() -> PathBuf {
@@ -68,5 +68,5 @@ pub fn models_dir() -> PathBuf {
 pub fn cache_dir() -> PathBuf {
     dirs::cache_dir()
         .unwrap_or_else(|| PathBuf::from(".").join(".cache"))
-        .join("omarchy-assistant")
+        .join("nixe-assistant")
 }

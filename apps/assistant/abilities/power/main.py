@@ -18,7 +18,7 @@ def handle(name, args, cancelled):
         try:
             comm = (path/'comm').read_text().strip()
             groups = (path/'cgroup').read_text()
-            if any(unit in groups for unit in ('/omarchy-assistantd.service', '/nyx-parakeet.service', '/omarchy-assistant-hud.service')):
+            if any(unit in groups for unit in ('/nixe-assistantd.service', '/nixe-assistant-stt.service', '/nixe-assistant-hud.service')):
                 status = (path/'status').read_text().splitlines()
                 rss = next((line.split(':',1)[1].strip() for line in status if line.startswith('VmRSS:')), '0 kB')
                 data['assistant_processes'].append({'pid':int(path.name), 'name':comm, 'ram':rss})

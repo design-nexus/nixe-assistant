@@ -20,10 +20,10 @@ steps reported. No nested routines, power changes, or shared undo inside routine
 For example, save a `coding` routine through the CLI:
 
 ```bash
-omarchy-assistant tool routines.save '{"name":"coding","steps":[{"tool":"hypr.workspace","arguments":{"request":"workspace 1"}},{"tool":"terminal.run","arguments":{"argv":["pwd"],"cwd":"/home/ken/Projects/omarchy-assistant","show":true}}]}'
+nixe-assistant tool routines.save '{"name":"coding","steps":[{"tool":"hypr.workspace","arguments":{"request":"workspace 1"}},{"tool":"terminal.run","arguments":{"argv":["pwd"],"cwd":"/home/ken/Projects/nixe-assistant","show":true}}]}'
 ```
 
-Use the HUD/TUI or `omarchy-assistant approve APPROVAL_ID` to approve the displayed
+Use the HUD/TUI or `nixe-assistant approve APPROVAL_ID` to approve the displayed
 arguments. Say **“start coding,” “run routine coding,” “preview routine coding,”**
 or **“list routines.”** `start work` and `start writing` also resolve saved names.
 Routine definitions live in plugin-owned SQLite and support undo.
@@ -31,8 +31,8 @@ Routine definitions live in plugin-owned SQLite and support undo.
 ## Project context
 
 ```bash
-omarchy-assistant tool projects.save '{"name":"assistant","directory":"/home/ken/Projects/omarchy-assistant","commands":{"tests":["cargo","test","--workspace"],"build":["cargo","build"]},"urls":["https://github.com/design-nexus/omarchy-assistant"],"agent":"agy"}'
-omarchy-assistant tool projects.use '{"name":"assistant"}'
+nixe-assistant tool projects.save '{"name":"assistant","directory":"/home/ken/Projects/nixe-assistant","commands":{"tests":["cargo","test","--workspace"],"build":["cargo","build"]},"urls":["https://github.com/design-nexus/nixe-assistant"],"agent":"agy"}'
+nixe-assistant tool projects.use '{"name":"assistant"}'
 ```
 
 Say **“use project assistant,” “run the tests,” “run build,” “open project
@@ -126,7 +126,7 @@ its KV context before acknowledging unload. Loaded library/CUDA runtime state ma
 remain until the daemon stops.
 
 Use `power.configure` with `profile` and `idle_seconds`; zero disables idle
-unloading. Settings persist separately in `~/.config/omarchy-assistant/power.json`.
+unloading. Settings persist separately in `~/.config/nixe-assistant/power.json`.
 Daemon status includes the active profile and whether the model is resident.
 
 ## Undo and action history
@@ -142,7 +142,7 @@ before its undo can run.
 
 **“Show action history”** lists the latest 100 host-dispatched actions, including
 which changes can be undone. The journal is private and stored at
-`~/.local/share/omarchy-assistant/actions.json`; plugin-owned SQLite stores the
+`~/.local/share/nixe-assistant/actions.json`; plugin-owned SQLite stores the
 inverse data. Known read-only queries are omitted from the undo journal. An irreversible latest
 change blocks undo rather than silently undoing an unrelated earlier change.
 Undo does not invent reversal for terminal commands, agent work, browser actions,

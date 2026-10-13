@@ -1,8 +1,8 @@
-// Omarchy Assistant HUD overlay
+// Nixe Assistant HUD overlay
 //
-// Installed to ~/.local/share/omarchy-assistant/quickshell
+// Installed to ~/.local/share/nixe-assistant/quickshell
 //
-// Listens to `omarchy-assistant listen` NDJSON on stdout.
+// Listens to `nixe-assistant listen` NDJSON on stdout.
 
 import QtQuick
 import Quickshell
@@ -276,13 +276,13 @@ ShellRoot {
     Process { id: approvalProc }
     Process {
         id: cancelProc
-        command: [(Quickshell.env("HOME") || "") + "/.local/bin/omarchy-assistant", "cancel"]
+        command: [(Quickshell.env("HOME") || "") + "/.local/bin/nixe-assistant", "cancel"]
         running: false
     }
 
     Process {
         id: listener
-        command: [(Quickshell.env("HOME") || "") + "/.local/bin/omarchy-assistant", "listen"]
+        command: [(Quickshell.env("HOME") || "") + "/.local/bin/nixe-assistant", "listen"]
         running: true
 
         stdout: SplitParser {
@@ -331,17 +331,17 @@ ShellRoot {
             right: true
         }
 
-        WlrLayershell.namespace: "omarchy-assistant-hud"
+        WlrLayershell.namespace: "nixe-assistant-hud"
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: root.grabKeys ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
         Shortcut {
             sequence: "Y"; enabled: root.approvalId.length > 0 && root.hudEnabled && root.connected
-            onActivated: {approvalProc.command = ["omarchy-assistant", "approve", root.approvalId]; approvalProc.running = true; root.approvalId = ""; root.approvalText = "";}
+            onActivated: {approvalProc.command = ["nixe-assistant", "approve", root.approvalId]; approvalProc.running = true; root.approvalId = ""; root.approvalText = "";}
         }
         Shortcut {
             sequence: "N"; enabled: root.approvalId.length > 0 && root.hudEnabled && root.connected
-            onActivated: {approvalProc.command = ["omarchy-assistant", "deny", root.approvalId]; approvalProc.running = true; root.approvalId = ""; root.approvalText = "";}
+            onActivated: {approvalProc.command = ["nixe-assistant", "deny", root.approvalId]; approvalProc.running = true; root.approvalId = ""; root.approvalText = "";}
         }
         Shortcut {
             sequences: ["Escape"]

@@ -33,7 +33,7 @@ export class Browser {
  contexts=new Map(); pages=new Map();refs=new Map();revision=0;paused=false;lastSources=[];pendingSearch=null;cachedSearch=null;
  async page(kind) {
   if(!this.contexts.has(kind)) {
-   const data=process.env.ASSISTANT_BROWSER_DATA || join(process.env.XDG_DATA_HOME||join(homedir(),'.local/share'),'omarchy-assistant','browser-profiles');
+   const data=process.env.ASSISTANT_BROWSER_DATA || join(process.env.XDG_DATA_HOME||join(homedir(),'.local/share'),'nixe-assistant','browser-profiles');
    const dir=join(data,kind);await mkdir(dir,{recursive:true,mode:0o700});await chmod(dir,0o700);
    const options={headless:kind==='background'||process.env.ASSISTANT_BROWSER_HEADLESS==='1',acceptDownloads:false,viewport:{width:1200,height:850}};
    if(process.env.ASSISTANT_BROWSER_EXECUTABLE)options.executablePath=process.env.ASSISTANT_BROWSER_EXECUTABLE;

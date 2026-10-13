@@ -1,5 +1,5 @@
 # Desktop command phrases. Edit this file, then:
-#   omarchy-assistant reload
+#   nixe-assistant reload
 #
 # `omarchy` is argv after the binary: omarchy <args>, or hyprctl <args> when
 # the first arg is hyprctl. `{n}` in [workspace] is the spoken workspace number.

@@ -140,7 +140,7 @@ idle_secs = 120
 
 [browser]
 enabled = true
-node = "omarchy-assistant-node"
+node = "nixe-assistant-node"
 worker = "auto"
 weather_location = ""
 # Optional registered MCP search tool, e.g. "duckduckgo.search". Empty uses built-in search.

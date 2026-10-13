@@ -1846,6 +1846,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "nixe-assistantd"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assistant-agent",
+ "assistant-audio",
+ "assistant-core",
+ "assistant-inference",
+ "assistant-ipc",
+ "assistant-omarchy",
+ "assistant-tools",
+ "chrono",
+ "dirs",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "nom"
 version = "7.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1983,29 +2006,6 @@ name = "number_prefix"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "830b246a0e5f20af87141b25c173cd1b609bd7779a4617d6ec582abaf90870f3"
-
-[[package]]
-name = "omarchy-assistantd"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assistant-agent",
- "assistant-audio",
- "assistant-core",
- "assistant-inference",
- "assistant-ipc",
- "assistant-omarchy",
- "assistant-tools",
- "chrono",
- "dirs",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
-]
 
 [[package]]
 name = "once_cell"

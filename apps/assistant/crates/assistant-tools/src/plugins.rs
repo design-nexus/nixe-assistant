@@ -359,7 +359,7 @@ impl PluginManager {
             .collect();
         let mut matches = Vec::new();
         for (m, client, own, trusted) in entries {
-            if trusted && m.executable.ends_with("omarchy-assistant-plugin-worker") {
+            if trusted && m.executable.ends_with("nixe-assistant-plugin-worker") {
                 let route = tokio::select! {_=own.cancelled()=>continue,r=client.extension("assistant/route",json!({"version":1,"request":request}),cancel)=>r?};
                 if !route.is_null() {
                     matches.push(route);
@@ -1104,7 +1104,7 @@ impl PluginManager {
                 r.saved.trusted
                     && r.manifest
                         .executable
-                        .ends_with("omarchy-assistant-plugin-worker")
+                        .ends_with("nixe-assistant-plugin-worker")
             })
             .map(|r| r.client.clone())
             .collect();

@@ -54,9 +54,9 @@
     "visible Google reports human verification; direct example.com navigation succeeds"
   ],
   "backups": [
-    "/home/ken/.local/state/omarchy-assistant/backups/plugins-20261007-133933",
-    "/home/ken/.local/state/omarchy-assistant/backups/plugins-20261007-135132",
-    "/home/ken/.local/state/omarchy-assistant/backups/plugins-20261007-141202"
+    "/home/ken/.local/state/nixe-assistant/backups/plugins-20261007-133933",
+    "/home/ken/.local/state/nixe-assistant/backups/plugins-20261007-135132",
+    "/home/ken/.local/state/nixe-assistant/backups/plugins-20261007-141202"
   ],
   "deployment_note": "Initial framework deployment plus two corrective framework restarts for DND/lifecycle cleanup and Clock prompt gating/ambiguous route rejection. Plugin operations do not restart models."
 }

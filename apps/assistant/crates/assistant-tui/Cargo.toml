@@ -6,7 +6,7 @@ license.workspace = true
 description = "Voice assistant settings and model manager TUI"
 
 [[bin]]
-name = "omarchy-assistant-tui"
+name = "nixe-assistant-tui"
 path = "src/main.rs"
 
 [dependencies]

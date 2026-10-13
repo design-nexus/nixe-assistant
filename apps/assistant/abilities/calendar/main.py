@@ -48,9 +48,9 @@ def handle(name, args, cancelled):
         rows = sorted([dict(id=row['id'], **json.loads(row['body'])) for row in db.execute('SELECT * FROM records')], key=lambda row: timestamp(row['start']))
         if name == 'calendar.export':
             utc = lambda value: dt.datetime.fromtimestamp(timestamp(value), dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-            lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Omarchy Assistant//Local Calendar 1//EN', 'CALSCALE:GREGORIAN']
+            lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Nixe Assistant//Local Calendar 1//EN', 'CALSCALE:GREGORIAN']
             for row in rows:
-                lines += ['BEGIN:VEVENT', 'UID:' + row['id'] + '@omarchy-assistant.local', 'DTSTAMP:' + dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ'), 'DTSTART:' + utc(row['start']), 'DTEND:' + utc(row['end']), 'SUMMARY:' + escape(row['title']), 'DESCRIPTION:' + escape(row.get('description', '')), 'LOCATION:' + escape(row.get('location', '')), 'END:VEVENT']
+                lines += ['BEGIN:VEVENT', 'UID:' + row['id'] + '@nixe-assistant.local', 'DTSTAMP:' + dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ'), 'DTSTART:' + utc(row['start']), 'DTEND:' + utc(row['end']), 'SUMMARY:' + escape(row['title']), 'DESCRIPTION:' + escape(row.get('description', '')), 'LOCATION:' + escape(row.get('location', '')), 'END:VEVENT']
             path = data_path('calendar.ics')
             Path(path).write_bytes(('\r\n'.join(map(fold, lines)) + '\r\nEND:VCALENDAR\r\n').encode())
             return {'path': path, 'count': len(rows)}

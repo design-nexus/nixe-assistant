@@ -2,7 +2,7 @@
 
 The daemon keeps microphone capture, models, streaming, speech, conversation,
 permission decisions and cancellation. Abilities run in independent MCP stdio
-processes. Updating `omarchy-assistant-plugin-worker` does not require rebuilding
+processes. Updating `nixe-assistant-plugin-worker` does not require rebuilding
 the daemon or TUI. Processes are started only for enabled packages; no crash
 restart loop is used. Use `plugins reload ID` to retry.
 
@@ -11,9 +11,9 @@ operating-system sandbox.** Review executable code and dependencies before
 installing. The installer does not execute installation hooks. Native dynamic
 libraries are not a plugin interface; scripts and compiled executables are.
 
-Packages live in `$XDG_DATA_HOME/omarchy-assistant/abilities/ID` (normally
+Packages live in `$XDG_DATA_HOME/nixe-assistant/abilities/ID` (normally
 `~/.local/share`). Settings, source metadata, migration trust and saved enablement
-live separately in `$XDG_CONFIG_HOME/omarchy-assistant/plugins.json`. Persistent
+live separately in `$XDG_CONFIG_HOME/nixe-assistant/plugins.json`. Persistent
 plugin files live in `plugin-data/ID` under the assistant's data directory.
 Disable and remove retain these files. Back up SQLite databases and Markdown
 exports as personal data. Notes are separate from conversation history.
@@ -21,15 +21,15 @@ exports as personal data. Notes are separate from conversation history.
 ## Commands and TUI
 
 ```
-omarchy-assistant plugins list --json
-omarchy-assistant plugins inspect notes --json
-omarchy-assistant plugins install ./example-plugins/echo --yes
-omarchy-assistant plugins enable example.echo
-omarchy-assistant tool example.echo '{"text":"hello"}'
-omarchy-assistant plugins reload example.echo
-omarchy-assistant plugins disable example.echo
-omarchy-assistant plugins update ./updated-package --yes
-omarchy-assistant plugins remove example.echo
+nixe-assistant plugins list --json
+nixe-assistant plugins inspect notes --json
+nixe-assistant plugins install ./example-plugins/echo --yes
+nixe-assistant plugins enable example.echo
+nixe-assistant tool example.echo '{"text":"hello"}'
+nixe-assistant plugins reload example.echo
+nixe-assistant plugins disable example.echo
+nixe-assistant plugins update ./updated-package --yes
+nixe-assistant plugins remove example.echo
 ```
 
 Inspection is JSON and works offline. Mutating lifecycle controls are acknowledged
@@ -146,7 +146,7 @@ with user words quoted as literal terms.
 
 ## Migration and troubleshooting
 
-`omarchy-assistant plugins migrate /path/to/checkout` creates descriptors and
+`nixe-assistant plugins migrate /path/to/checkout` creates descriptors and
 separate state additively. Existing TOML files are not rewritten. Configured MCP
 servers keep server IDs and `SERVER.TOOL` host names, startup environment,
 permissions, dependencies and installation paths. DuckDuckGo's installed server

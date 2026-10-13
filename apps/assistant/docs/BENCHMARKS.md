@@ -27,9 +27,9 @@ not when the speaker cone moves.
 ## How to capture
 
 ```bash
-RUST_LOG=info journalctl --user -u omarchy-assistantd -f
+RUST_LOG=info journalctl --user -u nixe-assistantd -f
 # or run in a terminal:
-RUST_LOG=info omarchy-assistantd
+RUST_LOG=info nixe-assistantd
 ```
 
 Hold Alt+Space, speak one short sentence, release. Paste the `Nyx timing` block
@@ -37,7 +37,7 @@ and fill a row below.
 
 Also record, when practical:
 
-- `nvidia-smi` VRAM of `omarchy-assistantd` at idle (models loaded)
+- `nvidia-smi` VRAM of `nixe-assistantd` at idle (models loaded)
 - GGUF path / name
 - Voxtype variant (`voxtype info`)
 - whether Kokoro ran on CUDA or CPU
@@ -46,8 +46,8 @@ Also record, when practical:
 
 | Date | Host | GGUF | STT | TTS | VAD→STT | STT→route | route→TTFT | TTFT→TTS | TTS→audio | TOTAL | VRAM idle | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 2026-10-05 | Hades RTX 5080 | Gemma 4 E4B Q4 | voxtype whisper `base.en` CPU | Kokoro CPU | 861 | 0 | 139 | 237 | 0 | **1237** | ~3860 MiB | `omarchy-assistant demo`: Kokoro “What is two plus two?” → Voxtype “What is 2 plus 2?” → LLM “Four.” → speakers. No mic/VAD. Probe synth excluded from the clock. |
-| 2026-10-06 | Hades RTX 5080 | Gemma 4 E4B Q4 | warm Parakeet (`nyx-parakeet`, `voxtype-onnx-avx2`) | Kokoro CPU (CUDA skipped, no sm_120 ORT) | 198 | 0 | 164 | 426 | 0 | **788** | 3848 MiB | PTT mic: “Hello.” → “Hello there.” Key-up is VAD end. Same daemon as the 643 ms Kokoro / 1329 ms GGUF load below. |
+| 2026-10-05 | Hades RTX 5080 | Gemma 4 E4B Q4 | voxtype whisper `base.en` CPU | Kokoro CPU | 861 | 0 | 139 | 237 | 0 | **1237** | ~3860 MiB | `nixe-assistant demo`: Kokoro “What is two plus two?” → Voxtype “What is 2 plus 2?” → LLM “Four.” → speakers. No mic/VAD. Probe synth excluded from the clock. |
+| 2026-10-06 | Hades RTX 5080 | Gemma 4 E4B Q4 | warm Parakeet (`nixe-assistant-stt`, `voxtype-onnx-avx2`) | Kokoro CPU (CUDA skipped, no sm_120 ORT) | 198 | 0 | 164 | 426 | 0 | **788** | 3848 MiB | PTT mic: “Hello.” → “Hello there.” Key-up is VAD end. Same daemon as the 643 ms Kokoro / 1329 ms GGUF load below. |
 
 ## Audio microbenchmarks
 

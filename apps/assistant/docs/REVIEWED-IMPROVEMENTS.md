@@ -80,7 +80,7 @@ arguments, approval ID and expiry. Existing commands/events remain supported.
 
 HTTP binds only to a loopback IP. Every endpoint requires
 `Authorization: Bearer TOKEN`. The randomly generated token is in
-`$XDG_RUNTIME_DIR/omarchy-assistant/http.token`, mode 0600 (runtime directory 0700).
+`$XDG_RUNTIME_DIR/nixe-assistant/http.token`, mode 0600 (runtime directory 0700).
 HTTP action responses indicate queued work, not successful execution; use IPC
 for acknowledged reloads. No browser-origin access is enabled.
 
@@ -93,12 +93,12 @@ CLI additions: `doctor [--json]`, `status --json`, `activity [clear]`,
 `scripts/install.sh` builds and installs locally, backs up installed files and
 configuration, migrates configuration additively, restarts affected services,
 and verifies model health. Startup failure restores the backup. HUD assets live
-in `~/.local/share/omarchy-assistant/quickshell`, independent of the checkout.
+in `~/.local/share/nixe-assistant/quickshell`, independent of the checkout.
 The plugin keeps any existing assistant plugin identifier used by the bar.
 
 CUDA is an optional build feature. The installer selects it when `nvcc` exists;
-manual builds use `cargo build --release --features cuda -p omarchy-assistantd`.
+manual builds use `cargo build --release --features cuda -p nixe-assistantd`.
 For this host's Blackwell GPU, put `CMAKE_CUDA_ARCHITECTURES=120a-real` in
-`~/.config/omarchy-assistant/build.env`; other hosts choose their own override.
+`~/.config/nixe-assistant/build.env`; other hosts choose their own override.
 Runtime library overrides go in `runtime.env`, for example
 `LD_LIBRARY_PATH=/opt/cuda/lib64`. Existing user config is preserved.

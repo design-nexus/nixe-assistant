@@ -98,7 +98,7 @@ pub async fn search_huggingface(query: &str) -> Result<Vec<HfModelEntry>> {
     );
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(6))
-        .user_agent("omarchy-assistant-tui")
+        .user_agent("nixe-assistant-tui")
         .build()?;
     let resp = client.get(&url).send().await?.error_for_status()?;
     let items: Vec<HfModelEntry> = resp.json().await?;
@@ -254,7 +254,7 @@ pub async fn download_file(
         let client = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(10))
             .read_timeout(std::time::Duration::from_secs(15))
-            .user_agent("omarchy-assistant-tui")
+            .user_agent("nixe-assistant-tui")
             .build()?;
         let response = cancellable(
             async { Ok(client.get(url).send().await?.error_for_status()?) },

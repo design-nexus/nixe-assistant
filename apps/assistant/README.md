@@ -1,7 +1,7 @@
-# Omarchy Assistant — Local Voice Assistant
+# Nixe Assistant — Local Voice Assistant
 
 Resident voice assistant for Omarchy/Hyprland.
-The process is `omarchy-assistantd`. Custom personas can be configured via settings.
+The process is `nixe-assistantd`. Custom personas can be configured via settings.
 
 Phase 1 milestone:
 
@@ -22,13 +22,13 @@ See `docs/ARCHITECTURE.md`, `docs/SETUP.md`, `docs/BENCHMARKS.md`.
 ## Quick start
 
 ```bash
-cargo build --release -p omarchy-assistantd
+cargo build --release -p nixe-assistantd
 ./scripts/install.sh
 ```
 
 Hold **Alt+Space**, talk, release.
 
-Voice-launched apps live in `~/.config/omarchy-assistant/apps.toml` (template: `config/apps.toml`). Desktop command phrases live in `commands.toml`. Edit those files, then `omarchy-assistant reload` (or SIGHUP). No rebuild.
+Voice-launched apps live in `~/.config/nixe-assistant/apps.toml` (template: `config/apps.toml`). Desktop command phrases live in `commands.toml`. Edit those files, then `nixe-assistant reload` (or SIGHUP). No rebuild.
 
 See [settings, MCP, diagnostics and installation](docs/REVIEWED-IMPROVEMENTS.md) for the reviewed improvements and new controls.
 
@@ -36,7 +36,7 @@ See [settings, MCP, diagnostics and installation](docs/REVIEWED-IMPROVEMENTS.md)
 
 ```
 crates/     replaceable STT / TTS / inference / audio
-daemon/     omarchy-assistantd + omarchy-assistant CLI
+daemon/     nixe-assistantd + nixe-assistant CLI
 config/     shipped config.toml, apps.toml, commands.toml, voxtype-parakeet.toml
 quickshell/ standalone Assistant HUD
 systemd/    assistantd, HUD, Parakeet STT user units
@@ -65,7 +65,7 @@ Useful next additions: opt-in local file/content indexing with exclusions, accou
 Location: weather and nearby questions use an approximate city from your public IP, cached in memory for one hour. Say **where am I**, **remember my location Chicago, Illinois**, **forget my location**, **disable location**, or **enable location**. CLI: `location show|refresh|set CITY|clear|on|off`. TUI Features: Location toggles automatic use; `l` edits the city override, then Ctrl+S applies it. Location is city-level rather than GPS, so a VPN or ISP can affect the estimate. Requests go to [ipapi.co](https://ipapi.co/api/), with [ipwho.is](https://ipwhois.io/documentation) as a fallback; no API key is required. Failed lookups ask for a city. Coordinates can be supplied explicitly in `[location]` if needed. The older weather-specific override remains supported.
 
 Local abilities now run as managed MCP plugin processes. Press **0** in the TUI
-for Plugins, or use `omarchy-assistant plugins list`. Packages can be installed,
+for Plugins, or use `nixe-assistant plugins list`. Packages can be installed,
 enabled, disabled and reloaded without reloading models. Notes and one-time
 reminders persist in plugin-owned SQLite databases. See [Plugin API, migration
 and authoring](docs/PLUGINS.md) and [the echo example](example-plugins/echo).

@@ -13,7 +13,7 @@ Validation completed:
 
 DuckDuckGo returned a human-verification challenge during the live search check. Challenge detection and the honest failure response are implemented; successful factual retrieval after manual challenge completion remains dependent on the site. Automation does not solve CAPTCHAs.
 
-Installation backup: `~/.local/state/omarchy-assistant/backups/20261007-020421`. Intermediate updates also retained prior binaries and HUD assets within that backup directory. The installer restores the prior installation if startup health fails.
+Installation backup: `~/.local/state/nixe-assistant/backups/20261007-020421`. Intermediate updates also retained prior binaries and HUD assets within that backup directory. The installer restores the prior installation if startup health fails.
 
 ## Location update
 
@@ -26,7 +26,7 @@ On-demand approximate IP location, a manual city/coordinate override, voice cont
 - “Where am I?” produced the expected approximate city response and TTS playback events. TUI location scrolling, city editing, unsaved-change protection, and discard were checked through a terminal session.
 - Daemon, HUD, and Parakeet services are active; health reports a loaded model, 24 tools, and no MCP errors. All three installed binaries match the final release artifacts.
 
-Location installation backup: `/home/ken/.local/state/omarchy-assistant/backups/20261007-113236-location`. Configuration migration was additive; the original assets and config are retained for rollback. No precise device/GPS location is claimed.
+Location installation backup: `/home/ken/.local/state/nixe-assistant/backups/20261007-113236-location`. Configuration migration was additive; the original assets and config are retained for rollback. No precise device/GPS location is claimed.
 
 ## Current weather and US units fix
 
@@ -39,7 +39,7 @@ US locations enforce Fahrenheit and mph, including generated tool calls. The gen
 - The Celsius verification request was stopped following the user's imperial-units instruction. Final live verification used Fahrenheit only.
 - Configuration was unchanged. Daemon, HUD, and Parakeet services are active; health reports 25 tools, a loaded model, and no MCP errors.
 
-Installation backup: `/home/ken/.local/state/omarchy-assistant/backups/20261007-122821-weather`.
+Installation backup: `/home/ken/.local/state/nixe-assistant/backups/20261007-122821-weather`.
 
 ## DuckDuckGo MCP integration
 
@@ -52,4 +52,4 @@ The local patch bounds HTTP time/body size and returned content, propagates canc
 - The first full search check exposed retrieved source text entering desktop routing and switching to workspace 5. Routing now checks only the original user request; enriched source/tool input stays on the answer path. The repeated check retrieved three results, including official NASA Artemis II/III pages, and streamed a spoken answer with no desktop command dispatch.
 - The active daemon has 27 tools, a loaded model, no MCP errors, and `duckduckgo.search` as its running provider. Binaries, browser worker, and the installed upstream patch match their reviewed artifacts. Unrelated configuration values were preserved.
 
-Final runtime installation backup: `/home/ken/.local/state/omarchy-assistant/backups/20261007-124349-search`. The preceding search deployment was also retained under `20261007-123959-search`.
+Final runtime installation backup: `/home/ken/.local/state/nixe-assistant/backups/20261007-124349-search`. The preceding search deployment was also retained under `20261007-123959-search`.

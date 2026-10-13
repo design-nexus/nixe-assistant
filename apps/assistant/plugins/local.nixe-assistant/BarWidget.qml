@@ -4,7 +4,7 @@ import qs.Ui
 
 BarWidget {
   id: root
-  moduleName: "local.omarchy-assistant"
+  moduleName: "local.nixe-assistant"
 
   function injectPanel() {
     if (!panelLoader.item) return
@@ -28,7 +28,7 @@ BarWidget {
     visible: false
     source: Qt.resolvedUrl("Panel.qml")
     onLoaded: { root.injectPanel(); Qt.callLater(root.injectPanel) }
-    onStatusChanged: if (status === Loader.Error) console.warn("local.omarchy-assistant: Panel.qml failed to load")
+    onStatusChanged: if (status === Loader.Error) console.warn("local.nixe-assistant: Panel.qml failed to load")
   }
 
   BarIconButton {

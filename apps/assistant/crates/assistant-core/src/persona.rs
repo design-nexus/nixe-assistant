@@ -518,7 +518,7 @@ impl Persona {
         Ok(())
     }
 
-    /// Loads all saved personas from disk (`~/.config/omarchy-assistant/personas/*.toml`).
+    /// Loads all saved personas from disk (`~/.config/nixe-assistant/personas/*.toml`).
     /// Seeds prebuilts if they do not exist yet.
     pub fn load_all() -> crate::Result<Vec<Self>> {
         Self::ensure_prebuilts()?;
@@ -563,7 +563,7 @@ impl Persona {
         Ok(p)
     }
 
-    /// Saves this persona to `~/.config/omarchy-assistant/personas/<id>.toml`.
+    /// Saves this persona to `~/.config/nixe-assistant/personas/<id>.toml`.
     pub fn save(&self) -> crate::Result<()> {
         let dir = paths::personas_dir();
         if !dir.exists() {
@@ -639,7 +639,7 @@ pub fn sync_plugin_manifest(persona: &Persona) -> crate::Result<()> {
         if let Ok(content) = fs::read_to_string(&path) {
             if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&content) {
                 if !json["id"].as_str().is_some_and(|id| {
-                    id.ends_with(".omarchy-assistant") || id == "omarchy.assistant"
+                    id.ends_with(".nixe-assistant") || id == "omarchy.assistant"
                 }) {
                     continue;
                 }

@@ -1,16 +1,16 @@
 [package]
-name = "omarchy-assistantd"
+name = "nixe-assistantd"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Local voice assistant daemon for Omarchy"
 
 [[bin]]
-name = "omarchy-assistantd"
+name = "nixe-assistantd"
 path = "src/main.rs"
 
 [[bin]]
-name = "omarchy-assistant"
+name = "nixe-assistant"
 path = "src/cli.rs"
 
 [dependencies]

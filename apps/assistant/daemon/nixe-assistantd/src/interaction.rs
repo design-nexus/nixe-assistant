@@ -946,7 +946,7 @@ impl App {
                 Duration::from_secs(3),
                 tokio::process::Command::new("notify-send")
                     .args([
-                        "--app-name=Omarchy Assistant",
+                        "--app-name=Assistant",
                         "--",
                         event["title"].as_str().unwrap(),
                         event["text"].as_str().unwrap(),

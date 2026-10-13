@@ -26,7 +26,7 @@
   "entryPoints": {
     "barWidget": "BarWidget.qml"
   },
-  "id": "local.omarchy-assistant",
+  "id": "local.nixe-assistant",
   "kinds": [
     "bar-widget"
   ],

@@ -7,8 +7,8 @@ import qs.Ui
 
 Panel {
   id: root
-  moduleName: "local.omarchy-assistant"
-  ipcTarget: "local.omarchy-assistant"
+  moduleName: "local.nixe-assistant"
+  ipcTarget: "local.nixe-assistant"
 
   property var anchorItem: null
   property var hostWidget: null

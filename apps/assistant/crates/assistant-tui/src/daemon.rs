@@ -55,7 +55,7 @@ impl DaemonClient {
     }
     async fn service(action: &str) -> Result<()> {
         let mut cmd = tokio::process::Command::new("systemctl");
-        cmd.args(["--user", action, "omarchy-assistantd.service"])
+        cmd.args(["--user", action, "nixe-assistantd.service"])
             .kill_on_drop(true);
         let output = tokio::time::timeout(std::time::Duration::from_secs(20), cmd.output())
             .await

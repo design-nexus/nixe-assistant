@@ -1,5 +1,5 @@
 # Voice-launched apps. Edit this file, then:
-#   omarchy-assistant reload
+#   nixe-assistant reload
 #
 # `omarchy` runs `omarchy <args>` through Hyprland (same as Super+Return for terminal).
 # `exec` runs a raw command through Hyprland instead.

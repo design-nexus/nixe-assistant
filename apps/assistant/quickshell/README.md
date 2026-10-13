@@ -1,17 +1,17 @@
-# Omarchy Assistant HUD
+# Nixe Assistant HUD
 
 Standalone Quickshell overlay. It does not go in `shell.json`.
-`omarchy-assistantd.service` starts the HUD and Parakeet speech services. Stopping
+`nixe-assistantd.service` starts the HUD and Parakeet speech services. Stopping
 or restarting the daemon applies to both helpers; they do not start independently
 at login. Do not also run `hud.sh` while the HUD unit is active.
 
 ```bash
-systemctl --user status omarchy-assistant-hud
+systemctl --user status nixe-assistant-hud
 # manual fallback if the unit is not enabled:
 ./scripts/hud.sh
 ```
 
-`shell.qml` runs `omarchy-assistant listen` and shows:
+`shell.qml` runs `nixe-assistant listen` and shows:
 
 - Listening / Transcribing / Thinking / Executing / Speaking / Error
 - capture level while listening
@@ -23,7 +23,7 @@ The HUD hides completely when the assistant is disabled or disconnected and reco
 busy, the overlay takes Exclusive keyboard focus so Escape cancels her without
 a Hyprland bind. Idle: no grab, apps get Escape.
 
-HUD enablement follows `settings.hud_enabled`; tool approvals show exact JSON arguments with Y/N controls and expiry. Installed assets are in `~/.local/share/omarchy-assistant/quickshell`.
+HUD enablement follows `settings.hud_enabled`; tool approvals show exact JSON arguments with Y/N controls and expiry. Installed assets are in `~/.local/share/nixe-assistant/quickshell`.
 
 
-The HUD shows conversation/follow-up countdowns, dictation targets and retained drafts, and tool progress. Follow-up and dictation capture release keyboard focus so you can keep using the selected app. Approval prompts show exact arguments and accept Y/N or spoken approve/deny. Browser challenges can be handled with `omarchy-assistant browser-takeover`, followed by `browser-resume`.
+The HUD shows conversation/follow-up countdowns, dictation targets and retained drafts, and tool progress. Follow-up and dictation capture release keyboard focus so you can keep using the selected app. Approval prompts show exact arguments and accept Y/N or spoken approve/deny. Browser challenges can be handled with `nixe-assistant browser-takeover`, followed by `browser-resume`.

@@ -43,7 +43,7 @@ transcript begins with a configured prefix (`hey` / `ok` / `okay`) and/or a
 configured name/alias (`[wake_word] phrases`, plus `assistant.name`), the rest
 is the ask. Bare name starts a follow-up listen (HUD Listening). Unmatched
 room speech is ignored (no HUD). PTT still works; a leading name is stripped
-the same way. Disable with `enabled = false` and `omarchy-assistant reload`.
+the same way. Disable with `enabled = false` and `nixe-assistant reload`.
 STT-as-KWS (no dedicated wake model). Escape on the HUD overlay cancels a
 busy turn; it is not a Hyprland bind.
 
@@ -57,7 +57,7 @@ is fast enough. Resident GGUF stays one model.
 Silero VAD v5 ONNX on CPU via the same `ort` 2.0 as Kokoro. Used for wake
 utterance bounds, follow-up listen, and barge-in on AEC PCM. `[vad] backend =
 "silero"` (threshold is speech probability). Load failure or `backend =
-"energy"` keeps the RMS gate. Model: `~/.cache/omarchy-assistant/silero/silero_vad.onnx`
+"energy"` keeps the RMS gate. Model: `~/.cache/nixe-assistant/silero/silero_vad.onnx`
 (downloaded on first run from `[vad] url`).
 
 ## Phase 6 — MCP / coding-agent handoff (done)
@@ -113,9 +113,9 @@ Only with an explicit ask. Do not auto-edit `/usr/share/omarchy/` or
 
 ## Environment (inspected 2026-10-05, host Hades)
 
-Build a specialized low-latency local voice-assistant runtime for Omarchy/Hyprland. The assistant's name is **Nyx** (user-renameable later via config). The process is still `omarchy-assistantd`; Nyx is the persona, HUD label, and system-prompt name. This is not a general Ollama replacement.
+Build a specialized low-latency local voice-assistant runtime for Omarchy/Hyprland. The assistant's name is **Nyx** (user-renameable later via config). The process is still `nixe-assistantd`; Nyx is the persona, HUD label, and system-prompt name. This is not a general Ollama replacement.
 
-Repo: `/home/ken/Projects/omarchy-assistant` (new). Do not edit `/usr/share/omarchy/` or the user's Voxtype dictation config.
+Repo: `/home/ken/Projects/nixe-assistant` (new). Do not edit `/usr/share/omarchy/` or the user's Voxtype dictation config.
 
 ## What this slice builds
 
@@ -167,7 +167,7 @@ Do not auto-switch the user's Voxtype GPU variant. Document a setup hint: Whispe
 
 Local GGUF already present (LM Studio): Gemma 4 E4B Q4, Mistral 7B Instruct Q4, Qwen3.5 9B Q4. Those are valid first-run candidates. We are **not** limited to them.
 
-Nyx may download better GGUF into `~/.local/share/omarchy-assistant/models/` when a smaller/faster instruct model will cut speech-end → first-audio. Prefer latency and spoken-answer quality over leaderboard prestige. Skip reasoning/thinking models (R1, Phi-4-reasoning, etc.).
+Nyx may download better GGUF into `~/.local/share/nixe-assistant/models/` when a smaller/faster instruct model will cut speech-end → first-audio. Prefer latency and spoken-answer quality over leaderboard prestige. Skip reasoning/thinking models (R1, Phi-4-reasoning, etc.).
 
 Likely first download if E4B is not the right shape: a 1–4B instruct (Qwen3 / Llama 3.2 class) for the conversational path, Q4_K_M or similar. Measure on this 5080 before making it the default.
 
@@ -198,7 +198,7 @@ UI / Hyprland / CLI send `ptt.start` / `ptt.stop` / `cancel` / `status` on the s
 ### Workspace
 
 ```
-omarchy-assistant/
+nixe-assistant/
 ├── Cargo.toml                 # workspace
 ├── crates/
 │   ├── assistant-core/        # config, state machine, event bus, timing, errors
@@ -208,10 +208,10 @@ omarchy-assistant/
 │   ├── assistant-tools/       # typed tools + permissions (traits + 0–2 stubs)
 │   ├── assistant-ipc/         # unix socket protocol
 │   └── assistant-omarchy/     # hyprctl / omarchy CLI wrappers (thin)
-├── daemon/omarchy-assistantd/
+├── daemon/nixe-assistantd/
 ├── quickshell/                # overlay HUD (minimal after E2E audio works)
 ├── config/config.toml         # shipped example
-├── systemd/omarchy-assistantd.service
+├── systemd/nixe-assistantd.service
 ├── scripts/
 ├── tests/
 ├── benchmarks/
@@ -230,7 +230,7 @@ Every transition emits an IPC event with monotonic timestamps so the HUD and tra
 
 ### IPC
 
-Socket: `$XDG_RUNTIME_DIR/omarchy-assistant/assistant.sock` (0700 dir, 0600 sock).
+Socket: `$XDG_RUNTIME_DIR/nixe-assistant/assistant.sock` (0700 dir, 0600 sock).
 
 Newline-delimited JSON, one object per message. Commands from UI/Hyprland; events from daemon.
 
@@ -238,13 +238,13 @@ Commands (slice 1): `ptt.start`, `ptt.stop`, `cancel`, `status`, `shutdown`.
 
 Events: `state`, `partial_transcript`, `transcript`, `assistant_text`, `timing`, `error`, `health`.
 
-A tiny CLI in the daemon crate (`omarchy-assistant ptt-start|status`) is the first client. Quickshell is the second.
+A tiny CLI in the daemon crate (`nixe-assistant ptt-start|status`) is the first client. Quickshell is the second.
 
 Avoid HTTP. llama.cpp is in-process. Voxtype is a local subprocess, not a network service.
 
 ### Config
 
-`~/.config/omarchy-assistant/config.toml`, XDG. Ship `config/config.toml` as the template.
+`~/.config/nixe-assistant/config.toml`, XDG. Ship `config/config.toml` as the template.
 
 ```toml
 [assistant]
@@ -322,7 +322,7 @@ Partial transcripts: expose `Transcript { text, is_partial }` now. Voxtype CLI d
 ## First end-to-end pipeline (what actually gets written)
 
 ### 1. Daemon skeleton
-- Load config, tracing logs (`RUST_LOG` / `journalctl --user -u omarchy-assistantd`)
+- Load config, tracing logs (`RUST_LOG` / `journalctl --user -u nixe-assistantd`)
 - Unix socket server, health, graceful SIGTERM
 - State machine + event bus
 - systemd user unit (install to `~/.config/systemd/user/`, not system-wide)
@@ -362,7 +362,7 @@ If the first benchmark shows model reload dominating (`transcribe` spawning a co
 
 ### 7. Push-to-talk wiring
 - IPC `ptt.start` / `ptt.stop`
-- Hyprland: `o.bind("ALT + SPACE", "Nyx PTT", "omarchy-assistant ptt-start")` and the matching release bind for `ptt-stop` — same pattern Omarchy uses for Voxtype F9
+- Hyprland: `o.bind("ALT + SPACE", "Nyx PTT", "nixe-assistant ptt-start")` and the matching release bind for `ptt-stop` — same pattern Omarchy uses for Voxtype F9
 - Bind lives in **user** `~/.config/hypr/bindings.lua` via install script / documented snippet. Never patch `/usr/share/omarchy/default/hypr/`.
 
 ### 8. Timing traces

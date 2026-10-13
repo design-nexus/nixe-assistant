@@ -8,8 +8,8 @@ from pathlib import Path
 import subprocess
 import time
 import uuid
-CLI = str(Path.home()/'.local/bin/omarchy-assistant')
-UNITS = ['omarchy-assistantd.service','nyx-parakeet.service','omarchy-assistant-hud.service']
+CLI = str(Path.home()/'.local/bin/nixe-assistant')
+UNITS = ['nixe-assistantd.service','nixe-assistant-stt.service','nixe-assistant-hud.service']
 TAG = 'verification-' + str(uuid.uuid4())
 def cli(*args, check=True):
     result = subprocess.run([CLI,*args], capture_output=True, text=True, timeout=95)
@@ -139,7 +139,7 @@ finally:
             print('Initial disabled state restored; all assistant services stopped.', flush=True)
 
 # Remove only this run's disposable-record entries from the host journal.
-journal = Path.home()/'.local/share/omarchy-assistant/actions.json'
+journal = Path.home()/'.local/share/nixe-assistant/actions.json'
 if not initial and journal.exists():
     records = json.loads(journal.read_text())
     def fixture(row):

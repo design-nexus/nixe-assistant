@@ -70,7 +70,7 @@ impl Default for BrowserCfg {
     fn default() -> Self {
         Self {
             enabled: true,
-            node: "omarchy-assistant-node".into(),
+            node: "nixe-assistant-node".into(),
             worker: "auto".into(),
             weather_location: String::new(),
             search_tool: String::new(),

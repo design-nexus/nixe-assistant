@@ -1,11 +1,12 @@
-/target
-**/*.rs.bk
-.idea/
-.vscode/
-*.swp
-.env
 
 /browser/node_modules/
-
-__pycache__/
+.env
+.idea/
+node_modules/
 *.pyc
+__pycache__/
+**/*.rs.bk
+*.swp
+/target
+target/
+.vscode/

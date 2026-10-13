@@ -39,7 +39,7 @@ model lifetime.
   workers, or assistant HUD layer remains.
 
 The deployment preserved uncommitted work and used backups under
-`~/.local/state/omarchy-assistant/backups/desktop-plugins-*`; the final deployment
+`~/.local/state/nixe-assistant/backups/desktop-plugins-*`; the final deployment
 backup is `desktop-plugins-20261007-160437`.
 
 ## Limits of verification and current scope

@@ -13,6 +13,6 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cfg = assistant_core::Config::load().context("load config")?;
-    tracing::info!(name = %cfg.assistant.name, "starting omarchy-assistantd");
+    tracing::info!(name = %cfg.assistant.name, "starting nixe-assistantd");
     app::run(cfg).await
 }

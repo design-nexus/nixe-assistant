@@ -454,7 +454,7 @@ async fn open_job(id: &str) -> Result<()> {
     let cmd = assistant_omarchy::shell_join(&[
         "omarchy-launch-terminal",
         "--",
-        "omarchy-assistant",
+        "nixe-assistant",
         "jobs",
         "follow",
         id,

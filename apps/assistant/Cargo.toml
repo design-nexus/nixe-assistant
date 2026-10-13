@@ -10,14 +10,14 @@ members = [
     "crates/assistant-omarchy",
     "crates/assistant-tui",
     "crates/assistant-plugin-worker",
-    "daemon/omarchy-assistantd",
+    "daemon/nixe-assistantd",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/design-nexus/omarchy-assistant"
+repository = "https://github.com/design-nexus/nixe"
 authors = ["Ken Smith <ken@kensmith.dev>"]
 
 [workspace.dependencies]

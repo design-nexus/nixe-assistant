@@ -43,7 +43,7 @@ fn render_models_list(f: &mut Frame, app: &App, area: Rect) {
     let is_narrow = area.width < 90;
 
     let items: Vec<ListItem> = if app.installed_models.is_empty() {
-        vec![ListItem::new("No local GGUF models found in ~/.local/share/omarchy-assistant/models/ or ~/.lmstudio/models/")]
+        vec![ListItem::new("No local GGUF models found in ~/.local/share/nixe-assistant/models/ or ~/.lmstudio/models/")]
     } else {
         app.installed_models
             .iter()

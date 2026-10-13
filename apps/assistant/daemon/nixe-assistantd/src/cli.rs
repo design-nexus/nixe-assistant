@@ -16,7 +16,7 @@ async fn main() -> anyhow::Result<()> {
             if action == "migrate" {
                 let cfg = assistant_core::Config::load()?;
                 let worker =
-                    std::env::current_exe()?.with_file_name("omarchy-assistant-plugin-worker");
+                    std::env::current_exe()?.with_file_name("nixe-assistant-plugin-worker");
                 let checkout = rest
                     .first()
                     .map(std::path::PathBuf::from)
@@ -378,7 +378,7 @@ async fn main() -> anyhow::Result<()> {
         "say" => {
             let text = args.collect::<Vec<_>>().join(" ");
             if text.trim().is_empty() {
-                anyhow::bail!("usage: omarchy-assistant say <text>");
+                anyhow::bail!("usage: nixe-assistant say <text>");
             }
             print_events(send_until_done(Command::Say { text }, 120_000).await?);
         }
@@ -399,12 +399,12 @@ async fn main() -> anyhow::Result<()> {
         }
         "tui" | "ui" | "settings" | "assistant-tui" | "model" | "models" => {
             let tui_bin = dirs::home_dir()
-                .map(|h| h.join(".local/bin/omarchy-assistant-tui"))
-                .unwrap_or_else(|| std::path::PathBuf::from("omarchy-assistant-tui"));
+                .map(|h| h.join(".local/bin/nixe-assistant-tui"))
+                .unwrap_or_else(|| std::path::PathBuf::from("nixe-assistant-tui"));
             let bin_path = if tui_bin.exists() {
                 tui_bin
             } else {
-                std::path::PathBuf::from("omarchy-assistant-tui")
+                std::path::PathBuf::from("nixe-assistant-tui")
             };
             let status = std::process::Command::new(bin_path).status()?;
             if !status.success() {
@@ -416,8 +416,8 @@ async fn main() -> anyhow::Result<()> {
                 .args([
                     "--user",
                     "start",
-                    "nyx-parakeet.service",
-                    "omarchy-assistantd.service",
+                    "nixe-assistant-stt.service",
+                    "nixe-assistantd.service",
                 ])
                 .status()?;
             if status.success() {
@@ -432,8 +432,8 @@ async fn main() -> anyhow::Result<()> {
                 .args([
                     "--user",
                     "stop",
-                    "omarchy-assistantd.service",
-                    "nyx-parakeet.service",
+                    "nixe-assistantd.service",
+                    "nixe-assistant-stt.service",
                 ])
                 .status()?;
             if status.success() {
@@ -449,7 +449,7 @@ async fn main() -> anyhow::Result<()> {
                     "--user",
                     "is-active",
                     "--quiet",
-                    "omarchy-assistantd.service",
+                    "nixe-assistantd.service",
                 ])
                 .status()
                 .map(|s| s.success())
@@ -459,8 +459,8 @@ async fn main() -> anyhow::Result<()> {
                     .args([
                         "--user",
                         "stop",
-                        "omarchy-assistantd.service",
-                        "nyx-parakeet.service",
+                        "nixe-assistantd.service",
+                        "nixe-assistant-stt.service",
                     ])
                     .status()?;
                 anyhow::ensure!(status.success(), "Failed to stop services");
@@ -470,8 +470,8 @@ async fn main() -> anyhow::Result<()> {
                     .args([
                         "--user",
                         "start",
-                        "nyx-parakeet.service",
-                        "omarchy-assistantd.service",
+                        "nixe-assistant-stt.service",
+                        "nixe-assistantd.service",
                     ])
                     .status()?;
                 anyhow::ensure!(status.success(), "Failed to start services");
@@ -484,7 +484,7 @@ async fn main() -> anyhow::Result<()> {
                 Some("set") | Some("use") | Some("switch") => {
                     let target = args.next().unwrap_or_default();
                     if target.is_empty() {
-                        eprintln!("usage: omarchy-assistant persona set <name>");
+                        eprintln!("usage: nixe-assistant persona set <name>");
                         std::process::exit(1);
                     }
                     let personas = assistant_core::Persona::load_all()?;
@@ -513,7 +513,7 @@ async fn main() -> anyhow::Result<()> {
                 Some("new") | Some("create") => {
                     let name = args.next().unwrap_or_default();
                     if name.is_empty() {
-                        eprintln!("usage: omarchy-assistant persona new <name>");
+                        eprintln!("usage: nixe-assistant persona new <name>");
                         std::process::exit(1);
                     }
                     let p = assistant_core::Persona::new_with_generated(&name);
@@ -558,7 +558,7 @@ async fn main() -> anyhow::Result<()> {
                 Some("add-alias") => {
                     let alias = args.collect::<Vec<_>>().join(" ");
                     if alias.trim().is_empty() {
-                        eprintln!("usage: omarchy-assistant persona add-alias <alias>");
+                        eprintln!("usage: nixe-assistant persona add-alias <alias>");
                         std::process::exit(1);
                     }
                     let mut personas = assistant_core::Persona::load_all()?;
@@ -599,10 +599,10 @@ async fn main() -> anyhow::Result<()> {
                             p.aliases.len()
                         );
                     }
-                    println!("\nCommands: omarchy-assistant persona set <name>");
-                    println!("          omarchy-assistant persona new <name>");
-                    println!("          omarchy-assistant persona aliases [name]");
-                    println!("          omarchy-assistant persona add-alias <alias>");
+                    println!("\nCommands: nixe-assistant persona set <name>");
+                    println!("          nixe-assistant persona new <name>");
+                    println!("          nixe-assistant persona aliases [name]");
+                    println!("          nixe-assistant persona add-alias <alias>");
                 }
             }
         }
@@ -653,7 +653,7 @@ async fn cancel_esc() -> anyhow::Result<()> {
 
 fn print_help() {
     eprintln!(
-        "omarchy-assistant — Local voice assistant client & persona manager\n\n\
+        "nixe-assistant — Local voice assistant client & persona manager\n\n\
            plugins list|inspect|install|enable|disable|reload|update|remove\n\
            tool NAME JSON  invoke through enabled-state and approval checks\n\
            doctor [--json] diagnostics (works offline)\n\
