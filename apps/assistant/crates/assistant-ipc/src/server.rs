@@ -206,7 +206,8 @@ pub async fn send_until_done(cmd: Command, timeout_ms: u64) -> anyhow::Result<Ve
     write.flush().await?;
     let mut lines = BufReader::new(read).lines();
     let mut out = Vec::new();
-    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_millis(timeout_ms.max(1_000));
+    let deadline =
+        tokio::time::Instant::now() + tokio::time::Duration::from_millis(timeout_ms.max(1_000));
     loop {
         let remain = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remain.is_zero() {
@@ -228,4 +229,42 @@ pub async fn send_until_done(cmd: Command, timeout_ms: u64) -> anyhow::Result<Ve
     Ok(out)
 }
 
-
+/// Correlated request with a single absolute deadline, unaffected by other events.
+pub async fn request(action: crate::Control, timeout_ms: u64) -> anyhow::Result<serde_json::Value> {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let request_id = format!(
+        "{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    let stream = UnixStream::connect(paths::socket_path()).await?;
+    let (read, mut write) = stream.into_split();
+    let mut line = serde_json::to_vec(&Command::Request {
+        request_id: request_id.clone(),
+        action,
+    })?;
+    line.push(b'\n');
+    write.write_all(&line).await?;
+    let mut lines = BufReader::new(read).lines();
+    tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), async {
+        while let Some(line) = lines.next_line().await? {
+            if let Ok(Event::Result {
+                request_id: id,
+                ok,
+                data,
+                error,
+            }) = serde_json::from_str(&line)
+            {
+                if id == request_id {
+                    if ok {
+                        return Ok(data);
+                    }
+                    anyhow::bail!("{}", error.unwrap_or_else(|| "request failed".into()));
+                }
+            }
+        }
+        anyhow::bail!("daemon disconnected")
+    })
+    .await
+    .context("daemon request timed out")?
+}

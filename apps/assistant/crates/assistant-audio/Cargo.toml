@@ -3,7 +3,7 @@ name = "assistant-audio"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "PipeWire capture/playback and VAD for Nyx"
+description = "PipeWire capture/playback and VAD for local voice assistant"
 
 [dependencies]
 anyhow.workspace = true

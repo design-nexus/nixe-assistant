@@ -67,7 +67,7 @@ impl TurnTiming {
     pub fn format_trace(&self) -> String {
         let stages = self.stages();
         let total = stages.last().map(|s| s.ms).unwrap_or(0);
-        let mut lines = String::from("Nyx timing\n");
+        let mut lines = String::from("Assistant timing\n");
         for s in &stages {
             lines.push_str(&format!("  {:<18} {:>5} ms\n", s.name, s.ms));
         }

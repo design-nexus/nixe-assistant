@@ -1,21 +1,370 @@
-use assistant_ipc::{send_and_listen, send_command, send_until_done, stream_events, Command};
-use std::io::{self, Write};
+use anyhow::Context;
+use assistant_ipc::{
+    request, send_and_listen, send_command, send_until_done, stream_events, Command, Control,
+};
+use std::io::{self, IsTerminal, Write};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
     let cmd = args.next().unwrap_or_else(|| "help".into());
     match cmd.as_str() {
+        "plugins" => {
+            use assistant_tools::plugins;
+            let action = args.next().unwrap_or_else(|| "list".into());
+            let rest: Vec<_> = args.collect();
+            if action == "migrate" {
+                let cfg = assistant_core::Config::load()?;
+                let worker =
+                    std::env::current_exe()?.with_file_name("omarchy-assistant-plugin-worker");
+                let checkout = rest
+                    .first()
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?);
+                plugins::migrate(&cfg, &worker, &checkout).await?;
+                println!("Plugin migration complete; existing configuration retained.");
+                return Ok(());
+            }
+            if action == "install" || action == "update" {
+                let source = rest
+                    .first()
+                    .ok_or_else(|| anyhow::anyhow!("package source required"))?;
+                let revision = rest
+                    .iter()
+                    .position(|a| a == "--revision")
+                    .and_then(|i| rest.get(i + 1))
+                    .cloned();
+                let source_for_stage = source.clone();
+                let staged = tokio::task::spawn_blocking(move || {
+                    plugins::stage(&source_for_stage, revision.as_deref())
+                })
+                .await??;
+                let manifest = plugins::Manifest::read(&staged.path().join("package"))?;
+                println!("Source: {source}\nStartup: {} {:?}\nTools: {:?}\nDependencies: {:?}\nRuns with your account permissions. MCP approval is not an OS sandbox.\nNew third-party packages start disabled.",manifest.executable,manifest.args,manifest.tools,manifest.dependencies);
+                if !rest.iter().any(|a| a == "--yes") {
+                    anyhow::ensure!(
+                        io::stdin().is_terminal(),
+                        "review the package above and repeat with --yes"
+                    );
+                    eprint!("Install this reviewed package? [y/N] ");
+                    io::stderr().flush()?;
+                    let mut answer = String::new();
+                    io::stdin().read_line(&mut answer)?;
+                    anyhow::ensure!(
+                        answer.trim().eq_ignore_ascii_case("y"),
+                        "installation cancelled"
+                    );
+                }
+                // Retain the installed package for rollback if live activation fails.
+                let target = plugins::package_dir().join(&manifest.id);
+                let backup = tempfile::tempdir()?;
+                if action == "update" {
+                    anyhow::ensure!(
+                        std::process::Command::new("cp")
+                            .args(["-a", "--"])
+                            .arg(&target)
+                            .arg(backup.path().join("previous"))
+                            .status()?
+                            .success(),
+                        "could not back up existing package; update cancelled"
+                    );
+                }
+                let old_state = plugins::saved()?;
+                plugins::install(&staged.path().join("package"), source, action == "update")?;
+                if action == "update" && old_state.get(&manifest.id).is_some_and(|s| s.enabled) {
+                    if let Err(e) = request(
+                        Control::Plugins {
+                            action: "reload".into(),
+                            id: Some(manifest.id.clone()),
+                        },
+                        30_000,
+                    )
+                    .await
+                    {
+                        std::fs::remove_dir_all(&target)?;
+                        std::fs::rename(backup.path().join("previous"), &target)?;
+                        plugins::save(&old_state)?;
+                        return Err(e.context("update rolled back; prior package retained"));
+                    }
+                }
+                println!("Installed {} {}", manifest.id, manifest.version);
+                return Ok(());
+            }
+            if action == "list" || action == "inspect" {
+                let value = match request(
+                    Control::Plugins {
+                        action: action.clone(),
+                        id: None,
+                    },
+                    2000,
+                )
+                .await
+                {
+                    Ok(v) => v,
+                    Err(_) => plugins::PluginManager::new().inspect(),
+                };
+                let value = if action == "inspect" {
+                    let id = rest.first().context("plugin ID required")?;
+                    value
+                        .as_array()
+                        .and_then(|a| a.iter().find(|p| p["id"] == id.as_str()))
+                        .cloned()
+                        .context("plugin not installed")?
+                } else {
+                    value
+                };
+                println!("{}", serde_json::to_string_pretty(&value)?);
+                return Ok(());
+            }
+            anyhow::ensure!(
+                ["enable", "disable", "reload", "remove"].contains(&action.as_str()),
+                "unknown plugins command"
+            );
+            let id = rest.first().context("plugin ID required")?.clone();
+            println!(
+                "{}",
+                request(
+                    Control::Plugins {
+                        action,
+                        id: Some(id)
+                    },
+                    30_000
+                )
+                .await?
+            );
+        }
+        "tool" => {
+            let name = args.next().context("tool name required")?;
+            let arguments = serde_json::from_str(&args.collect::<Vec<_>>().join(" "))?;
+            println!(
+                "{}",
+                request(Control::ToolCall { name, arguments }, 90_000).await?
+            );
+        }
+        "search-provider" => {
+            let provider = args.next().unwrap_or_else(|| "show".into());
+            let mut cfg = assistant_core::Config::load()?;
+            match provider.as_str() {
+                "show" => {
+                    println!(
+                        "{}",
+                        if cfg.browser.search_tool.is_empty() {
+                            "built-in"
+                        } else {
+                            &cfg.browser.search_tool
+                        }
+                    );
+                    return Ok(());
+                }
+                "builtin" => cfg.browser.search_tool.clear(),
+                "duckduckgo" => {
+                    let path =
+                        assistant_core::paths::data_dir().join("search/duckduckgo/dist/index.js");
+                    anyhow::ensure!(path.is_file(), "run scripts/install-search.sh first");
+                    let server = assistant_core::config::McpServerCfg {
+                        command: cfg.browser.node.clone(),
+                        args: vec![path.to_string_lossy().into()],
+                        env: Default::default(),
+                    };
+                    if let Some(existing) = cfg.mcp.servers.get("duckduckgo") {
+                        anyhow::ensure!(existing.command==server.command && existing.args==server.args, "an existing duckduckgo server has a different command; configure browser.search_tool manually");
+                    } else {
+                        cfg.mcp.servers.insert("duckduckgo".into(), server);
+                    }
+                    cfg.mcp.enabled = true;
+                    cfg.mcp
+                        .permissions
+                        .entry("duckduckgo.search".into())
+                        .or_insert_with(|| "allow".into());
+                    cfg.browser.search_tool = "duckduckgo.search".into();
+                }
+                _ => anyhow::bail!("usage: search-provider show|builtin|duckduckgo"),
+            }
+            cfg.save()?;
+            println!("Search provider saved. Restart the daemon to apply it.");
+        }
+        "location" => {
+            let action = args.next().unwrap_or_else(|| "show".into());
+            let city = if action == "set" {
+                Some(args.collect::<Vec<_>>().join(" "))
+            } else {
+                None
+            };
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &request(Control::Location { action, city }, 10_000).await?
+                )?
+            );
+        }
+        "conversation" => {
+            let enabled = match args.next().as_deref() {
+                Some("start" | "on") => true,
+                Some("stop" | "off") => false,
+                _ => anyhow::bail!("usage: conversation start|stop"),
+            };
+            println!(
+                "{}",
+                request(Control::Conversation { enabled }, 5000).await?
+            );
+        }
+        "dictation" => {
+            let action = args.next().unwrap_or_else(|| "start".into());
+            println!("{}", request(Control::Dictation { action }, 5000).await?);
+        }
+        "browser-takeover" => println!("{}", request(Control::BrowserTakeover, 20_000).await?),
+        "browser-resume" => println!("{}", request(Control::BrowserResume, 20_000).await?),
+        "jobs" => {
+            let action = args.next().unwrap_or_else(|| "status".into());
+            let job_id = args
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: jobs status|follow|cancel ID"))?;
+            if action == "cancel" {
+                println!("{}", request(Control::JobCancel { job_id }, 2000).await?);
+            } else {
+                loop {
+                    let job = request(
+                        Control::JobStatus {
+                            job_id: job_id.clone(),
+                        },
+                        2000,
+                    )
+                    .await?;
+                    if action == "follow" {
+                        print!("\x1b[2J\x1b[H");
+                        println!(
+                            "Job {}: {} · exit {}\n{}\n{}\n{}",
+                            job_id,
+                            job["status"],
+                            job["exit_code"],
+                            job["argv"],
+                            job["cwd"],
+                            job["output"]
+                                .as_str()
+                                .unwrap_or("")
+                                .chars()
+                                .filter(|c| !c.is_control() || matches!(c, '\n' | '\t' | '\r'))
+                                .collect::<String>()
+                        );
+                    } else {
+                        println!("{job}");
+                    }
+                    if action != "follow" || job["status"] != "running" {
+                        if action == "follow" && io::stdin().is_terminal() {
+                            eprintln!("Press Enter to close this job view.");
+                            let mut line = String::new();
+                            io::stdin().read_line(&mut line)?;
+                        }
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
+            }
+        }
+        "stt-daemon" => {
+            use std::os::unix::process::CommandExt;
+            let cfg = assistant_core::Config::load()?;
+            let err = std::process::Command::new(&cfg.stt.voxtype_bin)
+                .args(["-c"])
+                .arg(assistant_core::paths::config_dir().join("voxtype-parakeet.toml"))
+                .arg("daemon")
+                .exec();
+            return Err(err.into());
+        }
         "ptt-start" => send_command(&Command::PttStart).await?,
         "ptt-stop" => send_command(&Command::PttStop).await?,
         "cancel" => send_command(&Command::Cancel).await?,
         "cancel-esc" => cancel_esc().await?,
-        "reload" => {
-            send_command(&Command::Reload).await?;
-            let events = send_and_listen(Some(Command::Status), 400).await?;
-            print_events(events);
+        "reload" => println!("{}", request(Control::Reload, 30_000).await?),
+        "doctor" => {
+            let json_mode = args.any(|a| a == "--json");
+            let data = match request(Control::Diagnostics, 15_000).await {
+                Ok(value) => value,
+                Err(_) => {
+                    let mut value = assistant_core::diagnostics::collect().await;
+                    if let Ok(cfg) = assistant_core::Config::load() {
+                        let registry = assistant_tools::registry::Registry::load(&cfg).await;
+                        value["mcp_tools"] = registry.catalog(&cfg);
+                        value["mcp_errors"] = serde_json::json!(registry.errors);
+                    }
+                    value["daemon_online"] = false.into();
+                    value
+                }
+            };
+            println!(
+                "{}",
+                if json_mode {
+                    data.to_string()
+                } else {
+                    serde_json::to_string_pretty(&data)?
+                }
+            );
+        }
+        "activity" => {
+            let action = if args.next().as_deref() == Some("clear") {
+                Control::ClearActivity
+            } else {
+                Control::Activity
+            };
+            println!("{}", request(action, 2000).await?);
+        }
+        "preview" => {
+            let cfg = assistant_core::Config::load()?;
+            let voice = args.next().unwrap_or(cfg.tts.voice);
+            let speed = args
+                .next()
+                .map(|s| s.parse::<f32>())
+                .transpose()?
+                .unwrap_or(cfg.tts.speed);
+            println!(
+                "{}",
+                request(Control::Preview { voice, speed }, 30_000).await?
+            );
+        }
+        "calibrate" => {
+            eprintln!("Five seconds of quiet, then five seconds of normal speech. HUD shows each phase. Suggestions are not saved.");
+            println!("{}", request(Control::Calibrate, 30_000).await?);
+        }
+        "tool-mode" => {
+            let enabled = match args.next().as_deref() {
+                Some("on") => true,
+                Some("off") => false,
+                _ => anyhow::bail!("usage: tool-mode on|off"),
+            };
+            println!("{}", request(Control::ToolMode { enabled }, 2000).await?);
+        }
+        "approve" | "deny" => {
+            let approval_id = args
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("approval ID required"))?;
+            println!(
+                "{}",
+                request(
+                    Control::Approve {
+                        approval_id,
+                        allow: cmd == "approve"
+                    },
+                    2000
+                )
+                .await?
+            );
+        }
+        "migrate" => {
+            let mut cfg = assistant_core::Config::load()?;
+            if cfg.assistant.persona_id.is_empty() {
+                if let Some(p) = assistant_core::Persona::load_all()?
+                    .iter()
+                    .find(|p| p.name.eq_ignore_ascii_case(&cfg.assistant.name))
+                {
+                    cfg.assistant.persona_id = p.id.clone();
+                }
+            }
+            cfg.save()?;
         }
         "shutdown" => send_command(&Command::Shutdown).await?,
+        "status" if args.next().as_deref() == Some("--json") => {
+            println!("{}", request(Control::Status, 1500).await?)
+        }
         "status" => {
             let events = send_and_listen(Some(Command::Status), 400).await?;
             print_events(events);
@@ -35,6 +384,227 @@ async fn main() -> anyhow::Result<()> {
         }
         "demo" => {
             print_events(send_until_done(Command::Demo, 180_000).await?);
+        }
+        "mute" => {
+            send_command(&Command::Mute { muted: Some(true) }).await?;
+            println!("Assistant muted.");
+        }
+        "unmute" => {
+            send_command(&Command::Mute { muted: Some(false) }).await?;
+            println!("Assistant unmuted.");
+        }
+        "toggle-mute" => {
+            send_command(&Command::Mute { muted: None }).await?;
+            println!("Assistant mute toggled.");
+        }
+        "tui" | "ui" | "settings" | "assistant-tui" | "model" | "models" => {
+            let tui_bin = dirs::home_dir()
+                .map(|h| h.join(".local/bin/omarchy-assistant-tui"))
+                .unwrap_or_else(|| std::path::PathBuf::from("omarchy-assistant-tui"));
+            let bin_path = if tui_bin.exists() {
+                tui_bin
+            } else {
+                std::path::PathBuf::from("omarchy-assistant-tui")
+            };
+            let status = std::process::Command::new(bin_path).status()?;
+            if !status.success() {
+                std::process::exit(status.code().unwrap_or(1));
+            }
+        }
+        "start" | "enable" => {
+            let status = std::process::Command::new("systemctl")
+                .args([
+                    "--user",
+                    "start",
+                    "nyx-parakeet.service",
+                    "omarchy-assistantd.service",
+                ])
+                .status()?;
+            if status.success() {
+                println!("Started assistant daemon & loaded models.");
+            } else {
+                eprintln!("Failed to start services.");
+                std::process::exit(1);
+            }
+        }
+        "stop" | "disable" => {
+            let status = std::process::Command::new("systemctl")
+                .args([
+                    "--user",
+                    "stop",
+                    "omarchy-assistantd.service",
+                    "nyx-parakeet.service",
+                ])
+                .status()?;
+            if status.success() {
+                println!("Stopped assistant daemon & unloaded models from VRAM/RAM.");
+            } else {
+                eprintln!("Failed to stop services.");
+                std::process::exit(1);
+            }
+        }
+        "toggle-service" | "toggle-daemon" => {
+            let is_active = std::process::Command::new("systemctl")
+                .args([
+                    "--user",
+                    "is-active",
+                    "--quiet",
+                    "omarchy-assistantd.service",
+                ])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if is_active {
+                let status = std::process::Command::new("systemctl")
+                    .args([
+                        "--user",
+                        "stop",
+                        "omarchy-assistantd.service",
+                        "nyx-parakeet.service",
+                    ])
+                    .status()?;
+                anyhow::ensure!(status.success(), "Failed to stop services");
+                println!("Assistant disabled (models unloaded).");
+            } else {
+                let status = std::process::Command::new("systemctl")
+                    .args([
+                        "--user",
+                        "start",
+                        "nyx-parakeet.service",
+                        "omarchy-assistantd.service",
+                    ])
+                    .status()?;
+                anyhow::ensure!(status.success(), "Failed to start services");
+                println!("Assistant enabled (models loaded).");
+            }
+        }
+        "persona" | "personas" => {
+            let sub = args.next();
+            match sub.as_deref() {
+                Some("set") | Some("use") | Some("switch") => {
+                    let target = args.next().unwrap_or_default();
+                    if target.is_empty() {
+                        eprintln!("usage: omarchy-assistant persona set <name>");
+                        std::process::exit(1);
+                    }
+                    let personas = assistant_core::Persona::load_all()?;
+                    if let Some(p) = personas.iter().find(|p| {
+                        p.name.eq_ignore_ascii_case(&target) || p.id.eq_ignore_ascii_case(&target)
+                    }) {
+                        let mut cfg = assistant_core::Config::load()?;
+                        cfg.activate_persona(p);
+                        cfg.save()?;
+                        assistant_core::sync_plugin_manifest(p)?;
+                        println!("{}", request(Control::Reload, 30_000).await?);
+                        println!(
+                            "Activated persona: {} (voice: {}, {} aliases)",
+                            p.name,
+                            p.voice,
+                            p.aliases.len()
+                        );
+                    } else {
+                        eprintln!("Persona '{}' not found. Available personas:", target);
+                        for p in personas {
+                            println!("  - {} (id: {})", p.name, p.id);
+                        }
+                        std::process::exit(1);
+                    }
+                }
+                Some("new") | Some("create") => {
+                    let name = args.next().unwrap_or_default();
+                    if name.is_empty() {
+                        eprintln!("usage: omarchy-assistant persona new <name>");
+                        std::process::exit(1);
+                    }
+                    let p = assistant_core::Persona::new_with_generated(&name);
+                    if assistant_core::paths::personas_dir()
+                        .join(format!("{}.toml", p.id))
+                        .exists()
+                    {
+                        anyhow::bail!("persona ID already exists");
+                    }
+                    p.save()?;
+                    println!(
+                        "Created persona '{}' (id: {}) with {} generated aliases.",
+                        p.name,
+                        p.id,
+                        p.aliases.len()
+                    );
+                }
+                Some("aliases") => {
+                    let target = args.next();
+                    let personas = assistant_core::Persona::load_all()?;
+                    let p = if let Some(t) = target {
+                        personas.iter().find(|p| {
+                            p.name.eq_ignore_ascii_case(&t) || p.id.eq_ignore_ascii_case(&t)
+                        })
+                    } else {
+                        let cfg = assistant_core::Config::load()?;
+                        personas.iter().find(|p| {
+                            p.name.eq_ignore_ascii_case(&cfg.assistant.name)
+                                || p.id.eq_ignore_ascii_case(&cfg.assistant.name)
+                        })
+                    };
+                    if let Some(p) = p {
+                        println!("Aliases for persona {}:", p.name);
+                        for (i, a) in p.aliases.iter().enumerate() {
+                            println!("  {:02}: {}", i + 1, a);
+                        }
+                    } else {
+                        eprintln!("Persona not found.");
+                        std::process::exit(1);
+                    }
+                }
+                Some("add-alias") => {
+                    let alias = args.collect::<Vec<_>>().join(" ");
+                    if alias.trim().is_empty() {
+                        eprintln!("usage: omarchy-assistant persona add-alias <alias>");
+                        std::process::exit(1);
+                    }
+                    let mut personas = assistant_core::Persona::load_all()?;
+                    let mut cfg = assistant_core::Config::load()?;
+                    let pos = personas.iter().position(|p| {
+                        p.name.eq_ignore_ascii_case(&cfg.assistant.name)
+                            || p.id.eq_ignore_ascii_case(&cfg.assistant.name)
+                    });
+                    if let Some(idx) = pos {
+                        let p = &mut personas[idx];
+                        let clean = alias.trim().to_lowercase();
+                        if !p.aliases.contains(&clean) {
+                            p.aliases.push(clean.clone());
+                            p.save()?;
+                            cfg.wake_word.phrases = p.aliases.clone();
+                            cfg.save()?;
+                            println!("{}", request(Control::Reload, 30_000).await?);
+                            println!("Added alias '{}' to active persona {}.", clean, p.name);
+                        } else {
+                            println!("Alias '{}' already exists for {}.", clean, p.name);
+                        }
+                    }
+                }
+                _ => {
+                    let personas = assistant_core::Persona::load_all()?;
+                    let cfg = assistant_core::Config::load()?;
+                    println!("Saved Assistant Personas:");
+                    for p in personas {
+                        let is_active = p.name.eq_ignore_ascii_case(&cfg.assistant.name)
+                            || p.id.eq_ignore_ascii_case(&cfg.assistant.name);
+                        let badge = if is_active { "[ACTIVE] " } else { "         " };
+                        println!(
+                            "  {}{} (id: {:<7} voice: {:<11} aliases: {})",
+                            badge,
+                            p.name,
+                            p.id,
+                            p.voice,
+                            p.aliases.len()
+                        );
+                    }
+                    println!("\nCommands: omarchy-assistant persona set <name>");
+                    println!("          omarchy-assistant persona new <name>");
+                    println!("          omarchy-assistant persona aliases [name]");
+                    println!("          omarchy-assistant persona add-alias <alias>");
+                }
+            }
         }
         "help" | "-h" | "--help" => print_help(),
         other => {
@@ -64,37 +634,55 @@ async fn cancel_esc() -> anyhow::Result<()> {
     let events = send_and_listen(Some(Command::Status), 80).await?;
     let busy = events.iter().any(|ev| match ev {
         assistant_core::Event::Health { state, .. }
-        | assistant_core::Event::State { state, .. } => {
-            !matches!(
-                state,
-                assistant_core::AssistantState::Idle | assistant_core::AssistantState::Interrupted
-            )
-        }
+        | assistant_core::Event::State { state, .. } => !matches!(
+            state,
+            assistant_core::AssistantState::Idle | assistant_core::AssistantState::Interrupted
+        ),
         _ => false,
     });
     if busy {
         send_command(&Command::Cancel).await?;
         return Ok(());
     }
-    let _ = std::process::Command::new("hyprctl")
+    let status = std::process::Command::new("hyprctl")
         .args(["dispatch", "sendshortcut", ",Escape,"])
-        .status();
+        .status()?;
+    anyhow::ensure!(status.success(), "Failed to dispatch Escape");
     Ok(())
 }
 
 fn print_help() {
     eprintln!(
-        "omarchy-assistant — Nyx voice assistant client\n\n\
+        "omarchy-assistant — Local voice assistant client & persona manager\n\n\
+           plugins list|inspect|install|enable|disable|reload|update|remove\n\
+           tool NAME JSON  invoke through enabled-state and approval checks\n\
+           doctor [--json] diagnostics (works offline)\n\
+           activity [clear] latest 100 turns\n\
+           preview [voice speed] TTS only, without saving\n\
+           calibrate      quiet/speech measurement; suggestions only\n\
+           search-provider [show|builtin|duckduckgo]\n\
+           location [show|refresh|set CITY|clear|on|off]\n\
+           conversation start|stop, dictation start|pause|resume|stop|insert\n\
+           browser-takeover, browser-resume, jobs status|follow|cancel ID\n\
+           tool-mode on|off, approve ID, deny ID\n\
          Commands:\n\
-           ptt-start   start push-to-talk capture\n\
-           ptt-stop    stop capture (key-up)\n\
-           cancel      interrupt the current turn\n\
-           cancel-esc  Escape: stop Nyx, or pass Escape through when idle\n\
-           status      print a health event\n\
-           say TEXT    skip STT; speak an LLM reply\n\
-           demo        Kokoro → Parakeet → LLM → speakers\n\
-           listen      print events until idle/timeout\n\
-           reload      reread apps.toml, commands.toml, and config.toml without restarting models\n\
-           shutdown    stop the daemon\n"
+           persona [set/new/aliases/add-alias]  manage saved assistant personas\n\
+           ptt-start      start push-to-talk capture\n\
+           ptt-stop       stop capture (key-up)\n\
+           cancel         interrupt the current turn\n\
+           cancel-esc     Escape: stop assistant, or pass Escape through when idle\n\
+           mute           pause audio capture and wake detection\n\
+           unmute         resume audio capture\n\
+           toggle-mute    toggle capture mute state\n\
+           start/enable   start daemon and load models into memory\n\
+           stop/disable   stop daemon and unload models to free RAM/VRAM\n\
+           toggle-service toggle daemon active/disabled state\n\
+           tui            open interactive settings and model manager TUI\n\
+           status         print a health event\n\
+           say TEXT       skip STT; speak an LLM reply\n\
+           demo           Kokoro → Parakeet → LLM → speakers\n\
+           listen         print events until idle/timeout\n\
+           reload         reread apps.toml, commands.toml, and config.toml\n\
+           shutdown       stop the daemon\n"
     );
 }

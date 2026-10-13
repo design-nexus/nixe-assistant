@@ -1,7 +1,7 @@
 [Unit]
-Description=Nyx local voice assistant
+Description=Omarchy Assistant voice daemon
 After=pipewire.service nyx-parakeet.service
-Wants=pipewire.service nyx-parakeet.service
+Wants=pipewire.service nyx-parakeet.service omarchy-assistant-hud.service
 
 [Service]
 Type=simple
@@ -11,7 +11,7 @@ Restart=on-failure
 RestartSec=2
 Environment=RUST_LOG=info
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
-Environment=LD_LIBRARY_PATH=/opt/cuda/lib64
+EnvironmentFile=-%h/.config/omarchy-assistant/runtime.env
 
 [Install]
 WantedBy=default.target

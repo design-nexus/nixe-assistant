@@ -24,7 +24,7 @@ impl VoxtypeProvider {
         Self {
             bin: cfg.stt.voxtype_bin.clone(),
             config_path: paths::config_dir().join("voxtype-parakeet.toml"),
-            runtime_dir: paths::nyx_voxtype_runtime(),
+            runtime_dir: paths::assistant_voxtype_runtime(),
             stt_file: paths::runtime_dir().join("stt.txt"),
         }
     }
@@ -42,12 +42,11 @@ impl VoxtypeProvider {
     }
 
     async fn record(&self, args: &[&str]) -> Result<()> {
-        let output = self
-            .cmd()
-            .arg("record")
-            .args(args)
-            .output()
+        let mut command = self.cmd();
+        command.arg("record").args(args);
+        let output = tokio::time::timeout(Duration::from_secs(5), command.output())
             .await
+            .context("voxtype record timed out")?
             .with_context(|| format!("spawn {} record", self.bin))?;
         if !output.status.success() {
             let err = String::from_utf8_lossy(&output.stderr);

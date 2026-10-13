@@ -1,17 +1,17 @@
 use crate::paths;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
 const SHIPPED: &str = include_str!("../../../config/apps.toml");
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppsFile {
     #[serde(default)]
     pub app: Vec<AppLaunch>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppLaunch {
     pub phrases: Vec<String>,
     #[serde(default = "default_reply")]
@@ -78,7 +78,10 @@ mod tests {
     #[test]
     fn shipped_apps_parse() {
         let apps = AppsFile::shipped();
-        assert!(apps.app.iter().any(|a| a.phrases.iter().any(|p| p == "open terminal")));
+        assert!(apps
+            .app
+            .iter()
+            .any(|a| a.phrases.iter().any(|p| p == "open terminal")));
         assert!(apps.app.iter().any(|a| a.omarchy == ["launch", "nautilus"]));
     }
 }

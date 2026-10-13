@@ -8,6 +8,8 @@ members = [
     "crates/assistant-tools",
     "crates/assistant-ipc",
     "crates/assistant-omarchy",
+    "crates/assistant-tui",
+    "crates/assistant-plugin-worker",
     "daemon/omarchy-assistantd",
 ]
 
@@ -28,14 +30,19 @@ assistant-ipc = { path = "crates/assistant-ipc" }
 assistant-omarchy = { path = "crates/assistant-omarchy" }
 assistant-tools = { path = "crates/assistant-tools" }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+crossterm = { version = "0.28", features = ["event-stream"] }
 dirs = "6"
+futures-util = "0.3"
 hound = "3"
+notify = "8"
 ort = { version = "=2.0.0-rc.13", default-features = false, features = [
     "std",
     "download-binaries",
     "tls-rustls",
     "api-22",
 ] }
+ratatui = "0.29"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -44,6 +51,8 @@ tokio-util = { version = "0.7", features = ["rt"] }
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tempfile = "3"
+unicode-width = "0.2"
 
 [profile.release]
 lto = "thin"

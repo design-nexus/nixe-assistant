@@ -1,0 +1,22 @@
+manifest_version = 1
+id = "reminders"
+version = "1.0.0"
+description = "Persistent local reminders"
+executable = "python3"
+args = ["./main.py"]
+tools = ["reminders.timer", "reminders.create", "reminders.list", "reminders.cancel", "reminders.snooze", "reminders.voice"]
+
+[[routes]]
+pattern = "^(?i:(?P<request>(?:set (?:a |an |the )?timer for|remind me (?:in|today|tomorrow)).+))$"
+tool = "reminders.voice"
+template = true
+
+[[routes]]
+pattern = "^(?i:(?P<request>(?:list (?:my )?(?:timers|reminders)|cancel (?:timer|reminder) .+|snooze (?:timer|reminder) .+)))$"
+tool = "reminders.voice"
+template = true
+
+[[routes]]
+pattern = "^(?i:(?P<request>a ?m|p ?m))$"
+tool = "reminders.voice"
+template = true

@@ -1,11 +1,11 @@
 use crate::paths;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
 const SHIPPED: &str = include_str!("../../../config/commands.toml");
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandsFile {
     #[serde(default = "default_can_do")]
     pub can_do: String,
@@ -23,13 +23,13 @@ pub struct CommandsFile {
     pub command: Vec<CommandPhrase>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SayPhrase {
     pub phrases: Vec<String>,
     pub reply: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandPhrase {
     pub phrases: Vec<String>,
     pub tool: String,
@@ -39,7 +39,7 @@ pub struct CommandPhrase {
     pub omarchy: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WorkspaceCommands {
     pub max: u8,

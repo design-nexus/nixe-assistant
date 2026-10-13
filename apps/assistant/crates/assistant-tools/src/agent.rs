@@ -34,45 +34,25 @@ pub fn build_launch_cmd(agent: &str, prompt: &str, terminal: &str) -> (String, S
         terminal.trim()
     };
 
-    let (cmd, spoken) = match normalized {
-        "claude" => {
-            if prompt_clean.is_empty() {
-                (format!("{term} -- claude"), "Opening Claude.".into())
-            } else {
-                let escaped = prompt_clean.replace('"', "\\\"");
-                (
-                    format!("{term} -- claude \"{escaped}\""),
-                    "Handing off to Claude.".into(),
-                )
-            }
+    let mut args = vec![term, "--", normalized];
+    if normalized == "cursor" {
+        args = vec!["cursor", "."];
+    } else if !prompt_clean.is_empty() {
+        if normalized == "agy" {
+            args.push("-i");
         }
-        "codex" => {
-            if prompt_clean.is_empty() {
-                (format!("{term} -- codex"), "Opening Codex.".into())
-            } else {
-                let escaped = prompt_clean.replace('"', "\\\"");
-                (
-                    format!("{term} -- codex \"{escaped}\""),
-                    "Handing off to Codex.".into(),
-                )
-            }
-        }
-        "cursor" => (
-            "cursor .".into(),
-            "Opening Cursor.".into(),
-        ),
-        _ => {
-            if prompt_clean.is_empty() {
-                (format!("{term} -- agy"), "Opening Antigravity.".into())
-            } else {
-                let escaped = prompt_clean.replace('"', "\\\"");
-                (
-                    format!("{term} -- agy -i \"{escaped}\""),
-                    "Handing off to Antigravity.".into(),
-                )
-            }
-        }
-    };
+        args.push(prompt);
+    }
+    let cmd = assistant_omarchy::shell_join(&args);
+    let spoken = format!(
+        "{} {}.",
+        if prompt_clean.is_empty() {
+            "Opening"
+        } else {
+            "Handing off to"
+        },
+        spoken_agent_name(normalized)
+    );
 
     (cmd, spoken)
 }
@@ -100,15 +80,52 @@ mod tests {
     #[test]
     fn test_build_launch_cmd() {
         let (cmd, spoken) = build_launch_cmd("agy", "fix the test", "omarchy-launch-terminal");
-        assert_eq!(cmd, "omarchy-launch-terminal -- agy -i \"fix the test\"");
+        assert_eq!(
+            cmd,
+            "'omarchy-launch-terminal' '--' 'agy' '-i' 'fix the test'"
+        );
         assert_eq!(spoken, "Handing off to Antigravity.");
 
         let (cmd, spoken) = build_launch_cmd("claude", "refactor auth", "omarchy-launch-terminal");
-        assert_eq!(cmd, "omarchy-launch-terminal -- claude \"refactor auth\"");
+        assert_eq!(
+            cmd,
+            "'omarchy-launch-terminal' '--' 'claude' 'refactor auth'"
+        );
         assert_eq!(spoken, "Handing off to Claude.");
 
         let (cmd, spoken) = build_launch_cmd("agy", "", "omarchy-launch-terminal");
-        assert_eq!(cmd, "omarchy-launch-terminal -- agy");
+        assert_eq!(cmd, "'omarchy-launch-terminal' '--' 'agy'");
         assert_eq!(spoken, "Opening Antigravity.");
+    }
+}
+
+#[cfg(test)]
+mod boundary_tests {
+    #[test]
+    fn untrusted_shell_arguments_round_trip_without_execution() {
+        let values = [
+            "",
+            "space and 'quotes'",
+            "$HOME $(touch /tmp/assistant-injection) `id`",
+            "line\nbreak",
+            "こんにちは\\world",
+        ];
+        let args = std::iter::once("printf")
+            .chain(std::iter::once("%s\\0"))
+            .chain(values)
+            .collect::<Vec<_>>();
+        let output = std::process::Command::new("sh")
+            .args(["-c", &assistant_omarchy::shell_join(&args)])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let mut expected = Vec::new();
+        for value in values {
+            expected.extend(value.as_bytes());
+            expected.push(0);
+        }
+        assert_eq!(output.stdout, expected);
+        let (cmd, _) = super::build_launch_cmd("codex", values[2], "my terminal");
+        assert!(cmd.starts_with("'my terminal' '--' 'codex' "));
     }
 }

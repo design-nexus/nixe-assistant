@@ -22,16 +22,25 @@ pub struct LlamaCppBackend {
     jobs: mpsc::Sender<Job>,
     loaded: Arc<AtomicBool>,
     model_path: PathBuf,
+    battery: Arc<AtomicBool>,
 }
 
 enum Job {
+    Unload {
+        done: oneshot::Sender<()>,
+    },
+    Power {
+        battery: bool,
+        done: oneshot::Sender<()>,
+    },
     Generate {
         system: String,
         history: Vec<(String, String)>,
         user: String,
         n_predict: i32,
         temperature: f32,
-        tokens: mpsc::Sender<String>,
+        tokens: mpsc::Sender<Result<String>>,
+        grammar: Option<String>,
         cancel: Arc<AtomicBool>,
         done: oneshot::Sender<Result<()>>,
     },
@@ -39,6 +48,9 @@ enum Job {
 
 impl LlamaCppBackend {
     pub fn spawn(cfg: &Config) -> Result<Self> {
+        Self::spawn_with_battery(cfg, false)
+    }
+    pub fn spawn_with_battery(cfg: &Config, battery_mode: bool) -> Result<Self> {
         let model_path = cfg.resolve_model_path();
         if !model_path.is_file() {
             anyhow::bail!(
@@ -46,11 +58,16 @@ impl LlamaCppBackend {
                 model_path.display()
             );
         }
+        let configured_gpu_layers = if cfg.llm.n_gpu_layers < 0 {
+            1000
+        } else {
+            cfg.llm.n_gpu_layers as u32
+        };
         let worker_cfg = WorkerConfig {
-            n_gpu_layers: if cfg.llm.n_gpu_layers < 0 {
-                1000
+            n_gpu_layers: if battery_mode {
+                0
             } else {
-                cfg.llm.n_gpu_layers as u32
+                configured_gpu_layers
             },
             ctx_size: cfg.llm.ctx,
             flash_attn: cfg.llm.flash_attn,
@@ -60,13 +77,22 @@ impl LlamaCppBackend {
         };
         let loaded = Arc::new(AtomicBool::new(false));
         let loaded_w = loaded.clone();
+        let battery = Arc::new(AtomicBool::new(battery_mode));
+        let battery_w = battery.clone();
         let (jobs_tx, mut jobs_rx) = mpsc::channel::<Job>(4);
         let path = model_path.clone();
 
         thread::Builder::new()
-            .name("nyx-llama".into())
+            .name("assistant-llama".into())
             .spawn(move || {
-                if let Err(err) = worker(path, worker_cfg, loaded_w, &mut jobs_rx) {
+                if let Err(err) = worker(
+                    path,
+                    worker_cfg,
+                    configured_gpu_layers,
+                    loaded_w,
+                    battery_w,
+                    &mut jobs_rx,
+                ) {
                     tracing::error!(%err, "llama worker died");
                 }
             })
@@ -76,6 +102,7 @@ impl LlamaCppBackend {
             jobs: jobs_tx,
             loaded,
             model_path,
+            battery,
         })
     }
 
@@ -87,6 +114,28 @@ impl LlamaCppBackend {
         self.loaded.load(Ordering::Relaxed)
     }
 
+    pub fn is_battery(&self) -> bool {
+        self.battery.load(Ordering::Relaxed)
+    }
+    pub async fn unload(&self) -> Result<()> {
+        let (done, ack) = oneshot::channel();
+        self.jobs
+            .send(Job::Unload { done })
+            .await
+            .context("llama worker gone")?;
+        ack.await.context("model unload failed")?;
+        Ok(())
+    }
+    pub async fn set_battery(&self, battery: bool) -> Result<()> {
+        let (done, ack) = oneshot::channel();
+        self.jobs
+            .send(Job::Power { battery, done })
+            .await
+            .context("llama worker gone")?;
+        ack.await.context("power change failed")?;
+        Ok(())
+    }
+
     pub async fn generate(
         &self,
         system: &str,
@@ -95,7 +144,22 @@ impl LlamaCppBackend {
         n_predict: i32,
         temperature: f32,
         cancel: Arc<AtomicBool>,
-    ) -> Result<mpsc::Receiver<String>> {
+    ) -> Result<mpsc::Receiver<Result<String>>> {
+        self.generate_with_grammar(system, history, user, n_predict, temperature, cancel, None)
+            .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn generate_with_grammar(
+        &self,
+        system: &str,
+        history: &[(String, String)],
+        user: &str,
+        n_predict: i32,
+        temperature: f32,
+        cancel: Arc<AtomicBool>,
+        grammar: Option<String>,
+    ) -> Result<mpsc::Receiver<Result<String>>> {
         let (tokens, rx) = mpsc::channel(64);
         let (done_tx, done_rx) = oneshot::channel();
         self.jobs
@@ -106,6 +170,7 @@ impl LlamaCppBackend {
                 n_predict,
                 temperature,
                 tokens,
+                grammar,
                 cancel,
                 done: done_tx,
             })
@@ -132,75 +197,144 @@ struct WorkerConfig {
 
 fn worker(
     path: PathBuf,
-    w_cfg: WorkerConfig,
+    mut w_cfg: WorkerConfig,
+    configured_gpu_layers: u32,
     loaded: Arc<AtomicBool>,
+    battery: Arc<AtomicBool>,
     jobs: &mut mpsc::Receiver<Job>,
 ) -> Result<()> {
     send_logs_to_tracing(LogOptions::default().with_logs_enabled(false));
     let backend = LlamaBackend::init().context("llama backend")?;
-    let model_params = LlamaModelParams::default().with_n_gpu_layers(w_cfg.n_gpu_layers);
-    tracing::info!(
-        path = %path.display(),
-        n_gpu_layers = w_cfg.n_gpu_layers,
-        flash_attn = w_cfg.flash_attn,
-        prefix_cache = w_cfg.prefix_cache,
-        "loading GGUF"
-    );
-    let t0 = std::time::Instant::now();
-    let model = LlamaModel::load_from_file(&backend, &path, &model_params)
-        .with_context(|| format!("load {}", path.display()))?;
+    let mut next_job = None;
+    let mut eager = true;
+    loop {
+        if !eager {
+            loop {
+                match jobs.blocking_recv() {
+                    Some(Job::Unload { done }) => {
+                        let _ = done.send(());
+                    }
+                    Some(Job::Power {
+                        battery: value,
+                        done,
+                    }) => {
+                        battery.store(value, Ordering::Relaxed);
+                        w_cfg.n_gpu_layers = if value { 0 } else { configured_gpu_layers };
+                        let _ = done.send(());
+                    }
+                    Some(job) => {
+                        next_job = Some(job);
+                        break;
+                    }
+                    None => return Ok(()),
+                }
+            }
+        }
+        eager = false;
+        let model_params = LlamaModelParams::default().with_n_gpu_layers(w_cfg.n_gpu_layers);
+        tracing::info!(
+            path = %path.display(),
+            n_gpu_layers = w_cfg.n_gpu_layers,
+            flash_attn = w_cfg.flash_attn,
+            prefix_cache = w_cfg.prefix_cache,
+            "loading GGUF"
+        );
+        let t0 = std::time::Instant::now();
+        let model = LlamaModel::load_from_file(&backend, &path, &model_params)
+            .with_context(|| format!("load {}", path.display()))?;
 
-    let flash_policy = if w_cfg.flash_attn {
-        llama_cpp_sys_2::LLAMA_FLASH_ATTN_TYPE_ENABLED
-    } else {
-        llama_cpp_sys_2::LLAMA_FLASH_ATTN_TYPE_DISABLED
-    };
+        let flash_policy = if w_cfg.flash_attn {
+            llama_cpp_sys_2::LLAMA_FLASH_ATTN_TYPE_ENABLED
+        } else {
+            llama_cpp_sys_2::LLAMA_FLASH_ATTN_TYPE_DISABLED
+        };
 
-    let ctx_params = LlamaContextParams::default()
-        .with_n_ctx(Some(NonZeroU32::new(w_cfg.ctx_size).unwrap_or(NonZeroU32::new(4096).unwrap())))
-        .with_flash_attention_policy(flash_policy)
-        .with_n_batch(w_cfg.n_batch)
-        .with_n_ubatch(w_cfg.n_ubatch);
+        let ctx_params = LlamaContextParams::default()
+            .with_n_ctx(Some(
+                NonZeroU32::new(w_cfg.ctx_size).unwrap_or(NonZeroU32::new(4096).unwrap()),
+            ))
+            .with_flash_attention_policy(flash_policy)
+            .with_n_batch(w_cfg.n_batch)
+            .with_n_ubatch(w_cfg.n_ubatch);
 
-    let mut ctx = model
-        .new_context(&backend, ctx_params)
-        .context("llama context")?;
-    tracing::info!(ms = t0.elapsed().as_millis(), "GGUF loaded");
-    loaded.store(true, Ordering::Relaxed);
+        let mut ctx = model
+            .new_context(&backend, ctx_params)
+            .context("llama context")?;
+        tracing::info!(ms = t0.elapsed().as_millis(), "GGUF loaded");
+        loaded.store(true, Ordering::Relaxed);
 
-    let mut cached_tokens: Vec<llama_cpp_2::token::LlamaToken> = Vec::new();
+        let mut cached_tokens: Vec<llama_cpp_2::token::LlamaToken> = Vec::new();
 
-    while let Some(job) = jobs.blocking_recv() {
-        match job {
-            Job::Generate {
-                system,
-                history,
-                user,
-                n_predict,
-                temperature,
-                tokens,
-                cancel,
-                done,
-            } => {
-                let r = generate_one(
-                    &model,
-                    &mut ctx,
-                    &mut cached_tokens,
-                    w_cfg.prefix_cache,
-                    w_cfg.ctx_size,
-                    &system,
-                    &history,
-                    &user,
+        let mut unload_ack = None;
+        while let Some(job) = next_job.take().or_else(|| jobs.blocking_recv()) {
+            match job {
+                Job::Unload { done } => {
+                    unload_ack = Some(done);
+                    break;
+                }
+                Job::Power {
+                    battery: value,
+                    done,
+                } => {
+                    if battery.load(Ordering::Relaxed) == value {
+                        let _ = done.send(());
+                        continue;
+                    }
+                    battery.store(value, Ordering::Relaxed);
+                    w_cfg.n_gpu_layers = if value { 0 } else { configured_gpu_layers };
+                    unload_ack = Some(done);
+                    break;
+                }
+                Job::Generate {
+                    system,
+                    history,
+                    user,
                     n_predict,
                     temperature,
                     tokens,
+                    grammar,
                     cancel,
-                );
-                let _ = done.send(r);
+                    done,
+                } => {
+                    let errors = tokens.clone();
+                    let r = generate_one(
+                        &model,
+                        &mut ctx,
+                        &mut cached_tokens,
+                        w_cfg.prefix_cache,
+                        w_cfg.ctx_size,
+                        &system,
+                        &history,
+                        &user,
+                        if battery.load(Ordering::Relaxed) {
+                            n_predict.min(128)
+                        } else {
+                            n_predict
+                        },
+                        temperature,
+                        tokens,
+                        grammar.as_deref(),
+                        w_cfg.n_batch,
+                        cancel,
+                    );
+                    if let Err(err) = &r {
+                        cached_tokens.clear();
+                        ctx.clear_kv_cache();
+                        let _ = errors.blocking_send(Err(anyhow::anyhow!("{err:#}")));
+                    }
+                    let _ = done.send(r);
+                }
             }
         }
+        drop(ctx);
+        drop(model);
+        loaded.store(false, Ordering::Relaxed);
+        if let Some(done) = unload_ack {
+            let _ = done.send(());
+        } else {
+            return Ok(());
+        }
     }
-    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -215,17 +349,18 @@ fn generate_one(
     user: &str,
     n_predict: i32,
     temperature: f32,
-    tokens_tx: mpsc::Sender<String>,
+    tokens_tx: mpsc::Sender<Result<String>>,
+    grammar: Option<&str>,
+    n_batch: u32,
     cancel: Arc<AtomicBool>,
 ) -> Result<()> {
-    let prompt = chat_prompt(model, system, history, user)?;
-    let tokens_list = model.vocab().tokenize(prompt.as_bytes(), true, true);
+    let tokens_list = budget_prompt(history, ctx_size, n_predict, |remaining| {
+        let prompt = chat_prompt(model, system, remaining, user)?;
+        Ok(model.vocab().tokenize(prompt.as_bytes(), true, true))
+    })?;
     let n_prompt = tokens_list.len();
-
-    // Prevent KV-cache overflow
-    if cached_tokens.len() + 64 >= ctx_size as usize {
-        ctx.clear_kv_cache();
-        cached_tokens.clear();
+    if n_prompt == 0 {
+        anyhow::bail!("empty tokenized prompt");
     }
 
     let common_len = if prefix_cache_enabled {
@@ -244,43 +379,41 @@ fn generate_one(
         0
     };
 
-    let mut batch = if common_len > 0 {
-        tracing::debug!(common_len, total = n_prompt, "reusing cached KV prefix");
-        let _ = ctx.clear_kv_cache_seq(None, Some(common_len as u32), None);
-        cached_tokens.truncate(common_len);
-        let suffix = &tokens_list[common_len..];
-        let n_suffix = suffix.len();
-        let mut b = LlamaBatch::new(n_suffix.max(512), 1);
-        for (offset, &token) in suffix.iter().enumerate() {
-            let pos = (common_len + offset) as i32;
-            let is_last = offset == n_suffix - 1;
-            b.add(token, pos, &[0], is_last)?;
-        }
-        ctx.decode(&mut b).context("decode prompt suffix")?;
-        cached_tokens.extend_from_slice(suffix);
-        b
-    } else {
+    if common_len == 0 {
         ctx.clear_kv_cache();
-        cached_tokens.clear();
-        let mut b = LlamaBatch::new(n_prompt.max(512), 1);
-        for (i, &token) in tokens_list.iter().enumerate() {
-            let pos = i as i32;
-            let is_last = i == n_prompt - 1;
-            b.add(token, pos, &[0], is_last)?;
-        }
-        ctx.decode(&mut b).context("decode prompt")?;
-        cached_tokens.extend_from_slice(&tokens_list);
-        b
-    };
-
-    let mut sampler = if temperature <= 0.01 {
-        LlamaSampler::greedy()
     } else {
-        LlamaSampler::chain(
-            [LlamaSampler::temp(temperature), LlamaSampler::dist(1234)],
-            false,
-        )
-    };
+        ctx.clear_kv_cache_seq(None, Some(common_len as u32), None)
+            .context("clear cached suffix")?;
+    }
+    cached_tokens.truncate(common_len);
+    let capacity = (n_batch as usize).min(ctx_size as usize).max(1);
+    let mut batch = LlamaBatch::new(capacity, 1);
+    for chunk_start in (common_len..n_prompt).step_by(capacity) {
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        batch.clear();
+        let end = (chunk_start + capacity).min(n_prompt);
+        for (pos, token) in tokens_list.iter().enumerate().take(end).skip(chunk_start) {
+            batch.add(*token, pos as i32, &[0], pos + 1 == n_prompt)?;
+        }
+        ctx.decode(&mut batch).context("decode prompt batch")?;
+        cached_tokens.extend_from_slice(&tokens_list[chunk_start..end]);
+    }
+    let mut samplers = Vec::new();
+    if let Some(grammar) = grammar {
+        samplers.push(
+            LlamaSampler::grammar(model, grammar, "root")
+                .map_err(|e| anyhow::anyhow!("invalid planning grammar: {e}"))?,
+        );
+    }
+    if temperature <= 0.01 {
+        samplers.push(LlamaSampler::greedy());
+    } else {
+        samplers.push(LlamaSampler::temp(temperature));
+        samplers.push(LlamaSampler::dist(1234));
+    }
+    let mut sampler = LlamaSampler::chain(samplers, false);
     let mut decoder = UTF_8.new_decoder();
     let mut n_cur = n_prompt as i32;
     let n_max = n_cur + n_predict.max(1);
@@ -290,15 +423,19 @@ fn generate_one(
             break;
         }
         let token = sampler.sample(ctx, batch.n_tokens() - 1);
-        sampler.accept(token);
+        // llama_sampler_sample already accepts the token into grammar/repetition state.
         if model.vocab().is_eog(token) {
             break;
         }
         let piece = model.vocab().token_to_piece(token, true, None);
-        let mut out = String::with_capacity(decoder.max_utf8_buffer_length(piece.len()).unwrap_or(piece.len()));
+        let mut out = String::with_capacity(
+            decoder
+                .max_utf8_buffer_length(piece.len())
+                .unwrap_or(piece.len()),
+        );
         let _ = decoder.decode_to_string(&piece, &mut out, false);
-        if !out.is_empty() {
-            let _ = tokens_tx.blocking_send(out);
+        if !out.is_empty() && tokens_tx.blocking_send(Ok(out)).is_err() {
+            break;
         }
         batch.clear();
         batch.add(token, n_cur, &[0], true)?;
@@ -331,14 +468,20 @@ fn chat_prompt(
                 .map_err(|e| anyhow::anyhow!("{e}"))?,
         );
         for (u, a) in history {
-            msgs.push(LlamaChatMessage::new("user".into(), u.clone()).map_err(|e| anyhow::anyhow!("{e}"))?);
+            msgs.push(
+                LlamaChatMessage::new("user".into(), u.clone())
+                    .map_err(|e| anyhow::anyhow!("{e}"))?,
+            );
             msgs.push(
                 LlamaChatMessage::new("assistant".into(), a.clone())
                     .or_else(|_| LlamaChatMessage::new("model".into(), a.clone()))
                     .map_err(|e| anyhow::anyhow!("{e}"))?,
             );
         }
-        msgs.push(LlamaChatMessage::new("user".into(), user.into()).map_err(|e| anyhow::anyhow!("{e}"))?);
+        msgs.push(
+            LlamaChatMessage::new("user".into(), user.into())
+                .map_err(|e| anyhow::anyhow!("{e}"))?,
+        );
         if let Ok(formatted) = model.apply_chat_template(&tmpl, &msgs, true) {
             return Ok(formatted);
         }
@@ -367,6 +510,24 @@ fn gemma4_prompt(system: &str, history: &[(String, String)], user: &str) -> Stri
     out
 }
 
+fn budget_prompt<T>(
+    history: &[(String, String)],
+    ctx_size: u32,
+    n_predict: i32,
+    mut tokenize: impl FnMut(&[(String, String)]) -> Result<Vec<T>>,
+) -> Result<Vec<T>> {
+    let budget = (ctx_size as usize)
+        .checked_sub(n_predict.max(1) as usize)
+        .context("response allowance exceeds context")?;
+    for start in 0..=history.len() {
+        let tokens = tokenize(&history[start..])?;
+        if tokens.len() <= budget {
+            return Ok(tokens);
+        }
+    }
+    anyhow::bail!("system and user prompt exceed context budget ({budget} tokens)")
+}
+
 #[cfg(test)]
 mod tests {
     use super::gemma4_prompt;
@@ -389,5 +550,29 @@ mod tests {
         assert!(p.contains("<|turn>model\nhello<turn|>"));
         assert!(p.contains("<|turn>user\nagain<turn|>"));
         assert!(p.ends_with("<|turn>model\n"));
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    #[test]
+    fn oldest_history_is_trimmed_and_errors_reach_the_caller() {
+        let history = vec![
+            ("old".into(), "old response".into()),
+            ("recent".into(), "response".into()),
+        ];
+        let mut seen = Vec::new();
+        let result = budget_prompt(&history, 12, 5, |history| {
+            seen.push(history.first().map(|h| h.0.clone()));
+            Ok(vec![0; 4 + history.len() * 3])
+        })
+        .unwrap();
+        assert_eq!(result.len(), 7);
+        assert_eq!(seen, vec![Some("old".into()), Some("recent".into())]);
+        assert!(budget_prompt::<u8>(&[], 8, 5, |_| Ok(vec![0; 4])).is_err());
+        let error = budget_prompt::<u8>(&history, 20, 5, |_| anyhow::bail!("tokenization failed"))
+            .unwrap_err();
+        assert!(error.to_string().contains("tokenization failed"));
     }
 }

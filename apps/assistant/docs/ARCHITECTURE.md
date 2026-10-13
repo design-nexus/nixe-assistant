@@ -64,7 +64,7 @@ No localhost HTTP between our components. llama.cpp is in-process. Voxtype is a 
 | VAD | Silero VAD v5 ONNX CPU (sharing `ort` with Kokoro) | energy/RMS fallback |
 | STT | warm Parakeet (`nyx-parakeet.service`, `voxtype-onnx-avx2`) | cold `transcribe --engine parakeet` if the daemon take is empty |
 
-Blackwell (RTX 5080, sm_120): `.cargo/config.toml` sets `CMAKE_CUDA_ARCHITECTURES=120a-real`.
+Blackwell (RTX 5080, sm_120): use `CMAKE_CUDA_ARCHITECTURES=120a-real` in the local `build.env` override.
 
 ## Voxtype boundary
 
@@ -96,12 +96,7 @@ belongs to the compositor, not the systemd daemon.
 Apps: `~/.config/omarchy-assistant/apps.toml`.
 Commands: `~/.config/omarchy-assistant/commands.toml`.
 
-`[llm].model = "auto"` picks the first existing path among:
-
-1. Gemma 4 E4B Instruct Q4 (LM Studio)
-2. Mistral 7B Instruct Q4
-3. Qwen3.5 9B Q4
-4. first `*.gguf` in `~/.local/share/omarchy-assistant/models/`
+`[llm].model = "auto"` discovers GGUFs under the user model, LM Studio, and Hugging Face cache directories and prefers small voice-friendly instruct models by filename before falling back to discovered instruct models. Projection and split files are excluded.
 
 ## PTT
 
@@ -128,4 +123,13 @@ listen. Unmatched speech stays idle. Alt+Space PTT is unchanged.
 See `docs/plan.md`: dual-model (skipped), MCP, HTTP, TensorRT,
 Kokoro sm_120, F9/Voxtype/Omarchy system trees. One phase at a time.
 
-Last eight LLM turns stay in RAM for follow-ups. Say "forget everything" or "start over" to clear. Not written to disk.
+Latest 100 LLM turns stay in RAM for follow-ups. Say "forget everything" or "start over" to clear. Not written to disk.
+
+The daemon owns the MCP registry and approval lifecycle. Additive request/result IPC and running settings are described in [reviewed improvements](REVIEWED-IMPROVEMENTS.md).
+
+
+Conversation and automation sessions are daemon-owned. After an answer, follow-up capture runs for ten seconds without a wake word. Explicit conversation mode expires after sixty idle seconds. Cancellation, mute, or stop exits the session. Push-to-talk and text requests can take over follow-up capture. Dictation tracks a Hyprland window address, pauses on focus changes, and retains failed text; terminal dictation remains a draft until explicit insertion and never presses Enter.
+
+The pinned Playwright worker is a first-party stdio MCP server. Background DuckDuckGo lookup and visible Google tasks use separate persistent Chromium profiles. The worker exposes fixed browser operations and element references, not arbitrary JavaScript execution. Detached or navigated references fail. Search challenges pause automation for manual takeover; resuming retries the pending factual request. External MCP tools retain their separate permissions.
+
+Managed terminal jobs preserve argument arrays, canonicalize working directories within the home directory, capture bounded output, and terminate their process group on cancellation or timeout. Generated commands/scripts require approval; explicitly configured argument arrays run directly. Task planning permits twelve calls, fifteen seconds per invocation, and 180 seconds of active processing, excluding approval waits. Each approval expires after sixty seconds and accepts spoken approve/deny or keyboard approval. Structured tool output and sources appear in Activity.

@@ -1,0 +1,7 @@
+manifest_version = 1
+id = "example.echo"
+version = "1.0.0"
+description = "Example MCP plugin. Runs as your user; no operating-system sandbox."
+executable = "python3"
+args = ["./main.py"]
+tools = ["example.echo"]

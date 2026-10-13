@@ -1,17 +1,21 @@
-//! Shared types for Nyx: config, state machine, events, timing.
+//! Shared types for the voice assistant: config, state machine, events, timing.
 
 pub mod apps;
 pub mod commands;
 pub mod config;
 pub mod event;
+pub mod location;
 pub mod paths;
+pub mod persona;
 pub mod state;
 pub mod timing;
+pub mod weather;
 
 pub use apps::{AppLaunch, AppsFile};
 pub use commands::{CommandPhrase, CommandsFile, WorkspaceCommands};
 pub use config::Config;
 pub use event::Event;
+pub use persona::{sync_plugin_manifest, Persona};
 pub use state::{AssistantState, StateMachine};
 pub use timing::TurnTiming;
 
@@ -24,7 +28,9 @@ pub enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
-    Toml(#[from] toml::de::Error),
+    TomlDe(#[from] toml::de::Error),
+    #[error(transparent)]
+    TomlSer(#[from] toml::ser::Error),
 }
 
 impl Error {
@@ -34,3 +40,6 @@ impl Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+pub mod diagnostics;
+pub mod routing;

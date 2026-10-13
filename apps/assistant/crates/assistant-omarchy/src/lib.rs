@@ -19,12 +19,12 @@ pub async fn hyprctl(args: &[&str]) -> Result<String> {
 
 pub async fn omarchy(args: &[&str]) -> Result<String> {
     if args.first() == Some(&"exec") {
-        let cmd = args[1..].join(" ");
+        let cmd = shell_join(&args[1..]);
         tracing::info!(%cmd, "exec via hypr");
         return hypr_exec(&cmd).await;
     }
     if should_hypr_exec(args) {
-        let cmd = format!("omarchy {}", args.join(" "));
+        let cmd = format!("omarchy {}", shell_join(args));
         tracing::info!(%cmd, "omarchy via hypr exec");
         return hypr_exec(&cmd).await;
     }
@@ -50,14 +50,15 @@ fn should_hypr_exec(args: &[&str]) -> bool {
     ) || matches!(args, ["theme", "switcher", ..])
 }
 
-/// Run a command through Hyprland so GUI apps belong to the compositor, not Nyx.
+/// Run a command through Hyprland so GUI apps belong to the compositor, not the assistant.
 pub async fn hypr_exec(cmd: &str) -> Result<String> {
-    let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
+    // Lua decimal escapes are unambiguous for arbitrary UTF-8 and control bytes.
+    let escaped: String = cmd.bytes().map(|b| format!("\\{b:03}")).collect();
     let lua = format!(r#"hl.dispatch(hl.dsp.exec_cmd("{escaped}"))"#);
     hyprctl(&["eval", &lua]).await
 }
 
-/// Force the default capture source unmuted so a voice "mute mic" cannot brick Nyx.
+/// Force the default capture source unmuted so a voice "mute mic" cannot brick the assistant.
 pub async fn unmute_default_source() -> Result<()> {
     let out = Command::new("wpctl")
         .args(["set-mute", "@DEFAULT_AUDIO_SOURCE@", "0"])
@@ -71,6 +72,16 @@ pub async fn unmute_default_source() -> Result<()> {
         );
     }
     Ok(())
+}
+
+pub fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+pub fn shell_join(args: &[&str]) -> String {
+    args.iter()
+        .map(|arg| shell_quote(arg))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]

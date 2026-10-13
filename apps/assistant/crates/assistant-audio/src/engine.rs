@@ -58,7 +58,7 @@ impl AudioEngine {
     pub fn start(cfg: &Config) -> Result<Self> {
         let mut echo_wire = None;
         let echo_module = if cfg.barge_in.aec {
-            match load_nyx_echo_cancel() {
+            match load_assistant_echo_cancel(&cfg.audio) {
                 Ok((id, wire)) => {
                     tracing::info!(id, "echo-cancel loaded");
                     echo_wire = Some(wire);
@@ -91,20 +91,20 @@ impl AudioEngine {
         let play_epoch = Arc::new(AtomicU64::new(0));
         let (ready_tx, ready_rx) = oneshot::channel::<Result<pw::channel::Sender<PwCmd>>>();
         let queued_thread = queued.clone();
+        let audio_cfg = cfg.audio.clone();
 
         std::thread::Builder::new()
-            .name("nyx-pipewire".into())
+            .name("assistant-pipewire".into())
             .spawn(move || {
-                if let Err(err) =
-                    pw_thread(
-                        samples_tx,
-                        level_tx,
-                        aec_level_tx,
-                        aec_samples_tx,
-                        queued_thread,
-                        ready_tx,
-                    )
-                {
+                if let Err(err) = pw_thread(
+                    audio_cfg,
+                    samples_tx,
+                    level_tx,
+                    aec_level_tx,
+                    aec_samples_tx,
+                    queued_thread,
+                    ready_tx,
+                ) {
                     tracing::error!(%err, "pipewire thread exited");
                 }
             })
@@ -196,35 +196,50 @@ impl Drop for AudioEngine {
     }
 }
 
-const NYX_EC_SOURCE: &str = "nyx-echo-cancel";
+const EC_SOURCE: &str = "assistant-echo-cancel";
 
-fn load_nyx_echo_cancel() -> Result<(u32, Arc<AtomicBool>)> {
-    unload_nyx_echo_cancel();
-    // Keep the session sink format (typically 48 kHz stereo). Forcing 16 kHz
-    // mono renamed echo-cancel-sink ports to *_MONO so analog monitor_FL
-    // waited forever under pw-link -w, and resampled the speaker reference.
-    // Nyx plays analog speakers; settings_eq is music/video only.
-    let id = match pactl_load_echo_cancel(&[
-        "source_name=nyx-echo-cancel",
-        "aec_method=webrtc",
-        // webrtc NS ducks the near-end ~20x; the HUD bar and STT then look dead.
-        "aec_args=noise_suppression=0 voice_detection=0 gain_control=0",
-        "sink_properties=priority.session=0",
-    ]) {
+fn load_assistant_echo_cancel(
+    audio: &assistant_core::config::AudioCfg,
+) -> Result<(u32, Arc<AtomicBool>)> {
+    unload_assistant_echo_cancel();
+    // Keep the session sink format (typically 48 kHz stereo).
+    let source_arg = format!("source_master={}", audio.source);
+    let sink_arg = format!("sink_master={}", audio.sink);
+    let mut targets = Vec::new();
+    if audio.source != "default" {
+        targets.push(source_arg.as_str());
+    }
+    if audio.sink != "default" {
+        targets.push(sink_arg.as_str());
+    }
+    let id = match pactl_load_echo_cancel(
+        &targets,
+        &[
+            "source_name=assistant-echo-cancel",
+            "aec_method=webrtc",
+            // webrtc NS ducks the near-end ~20x; the HUD bar and STT then look dead.
+            "aec_args=noise_suppression=0 voice_detection=0 gain_control=0",
+            "sink_properties=priority.session=0",
+        ],
+    ) {
         Ok(id) => id,
         Err(err) => {
             tracing::warn!(%err, "echo-cancel extra args failed; retrying base args");
-            pactl_load_echo_cancel(&[
-                "source_name=nyx-echo-cancel",
-                "aec_method=webrtc",
-                "aec_args=noise_suppression=0 voice_detection=0",
-            ])?
+            pactl_load_echo_cancel(
+                &targets,
+                &[
+                    "source_name=assistant-echo-cancel",
+                    "aec_method=webrtc",
+                    "aec_args=noise_suppression=0 voice_detection=0",
+                ],
+            )?
         }
     };
     let run = Arc::new(AtomicBool::new(true));
     let run_thread = run.clone();
+    let sink_target = audio.sink.clone();
     std::thread::Builder::new()
-        .name("nyx-aec-wire".into())
+        .name("assistant-aec-wire".into())
         .spawn(move || {
             let mut pass = 0u32;
             while run_thread.load(Ordering::Relaxed) {
@@ -233,7 +248,7 @@ fn load_nyx_echo_cancel() -> Result<(u32, Arc<AtomicBool>)> {
                 if !run_thread.load(Ordering::Relaxed) {
                     break;
                 }
-                match wire_echo_cancel_monitor() {
+                match wire_echo_cancel_monitor(&sink_target) {
                     Ok(()) => {
                         if pass < 2 {
                             tracing::info!(pass, "echo-cancel using sink monitor");
@@ -254,8 +269,9 @@ pub fn aec_barge_threshold(residual: f32, configured: f32) -> f32 {
     t.clamp(0.016, configured.max(0.016))
 }
 
-fn pactl_load_echo_cancel(extra: &[&str]) -> Result<u32> {
+fn pactl_load_echo_cancel(targets: &[&str], extra: &[&str]) -> Result<u32> {
     let mut args = vec!["load-module", "module-echo-cancel"];
+    args.extend_from_slice(targets);
     args.extend_from_slice(extra);
     let out = std::process::Command::new("pactl")
         .args(&args)
@@ -278,6 +294,7 @@ fn default_sink_name() -> Result<String> {
         .args(["get-default-sink"])
         .output()
         .context("pactl get-default-sink")?;
+    anyhow::ensure!(out.status.success(), "pactl get-default-sink failed");
     let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if name.is_empty() {
         anyhow::bail!("pactl get-default-sink empty");
@@ -290,8 +307,11 @@ fn default_source_name() -> Option<String> {
         .args(["get-default-source"])
         .output()
         .ok()?;
+    if !out.status.success() {
+        return None;
+    }
     let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if name.is_empty() || name == NYX_EC_SOURCE || name.contains("echo-cancel") {
+    if name.is_empty() || name == EC_SOURCE || name.contains("echo-cancel") {
         return None;
     }
     Some(name)
@@ -300,8 +320,12 @@ fn default_source_name() -> Option<String> {
 /// Pulse `monitor_mode` still creates an idle sink and plays it to the speakers,
 /// so AEC has no reference. Disconnect that playback and feed the default sink
 /// monitor into the canceller instead.
-fn wire_echo_cancel_monitor() -> Result<()> {
-    let sink = default_sink_name()?;
+fn wire_echo_cancel_monitor(target: &str) -> Result<()> {
+    let sink = if target == "default" {
+        default_sink_name()?
+    } else {
+        target.to_string()
+    };
     let outputs = pw_ports("-o");
     let inputs = pw_ports("-i");
     for out in outputs
@@ -368,10 +392,7 @@ fn pair_monitor_ports(monitors: &[String], playback: &[String]) -> Vec<(String, 
     let mut pairs = Vec::new();
     for m in monitors {
         let ch = m.rsplit('_').next().unwrap_or("");
-        if let Some(p) = playback
-            .iter()
-            .find(|p| p.ends_with(&format!("_{ch}")))
-        {
+        if let Some(p) = playback.iter().find(|p| p.ends_with(&format!("_{ch}"))) {
             pairs.push((m.clone(), p.clone()));
         }
     }
@@ -383,7 +404,7 @@ fn pair_monitor_ports(monitors: &[String], playback: &[String]) -> Vec<(String, 
     pairs
 }
 
-fn unload_nyx_echo_cancel() {
+fn unload_assistant_echo_cancel() {
     let Ok(out) = std::process::Command::new("pactl")
         .args(["list", "modules", "short"])
         .output()
@@ -391,7 +412,7 @@ fn unload_nyx_echo_cancel() {
         return;
     };
     for line in String::from_utf8_lossy(&out.stdout).lines() {
-        if !line.contains("nyx-echo-cancel") {
+        if !line.contains("assistant-echo-cancel") && !line.contains("nyx-echo-cancel") {
             continue;
         }
         if let Some(id) = line.split_whitespace().next() {
@@ -409,6 +430,7 @@ fn unload_echo_module(id: u32) {
 }
 
 fn pw_thread(
+    audio: assistant_core::config::AudioCfg,
     samples_tx: mpsc::Sender<Vec<i16>>,
     level_tx: watch::Sender<f32>,
     aec_level_tx: Option<watch::Sender<f32>>,
@@ -436,34 +458,42 @@ fn pw_thread(
 
     // HUD / PTT PCM: hardware mic. AEC source is a second stream used only
     // for barge-in so TTS echo does not trip the energy detector.
-    let cap_props = match default_source_name() {
+    let source = if audio.source == "default" {
+        default_source_name()
+    } else {
+        Some(audio.source)
+    };
+    let cap_props = match source {
         Some(src) => properties! {
             *pw::keys::MEDIA_TYPE => "Audio",
             *pw::keys::MEDIA_CATEGORY => "Capture",
             *pw::keys::MEDIA_ROLE => "Communication",
-            *pw::keys::NODE_NAME => "Nyx",
-            *pw::keys::NODE_DESCRIPTION => "Nyx microphone",
+            *pw::keys::NODE_NAME => "Assistant",
+            *pw::keys::NODE_DESCRIPTION => "Assistant microphone",
             "target.object" => src.as_str(),
         },
         None => properties! {
             *pw::keys::MEDIA_TYPE => "Audio",
             *pw::keys::MEDIA_CATEGORY => "Capture",
             *pw::keys::MEDIA_ROLE => "Communication",
-            *pw::keys::NODE_NAME => "Nyx",
-            *pw::keys::NODE_DESCRIPTION => "Nyx microphone",
+            *pw::keys::NODE_NAME => "Assistant",
+            *pw::keys::NODE_DESCRIPTION => "Assistant microphone",
         },
     };
-    let play_props = properties! {
+    let mut play_props = properties! {
         *pw::keys::MEDIA_TYPE => "Audio",
         *pw::keys::MEDIA_CATEGORY => "Playback",
         *pw::keys::MEDIA_ROLE => "Communication",
-        *pw::keys::NODE_NAME => "Nyx",
-        *pw::keys::NODE_DESCRIPTION => "Nyx speaker",
+        *pw::keys::NODE_NAME => "Assistant",
+        *pw::keys::NODE_DESCRIPTION => "Assistant speaker",
     };
-    let cap_stream = pw::stream::StreamBox::new(&core, "nyx-capture", cap_props)
+    if audio.sink != "default" {
+        play_props.insert("target.object", audio.sink.as_str());
+    }
+    let cap_stream = pw::stream::StreamBox::new(&core, "assistant-capture", cap_props)
         .context("capture stream")?;
 
-    let play_stream = pw::stream::StreamBox::new(&core, "nyx-playback", play_props)
+    let play_stream = pw::stream::StreamBox::new(&core, "assistant-playback", play_props)
         .context("playback stream")?;
 
     let cap_data = capture.clone();
@@ -522,11 +552,11 @@ fn pw_thread(
             *pw::keys::MEDIA_TYPE => "Audio",
             *pw::keys::MEDIA_CATEGORY => "Capture",
             *pw::keys::MEDIA_ROLE => "Communication",
-            *pw::keys::NODE_NAME => "Nyx-AEC",
-            *pw::keys::NODE_DESCRIPTION => "Nyx echo-cancel",
-            "target.object" => NYX_EC_SOURCE,
+            *pw::keys::NODE_NAME => "Assistant-AEC",
+            *pw::keys::NODE_DESCRIPTION => "Assistant echo-cancel",
+            "target.object" => EC_SOURCE,
         };
-        Some(pw::stream::StreamBox::new(&core, "nyx-aec", props).context("aec stream")?)
+        Some(pw::stream::StreamBox::new(&core, "assistant-aec", props).context("aec stream")?)
     } else {
         None
     };
@@ -845,10 +875,7 @@ mod tests {
 
     #[test]
     fn pairs_stereo_by_channel_suffix() {
-        let monitors = vec![
-            "analog:monitor_FL".into(),
-            "analog:monitor_FR".into(),
-        ];
+        let monitors = vec!["analog:monitor_FL".into(), "analog:monitor_FR".into()];
         let playback = vec![
             "echo-cancel-sink:playback_FL".into(),
             "echo-cancel-sink:playback_FR".into(),
@@ -870,10 +897,7 @@ mod tests {
 
     #[test]
     fn mixes_stereo_monitors_into_mono_playback() {
-        let monitors = vec![
-            "analog:monitor_FL".into(),
-            "analog:monitor_FR".into(),
-        ];
+        let monitors = vec!["analog:monitor_FL".into(), "analog:monitor_FR".into()];
         let playback = vec!["echo-cancel-sink:playback_MONO".into()];
         assert_eq!(
             pair_monitor_ports(&monitors, &playback),

@@ -4,3 +4,8 @@
 .vscode/
 *.swp
 .env
+
+/browser/node_modules/
+
+__pycache__/
+*.pyc

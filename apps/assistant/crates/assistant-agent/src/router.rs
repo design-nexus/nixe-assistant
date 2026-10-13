@@ -88,7 +88,10 @@ pub fn match_agent_handoff(text: &str) -> Option<Intent> {
             if lower.starts_with(prefix) {
                 let prompt = trimmed[prefix.len()..].trim().to_string();
                 let agent_name = assistant_tools::agent::normalize_agent_name(agent).to_string();
-                let spoken = format!("Handing off to {}.", assistant_tools::agent::spoken_agent_name(agent));
+                let spoken = format!(
+                    "Handing off to {}.",
+                    assistant_tools::agent::spoken_agent_name(agent)
+                );
                 return Some(Intent::AgentHandoff {
                     agent: agent_name,
                     prompt,
@@ -101,7 +104,10 @@ pub fn match_agent_handoff(text: &str) -> Option<Intent> {
         for verb in &["open", "launch", "start"] {
             if lower == format!("{verb} {agent}") {
                 let agent_name = assistant_tools::agent::normalize_agent_name(agent).to_string();
-                let spoken = format!("Opening {}.", assistant_tools::agent::spoken_agent_name(agent));
+                let spoken = format!(
+                    "Opening {}.",
+                    assistant_tools::agent::spoken_agent_name(agent)
+                );
                 return Some(Intent::AgentHandoff {
                     agent: agent_name,
                     prompt: String::new(),
@@ -296,11 +302,7 @@ fn workspace_intent(n: u8, ws: &assistant_core::WorkspaceCommands) -> Intent {
     Intent::Desktop {
         tool: ws.tool.clone(),
         spoken: ws.spoken.replace("{n}", &n),
-        omarchy: vec![
-            "hyprctl".into(),
-            "eval".into(),
-            ws.focus.replace("{n}", &n),
-        ],
+        omarchy: vec!["hyprctl".into(), "eval".into(), ws.focus.replace("{n}", &n)],
     }
 }
 
@@ -347,18 +349,15 @@ fn workspace_num(key: &str, max: u8) -> Option<u8> {
     }
     let (last, rest) = words.split_last()?;
     let n = parse_ws_num(last, max)?;
-    if rest
-        .iter()
-        .any(|w| {
-            *w == "go"
-                || *w == "going"
-                || *w == "switch"
-                || *w == "change"
-                || *w == "move"
-                || *w == "send"
-                || *w == "put"
-        })
-    {
+    if rest.iter().any(|w| {
+        *w == "go"
+            || *w == "going"
+            || *w == "switch"
+            || *w == "change"
+            || *w == "move"
+            || *w == "send"
+            || *w == "put"
+    }) {
         return Some(n);
     }
     None
@@ -538,10 +537,7 @@ mod tests {
     fn tool(text: &str) -> Option<String> {
         match route(text) {
             Intent::Desktop { tool, .. } => Some(tool),
-            Intent::Chat
-            | Intent::Forget
-            | Intent::Say(_)
-            | Intent::AgentHandoff { .. } => None,
+            Intent::Chat | Intent::Forget | Intent::Say(_) | Intent::AgentHandoff { .. } => None,
         }
     }
 
@@ -596,15 +592,33 @@ mod tests {
             Intent::Desktop { omarchy, .. } => assert_eq!(omarchy, ["launch", "nautilus"]),
             other => panic!("{other:?}"),
         }
-        assert_eq!(tool("make the screen brighter").as_deref(), Some("display.brightness_up"));
-        assert_eq!(tool("switch workspace 2").as_deref(), Some("hypr.workspace"));
-        assert_eq!(tool("go to workspace one").as_deref(), Some("hypr.workspace"));
+        assert_eq!(
+            tool("make the screen brighter").as_deref(),
+            Some("display.brightness_up")
+        );
+        assert_eq!(
+            tool("switch workspace 2").as_deref(),
+            Some("hypr.workspace")
+        );
+        assert_eq!(
+            tool("go to workspace one").as_deref(),
+            Some("hypr.workspace")
+        );
         assert_eq!(tool("workspace won").as_deref(), Some("hypr.workspace"));
         assert_eq!(tool("Workspace One.").as_deref(), Some("hypr.workspace"));
         assert_eq!(tool("Go to ArcSpice1.").as_deref(), Some("hypr.workspace"));
-        assert_eq!(tool("make scream brighter").as_deref(), Some("display.brightness_up"));
-        assert_eq!(tool("Mike scream dimmer.").as_deref(), Some("display.brightness_down"));
-        assert_eq!(tool("go to our space one").as_deref(), Some("hypr.workspace"));
+        assert_eq!(
+            tool("make scream brighter").as_deref(),
+            Some("display.brightness_up")
+        );
+        assert_eq!(
+            tool("Mike scream dimmer.").as_deref(),
+            Some("display.brightness_down")
+        );
+        assert_eq!(
+            tool("go to our space one").as_deref(),
+            Some("hypr.workspace")
+        );
         assert!(matches!(route("mute the mic"), Intent::Say(_)));
         match route("shut down") {
             Intent::Say(s) => assert!(s.contains("won't"), "{s}"),
@@ -659,28 +673,61 @@ mod tests {
         assert_eq!(tool("toggle bar").as_deref(), Some("toggle.bar"));
         assert_eq!(tool("hide the bar").as_deref(), Some("toggle.bar"));
         assert_eq!(tool("toggle gaps").as_deref(), Some("hypr.gaps"));
-        assert_eq!(tool("toggle animations").as_deref(), Some("toggle.animations"));
-        assert_eq!(tool("toggle transparency").as_deref(), Some("hypr.transparency"));
-        assert_eq!(tool("toggle fullscreen").as_deref(), Some("hypr.fullscreen"));
+        assert_eq!(
+            tool("toggle animations").as_deref(),
+            Some("toggle.animations")
+        );
+        assert_eq!(
+            tool("toggle transparency").as_deref(),
+            Some("hypr.transparency")
+        );
+        assert_eq!(
+            tool("toggle fullscreen").as_deref(),
+            Some("hypr.fullscreen")
+        );
         assert_eq!(tool("toggle layout").as_deref(), Some("hypr.layout"));
-        assert_eq!(tool("screenshot region").as_deref(), Some("capture.screenshot_region"));
-        assert_eq!(tool("screenshot window").as_deref(), Some("capture.screenshot_window"));
+        assert_eq!(
+            tool("screenshot region").as_deref(),
+            Some("capture.screenshot_region")
+        );
+        assert_eq!(
+            tool("screenshot window").as_deref(),
+            Some("capture.screenshot_window")
+        );
         assert_eq!(tool("about this computer").as_deref(), Some("app.launch"));
-        assert_eq!(tool("close the window").as_deref(), Some("hypr.window_close"));
+        assert_eq!(
+            tool("close the window").as_deref(),
+            Some("hypr.window_close")
+        );
         assert_eq!(tool("next workspace").as_deref(), Some("hypr.workspace"));
-        assert_eq!(tool("previous workspace").as_deref(), Some("hypr.workspace"));
+        assert_eq!(
+            tool("previous workspace").as_deref(),
+            Some("hypr.workspace")
+        );
         assert_eq!(tool("former workspace").as_deref(), Some("hypr.workspace"));
         assert_eq!(tool("toggle touchpad").as_deref(), Some("toggle.touchpad"));
-        assert_eq!(tool("switch audio output").as_deref(), Some("audio.output_switch"));
-        assert_eq!(tool("keyboard brighter").as_deref(), Some("display.keyboard_up"));
+        assert_eq!(
+            tool("switch audio output").as_deref(),
+            Some("audio.output_switch")
+        );
+        assert_eq!(
+            tool("keyboard brighter").as_deref(),
+            Some("display.keyboard_up")
+        );
         assert_eq!(tool("change theme").as_deref(), Some("theme.switcher"));
         assert_eq!(tool("open discord").as_deref(), Some("app.launch"));
         assert_eq!(tool("open obsidian").as_deref(), Some("app.launch"));
         assert_eq!(tool("open chatgpt").as_deref(), Some("app.launch"));
         assert_eq!(tool("open music").as_deref(), Some("app.launch"));
         assert_eq!(tool("capture text").as_deref(), Some("capture.text"));
-        assert_eq!(tool("toggle scratchpad").as_deref(), Some("hypr.scratchpad"));
-        assert_eq!(tool("move to scratchpad").as_deref(), Some("hypr.scratchpad_move"));
+        assert_eq!(
+            tool("toggle scratchpad").as_deref(),
+            Some("hypr.scratchpad")
+        );
+        assert_eq!(
+            tool("move to scratchpad").as_deref(),
+            Some("hypr.scratchpad_move")
+        );
         assert_eq!(tool("toggle floating").as_deref(), Some("hypr.float"));
         assert_eq!(tool("toggle split").as_deref(), Some("hypr.split"));
         assert_eq!(tool("open passwords").as_deref(), Some("app.launch"));
@@ -695,9 +742,18 @@ mod tests {
         assert_eq!(tool("emoji picker").as_deref(), Some("app.launch"));
         assert_eq!(tool("clipboard history").as_deref(), Some("app.launch"));
         assert_eq!(tool("show keybindings").as_deref(), Some("app.launch"));
-        assert_eq!(tool("record the screen").as_deref(), Some("capture.screenrecord"));
-        assert_eq!(tool("stop recording").as_deref(), Some("capture.screenrecord"));
-        assert_eq!(tool("pop the window out").as_deref(), Some("hypr.window_pop"));
+        assert_eq!(
+            tool("record the screen").as_deref(),
+            Some("capture.screenrecord")
+        );
+        assert_eq!(
+            tool("stop recording").as_deref(),
+            Some("capture.screenrecord")
+        );
+        assert_eq!(
+            tool("pop the window out").as_deref(),
+            Some("hypr.window_pop")
+        );
         assert_eq!(tool("close"), None);
         assert!(is_filler("Yeah."));
         assert!(is_filler("ok"));
@@ -745,7 +801,11 @@ mod tests {
     #[test]
     fn agent_handoff_routing() {
         match route("ask claude to fix the auth test") {
-            Intent::AgentHandoff { agent, prompt, spoken } => {
+            Intent::AgentHandoff {
+                agent,
+                prompt,
+                spoken,
+            } => {
                 assert_eq!(agent, "claude");
                 assert_eq!(prompt, "fix the auth test");
                 assert_eq!(spoken, "Handing off to Claude.");
@@ -754,7 +814,11 @@ mod tests {
         }
 
         match route("ask agy to review the latest commit") {
-            Intent::AgentHandoff { agent, prompt, spoken } => {
+            Intent::AgentHandoff {
+                agent,
+                prompt,
+                spoken,
+            } => {
                 assert_eq!(agent, "agy");
                 assert_eq!(prompt, "review the latest commit");
                 assert_eq!(spoken, "Handing off to Antigravity.");
@@ -763,7 +827,11 @@ mod tests {
         }
 
         match route("open coding agent") {
-            Intent::AgentHandoff { agent, prompt, spoken } => {
+            Intent::AgentHandoff {
+                agent,
+                prompt,
+                spoken,
+            } => {
                 assert_eq!(agent, "agy");
                 assert_eq!(prompt, "");
                 assert_eq!(spoken, "Opening Antigravity.");
@@ -772,7 +840,11 @@ mod tests {
         }
 
         match route("open claude") {
-            Intent::AgentHandoff { agent, prompt, spoken } => {
+            Intent::AgentHandoff {
+                agent,
+                prompt,
+                spoken,
+            } => {
                 assert_eq!(agent, "claude");
                 assert_eq!(prompt, "");
                 assert_eq!(spoken, "Opening Claude.");

@@ -73,8 +73,8 @@ fn probe_speak(engine: &Engine, voice: &str) -> Result<()> {
 
 pub struct KokoroProvider {
     engine: Engine,
-    voice: String,
-    speed: f32,
+    voice: std::sync::RwLock<String>,
+    speed: std::sync::RwLock<f32>,
     device: String,
     variant: String,
     lock: Mutex<()>,
@@ -120,7 +120,9 @@ impl KokoroProvider {
             }
         } else {
             if cfg.tts.device != "cpu" && !cfg.tts.force_cuda {
-                tracing::info!("Kokoro CUDA skipped on this GPU (no sm_120 ORT kernels); using CPU");
+                tracing::info!(
+                    "Kokoro CUDA skipped on this GPU (no sm_120 ORT kernels); using CPU"
+                );
             }
             let eng = load_engine(&cache, TtsDevice::Cpu, variant, threads)
                 .context("loqui Kokoro CPU")?;
@@ -129,8 +131,8 @@ impl KokoroProvider {
         tracing::info!(ms = t0.elapsed().as_millis(), active_device = %active_device, "Kokoro ready");
         Ok(Self {
             engine,
-            voice: cfg.tts.voice.clone(),
-            speed: cfg.tts.speed,
+            voice: std::sync::RwLock::new(cfg.tts.voice.clone()),
+            speed: std::sync::RwLock::new(cfg.tts.speed),
             device: active_device,
             variant: cfg.tts.variant.clone(),
             lock: Mutex::new(()),
@@ -145,18 +147,41 @@ impl KokoroProvider {
         &self.variant
     }
 
-    pub fn voice(&self) -> &str {
-        &self.voice
+    pub fn voice(&self) -> String {
+        self.voice
+            .read()
+            .map(|v| v.clone())
+            .unwrap_or_else(|e| e.into_inner().clone())
+    }
+
+    pub fn set_voice(&self, voice: &str, speed: f32) {
+        if let Ok(mut v) = self.voice.write() {
+            *v = voice.to_string();
+        }
+        if let Ok(mut s) = self.speed.write() {
+            *s = speed;
+        }
     }
 
     pub fn speak(&self, text: &str) -> Result<Vec<f32>> {
+        self.speak_with(
+            text,
+            &self.voice(),
+            *self.speed.read().unwrap_or_else(|e| e.into_inner()),
+        )
+    }
+    pub fn speak_with(&self, text: &str, voice: &str, speed: f32) -> Result<Vec<f32>> {
+        if !speed.is_finite() || !(0.5..=2.0).contains(&speed) {
+            anyhow::bail!("invalid preview speed");
+        }
         if text.trim().is_empty() {
             return Ok(Vec::new());
         }
         let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+
         let mut req = SpeakRequest::new(text);
-        req.voice = self.voice.clone();
-        req.speed = self.speed;
+        req.voice = voice.into();
+        req.speed = speed;
         req.format = Format::Wav;
         let speech = self
             .engine
@@ -178,10 +203,7 @@ fn wav_to_f32(bytes: &[u8]) -> Result<Vec<f32>> {
             }
             hound::SampleFormat::Int => {
                 let samples: Result<Vec<i16>, _> = reader.samples::<i16>().collect();
-                Ok(samples?
-                    .into_iter()
-                    .map(|s| s as f32 / 32768.0)
-                    .collect())
+                Ok(samples?.into_iter().map(|s| s as f32 / 32768.0).collect())
             }
         }
     } else {

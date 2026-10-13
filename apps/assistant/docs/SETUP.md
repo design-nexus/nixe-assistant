@@ -8,8 +8,8 @@
 - `libpipewire` development files (`pkg-config libpipewire-0.3`)
 - Voxtype on PATH (`voxtype transcribe`)
 
-Blackwell (RTX 5080): the workspace sets `CMAKE_CUDA_ARCHITECTURES=120a-real`
-in `.cargo/config.toml` so llama.cpp MXFP4 kernels compile.
+Blackwell (RTX 5080): set `CMAKE_CUDA_ARCHITECTURES=120a-real`
+in `~/.config/omarchy-assistant/build.env` for the installer so llama.cpp MXFP4 kernels compile.
 
 Kokoro CUDA needs `libcudnn.so` and an ONNX Runtime CUDA EP with kernels for
 this GPU. On Blackwell (compute 12.0) ORT has no sm_120 kernels, so Nyx skips
@@ -22,7 +22,7 @@ omarchy pkg add cudnn
 ```
 
 ```bash
-cd /home/ken/Projects/omarchy-assistant
+cd /path/to/omarchy-assistant
 cargo build --release -p omarchy-assistantd
 ```
 
@@ -81,7 +81,7 @@ back to energy/RMS. Force energy:
 ```toml
 [vad]
 backend = "energy"
-threshold = 0.012
+energy_threshold = 0.012
 ```
 
 Then `omarchy-assistant reload`.
@@ -170,3 +170,23 @@ systemctl --user status omarchy-assistant-hud
 
 It runs `omarchy-assistant listen` and shows state, transcript, reply, and
 capture level, using the live Omarchy theme and font.
+
+See [reviewed improvements](REVIEWED-IMPROVEMENTS.md) for draft/apply semantics, all new TUI features, MCP permissions, token-authenticated HTTP and portable installation.
+
+
+Browser runtime: install Node 18+ and npm, then run `scripts/install.sh`. The installer uses the lockfile, installs matching Playwright Chromium under the assistant cache, and bundles the worker under the assistant data directory. `[browser] node` can override the installed `omarchy-assistant-node` wrapper; `worker = "auto"` discovers the installed worker. `[browser] weather_location` is optional. Browser automation operates in an assistant-owned profile; it does not import Firefox cookies. DuckDuckGo or Google may require manual challenge completion through browser takeover.
+
+`[conversation] follow_up_secs = 10` and `idle_secs = 60` control listening windows. `[dictation] idle_secs = 120` bounds dictation silence. `[terminal] timeout_secs = 120` supports 1–600 seconds. Add trusted commands as `[terminal.commands]` entries, for example `list-projects = ["ls", "-la", "/home/your-user/Projects"]`; working directories stay inside the home directory.
+
+
+`[location] enabled = true` enables on-demand approximate public-IP geolocation through ipapi.co, with ipwho.is as a fallback. `city = ""` chooses automatic detection; set a city to use a local override without network lookup. Optional `latitude` and `longitude` must be supplied together with a city. `cache_minutes = 60` controls the transient cache (1–1440). No background polling, GPS access, or IP response persistence occurs. Location can be disabled through voice, CLI, or TUI. Explicit places in a request always take precedence; existing `[browser] weather_location` remains a weather-specific override.
+
+Weather requests use Open-Meteo over HTTPS, including its geocoding endpoint for named cities. Current replies include the location, units, source, and local data time. US locations always use Fahrenheit/mph, including generated tool calls. Outside the US, Celsius requests use Celsius/kmh; otherwise the default is Fahrenheit/mph. Lookups validate HTTP status, bound request time and response size, reject missing or stale current data, and support cancellation. `weather.lookup` is available in the tool registry. A named city remains usable when automatic location is disabled.
+
+### DuckDuckGo MCP factual search
+
+Run `scripts/install-search.sh` to install the pinned AstroCorp server and its locked Node dependencies under the assistant data directory. Node 22+ is required. Then run `omarchy-assistant search-provider duckduckgo` and restart the daemon. `search-provider show` reports the saved provider; `search-provider builtin` switches back after a restart. This adds the stdio server and allows only `duckduckgo.search`, retaining existing MCP permissions and servers. The server is external; its filesystem/network access is governed by its process environment.
+
+`[browser] search_tool = "duckduckgo.search"` directs ordinary factual queries to that registered tool. A custom provider must accept `query` and return structured `results` containing `title`, `url`, optional `snippet`, `text`, and `published_at`, with `retrieved_at` at the top level. Weather still uses Open-Meteo; visible page requests still use Google. Extracted content is untrusted. Challenges are reported honestly; no CAPTCHA is solved automatically. Search citations are retained for “open that source.”
+
+See `search/README.md` for the pinned revision and local patch. Full-content output is bounded, requests have timeouts/cancellation, and fetched page bodies are limited before parsing.

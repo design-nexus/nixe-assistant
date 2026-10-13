@@ -61,18 +61,31 @@ impl Silero {
             .commit_from_file(&path)
             .map_err(|e| anyhow::anyhow!("silero onnx {}: {e}", path.display()))?;
 
-        let in_names: Vec<String> = session.inputs().iter().map(|o| o.name().to_string()).collect();
-        let out_names: Vec<String> = session.outputs().iter().map(|o| o.name().to_string()).collect();
+        let in_names: Vec<String> = session
+            .inputs()
+            .iter()
+            .map(|o| o.name().to_string())
+            .collect();
+        let out_names: Vec<String> = session
+            .outputs()
+            .iter()
+            .map(|o| o.name().to_string())
+            .collect();
         tracing::info!(?in_names, ?out_names, path = %path.display(), "silero session");
 
-        let input_audio = pick_name(&in_names, &["input", "audio", "x"]).cloned().unwrap_or_else(|| {
-            in_names.first().cloned().unwrap_or_else(|| "input".into())
-        });
+        let input_audio = pick_name(&in_names, &["input", "audio", "x"])
+            .cloned()
+            .unwrap_or_else(|| in_names.first().cloned().unwrap_or_else(|| "input".into()));
         let input_state = pick_name(&in_names, &["state", "h", "hn"]).cloned();
         let input_sr = pick_name(&in_names, &["sr", "sampling_rate"]).cloned();
-        let output_prob = pick_name(&out_names, &["output", "prob", "vad"]).cloned().unwrap_or_else(|| {
-            out_names.first().cloned().unwrap_or_else(|| "output".into())
-        });
+        let output_prob = pick_name(&out_names, &["output", "prob", "vad"])
+            .cloned()
+            .unwrap_or_else(|| {
+                out_names
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "output".into())
+            });
         let output_state = pick_name(&out_names, &["stateN", "state", "hn", "n"]).cloned();
 
         let Some(input_state) = input_state else {
@@ -115,15 +128,18 @@ impl Silero {
         }
 
         // Save tail for next frame
-        state.context.copy_from_slice(&audio[WINDOW - CONTEXT..WINDOW]);
+        state
+            .context
+            .copy_from_slice(&audio[WINDOW - CONTEXT..WINDOW]);
 
         if state.h.len() != self.state_len {
             state.h = vec![0.0; self.state_len];
         }
 
-        let audio_t = Tensor::from_array(([1usize, WINDOW], audio)).context("silero audio tensor")?;
-        let state_t =
-            Tensor::from_array(([2usize, 1, 128], state.h.clone())).context("silero state tensor")?;
+        let audio_t =
+            Tensor::from_array(([1usize, WINDOW], audio)).context("silero audio tensor")?;
+        let state_t = Tensor::from_array(([2usize, 1, 128], state.h.clone()))
+            .context("silero state tensor")?;
         let mut session = self
             .session
             .lock()
@@ -182,7 +198,10 @@ fn ensure_model(path: &Path, url: &str) -> Result<()> {
         return Ok(());
     }
     if url.trim().is_empty() {
-        anyhow::bail!("silero model missing at {} and [vad] url is empty", path.display());
+        anyhow::bail!(
+            "silero model missing at {} and [vad] url is empty",
+            path.display()
+        );
     }
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -190,7 +209,7 @@ fn ensure_model(path: &Path, url: &str) -> Result<()> {
     let tmp = path.with_extension("onnx.part");
     tracing::info!(path = %path.display(), url, "downloading silero vad");
     let status = Command::new("curl")
-        .args(["-fsSL", "-o"])
+        .args(["-fsSL", "--connect-timeout", "10", "--max-time", "30", "-o"])
         .arg(&tmp)
         .arg(url)
         .status()
@@ -211,7 +230,7 @@ mod tests {
     #[test]
     fn silence_is_not_speech() {
         let cfg = VadCfg {
-            model: "/home/ken/.cache/omarchy-assistant/silero/silero_vad.onnx".into(),
+            model: model_path(&VadCfg::default()).display().to_string(),
             ..Default::default()
         };
         if !std::path::Path::new(&cfg.model).exists() {

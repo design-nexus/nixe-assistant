@@ -3,14 +3,19 @@ name = "assistant-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Nyx core: config, state machine, events, timing"
+description = "Voice assistant core: config, state machine, events, timing"
 
 [dependencies]
 anyhow.workspace = true
+reqwest.workspace = true
 chrono.workspace = true
 dirs.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 toml.workspace = true
 tracing.workspace = true
+
+toml_edit = "0.22"
+tempfile.workspace = true

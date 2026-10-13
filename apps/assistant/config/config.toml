@@ -1,5 +1,5 @@
 [assistant]
-name = "Nyx"
+name = "Echo"
 mode = "push-to-talk"
 prompt = "You are {name}, a fast local voice assistant on Omarchy/Hyprland. Answer questions out loud in short spoken sentences. No markdown, no bullet lists, no code fences. Never claim you changed the computer."
 
@@ -31,7 +31,8 @@ force_cuda = false    # Force CUDA attempt on Blackwell sm_120 despite missing O
 [vad]
 enabled = true
 backend = "silero"
-threshold = 0.5
+threshold = 0.5 # Silero speech probability
+energy_threshold = 0.012 # RMS fallback and energy backend
 hangover_ms = 400
 start_confirm_frames = 2
 model = ""
@@ -60,7 +61,7 @@ min_ms = 400
 max_ms = 10000
 hush_ms = 1200
 prefixes = ["hey", "ok", "okay"]
-phrases = ["nyx", "nix", "nicks", "nick", "niks", "nics", "nyks", "next", "six", "neks"]
+phrases = ["echo", "ekko", "ecko", "eco", "eko", "hecho"]
 
 [clock]
 enabled = true
@@ -118,7 +119,7 @@ enabled = true
 # Configure external MCP servers over stdio here if desired:
 # [mcp.servers.filesystem]
 # command = "npx"
-# args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/ken"]
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "/absolute/path/to/allowed/directory"]
 
 [http]
 enabled = true
@@ -126,3 +127,34 @@ bind = "127.0.0.1"
 port = 8765
 
 
+
+# Listen briefly after replies; explicit conversation stays open until idle.
+[conversation]
+enabled = true
+follow_up_secs = 10
+idle_secs = 60
+
+[dictation]
+enabled = true
+idle_secs = 120
+
+[browser]
+enabled = true
+node = "omarchy-assistant-node"
+worker = "auto"
+weather_location = ""
+# Optional registered MCP search tool, e.g. "duckduckgo.search". Empty uses built-in search.
+search_tool = ""
+
+[terminal]
+timeout_secs = 120
+# [terminal.commands]
+# project_status = ["git", "status", "--short"]
+
+
+[location]
+# On-demand approximate city from ipapi.co; cached in memory. No GPS tracking.
+enabled = true
+city = "" # Set a city/address to override automatic detection.
+cache_minutes = 60
+# Optional manually supplied coordinates require both latitude and longitude.

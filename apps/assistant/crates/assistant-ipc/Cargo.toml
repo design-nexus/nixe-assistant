@@ -3,7 +3,7 @@ name = "assistant-ipc"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Unix socket IPC for Nyx"
+description = "Unix socket and HTTP IPC for voice assistant"
 
 [dependencies]
 anyhow.workspace = true

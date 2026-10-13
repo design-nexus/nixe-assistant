@@ -1,0 +1,23 @@
+manifest_version = 1
+id = "file-search"
+version = "1.0.0"
+description = "Opt-in local file content indexing"
+executable = "python3"
+args = ["./main.py"]
+tools = ["file_search.index", "file_search.search", "file_search.status", "file_search.clear"]
+settings_schema = { type = "object", additionalProperties = false, properties = { roots = { type = "array", items = { type = "string" }, maxItems = 20 }, exclude = { type = "array", items = { type = "string" }, maxItems = 100 } } }
+
+[[routes]]
+pattern = "^(?i:search my files for (?P<query>.+))$"
+tool = "file_search.search"
+template = true
+
+[[routes]]
+pattern = "^(?i:index my files)$"
+tool = "file_search.index"
+template = true
+
+[[routes]]
+pattern = "^(?i:clear my file index)$"
+tool = "file_search.clear"
+template = true

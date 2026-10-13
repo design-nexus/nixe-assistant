@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod jobs;
 pub mod mcp;
 pub mod typed;
 
@@ -302,7 +303,12 @@ mod tests {
 
     #[test]
     fn shutdown_needs_allow() {
-        assert!(!tool_allowed("system.shutdown", "allow", "allow", "confirm"));
+        assert!(!tool_allowed(
+            "system.shutdown",
+            "allow",
+            "allow",
+            "confirm"
+        ));
         assert!(tool_allowed("system.shutdown", "allow", "allow", "allow"));
     }
 
@@ -316,3 +322,7 @@ mod tests {
         assert!(tool_allowed("system.lock", "allow", "allow", "confirm"));
     }
 }
+
+pub mod registry;
+
+pub mod plugins;

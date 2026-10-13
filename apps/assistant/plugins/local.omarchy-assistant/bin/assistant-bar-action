@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"
+case "${1:-status}" in
+  status)
+    active=false
+    if systemctl --user is-active --quiet omarchy-assistantd.service; then active=true; fi
+    if data=$(omarchy-assistant status --json); then
+      jq -c --argjson active "$active" '. + {service_active: $active}' <<< "$data"
+    else
+      jq -cn --argjson active "$active" '{ok:false,state:(if $active then "starting" else "disabled" end),service_active:$active,name:"Assistant"}'
+    fi
+    ;;
+  open-tui) exec omarchy-launch-terminal -- omarchy-assistant-tui ;;
+  restart) exec systemctl --user restart omarchy-assistantd.service ;;
+  demo) exec omarchy-assistant preview ;;
+  *) exec omarchy-assistant "$@" ;;
+esac

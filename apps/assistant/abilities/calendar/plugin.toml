@@ -1,0 +1,17 @@
+manifest_version = 1
+id = "calendar"
+version = "1.0.0"
+description = "Local calendar with timezone-aware events and ICS export"
+executable = "python3"
+args = ["./main.py"]
+tools = ["calendar.list", "calendar.next", "calendar.read", "calendar.create", "calendar.edit", "calendar.delete", "calendar.export", "calendar.undo"]
+
+[[routes]]
+pattern = "^(?i:(?:what\\x27s|what is) next on my calendar)$"
+tool = "calendar.next"
+template = true
+
+[[routes]]
+pattern = "^(?i:list (?:my )?calendar events)$"
+tool = "calendar.list"
+template = true

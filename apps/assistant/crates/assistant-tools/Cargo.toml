@@ -3,7 +3,7 @@ name = "assistant-tools"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Typed tools and permission classes for Nyx"
+description = "Typed tools and permission classes for voice assistant"
 
 [dependencies]
 anyhow.workspace = true
@@ -14,3 +14,15 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+tokio-util.workspace = true
+libc = "0.2"
+jsonschema = { version = "0.33", default-features = false }
+
+toml.workspace = true
+regex = "1"
+tempfile.workspace = true
+tar = "0.4"
+flate2 = "1"
+
+[dev-dependencies]
+tempfile.workspace = true

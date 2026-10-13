@@ -1,6 +1,6 @@
-// Nyx HUD. Standalone Quickshell overlay — do not add to shell.json yet.
+// Omarchy Assistant HUD overlay
 //
-//   qs --path /home/ken/Projects/omarchy-assistant/quickshell --daemonize --no-duplicate
+// Installed to ~/.local/share/omarchy-assistant/quickshell
 //
 // Listens to `omarchy-assistant listen` NDJSON on stdout.
 
@@ -13,27 +13,36 @@ ShellRoot {
     id: root
 
     property string daemonState: "idle"
+    property string sessionMode: "wake"
+    property int sessionRemaining: 0
+    property string dictationDraft: ""
+    property string dictationTarget: ""
+    property string toolProgress: ""
     property string transcript: ""
     property string assistant: ""
     property string errorText: ""
-    property string name: "Nyx"
+    property string name: "Assistant"
     property real rms: 0
     property real meter: 0
+    property bool hudEnabled: true
+    property string approvalId: ""
+    property string approvalText: ""
+    property double approvalExpires: 0
     property bool connected: false
     property bool holdVisible: false
     property var theme: ({})
     property int fontBase: 12
 
-    readonly property bool showHud: holdVisible
-        || (daemonState !== "idle" && daemonState !== "")
-        || errorText.length > 0
-        || daemonState === "offline"
+    readonly property bool showHud: hudEnabled && connected && daemonState !== "offline"
+        && (approvalId.length > 0 || holdVisible
+            || (daemonState !== "idle" && daemonState !== "")
+            || errorText.length > 0)
 
-    readonly property bool grabKeys: daemonState === "listening"
-        || daemonState === "transcribing"
+    readonly property bool grabKeys: hudEnabled && connected && (approvalId.length > 0 || (sessionMode === "wake" && daemonState === "listening")
+        || (sessionMode === "wake" && daemonState === "transcribing")
         || daemonState === "thinking"
         || daemonState === "executing"
-        || daemonState === "speaking"
+        || daemonState === "speaking")
 
     // Omarchy bar uses the fontconfig "monospace" alias so `omarchy font set` applies.
     readonly property string hudFont: "monospace"
@@ -125,30 +134,61 @@ ShellRoot {
         }
         root.connected = true;
         switch (obj.type) {
+        case "session":
+            root.sessionMode = obj.mode; root.sessionRemaining = obj.remaining_secs;
+            root.dictationDraft = obj.draft || ""; root.dictationTarget = obj.target || "";
+            break;
+        case "settings":
+            root.hudEnabled = obj.hud_enabled !== false;
+            break;
+        case "tool_approval":
+            root.approvalId = obj.approval_id;
+            root.approvalExpires = obj.expires_at_ms;
+            root.approvalText = obj.tool + "\n" + JSON.stringify(obj.arguments, null, 2) + "\nY: allow once · N: deny · 60s expiry";
+            break;
+        case "turn":
+            if (obj.event && obj.event.type === "tool") { root.toolProgress = obj.event.tool + " · " + obj.event.status + " · " + JSON.stringify(obj.event.arguments || {}); }
+            if (obj.event && obj.event.type === "calibration") {
+                root.errorText = "Calibration: " + obj.event.phase + " for five seconds";
+                hideTimer.restart();
+            }
+            break;
+        case "result":
+            if (obj.data && obj.data.approved !== undefined) { root.approvalId = ""; root.approvalText = ""; }
+            break;
         case "health":
             if (obj.name)
                 root.name = obj.name;
-            const wasOffline = root.daemonState === "offline";
             if (obj.state)
                 root.daemonState = obj.state;
-            if (wasOffline)
-                hideTimer.restart();
             break;
         case "state":
             if (obj.state)
                 root.daemonState = obj.state;
+            if (obj.state === "idle" || obj.state === "interrupted" || obj.state === "error") {
+                root.approvalId = ""; root.approvalText = "";
+            }
             if (obj.state === "listening") {
+                root.toolProgress = "";
                 root.transcript = "";
                 root.assistant = "";
                 root.errorText = "";
                 root.rms = 0;
                 root.meter = 0;
-                root.holdVisible = true;
+                root.holdVisible = false;
+                root.approvalId = "";
+                root.approvalText = "";
+                root.dictationDraft = "";
+                root.toolProgress = "";
                 hideTimer.stop();
             } else if (obj.state === "idle") {
                 hideTimer.restart();
             } else {
-                root.holdVisible = true;
+                root.holdVisible = false;
+                root.approvalId = "";
+                root.approvalText = "";
+                root.dictationDraft = "";
+                root.toolProgress = "";
                 hideTimer.stop();
             }
             break;
@@ -229,6 +269,11 @@ ShellRoot {
         }
     }
 
+    Timer {
+        interval: 500; running: root.approvalId.length > 0; repeat: true
+        onTriggered: if (Date.now() >= root.approvalExpires) {root.approvalId = ""; root.approvalText = "";}
+    }
+    Process { id: approvalProc }
     Process {
         id: cancelProc
         command: [(Quickshell.env("HOME") || "") + "/.local/bin/omarchy-assistant", "cancel"]
@@ -254,7 +299,11 @@ ShellRoot {
                 root.transcript = "";
                 root.assistant = "";
                 root.errorText = "";
-                root.holdVisible = true;
+                root.holdVisible = false;
+                root.approvalId = "";
+                root.approvalText = "";
+                root.dictationDraft = "";
+                root.toolProgress = "";
                 hideTimer.stop();
                 restartTimer.restart();
             }
@@ -273,7 +322,7 @@ ShellRoot {
 
     PanelWindow {
         id: panel
-        visible: true
+        visible: root.hudEnabled && root.connected
         color: "transparent"
         anchors {
             top: true
@@ -282,10 +331,18 @@ ShellRoot {
             right: true
         }
 
-        WlrLayershell.namespace: "nyx-hud"
+        WlrLayershell.namespace: "omarchy-assistant-hud"
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: root.grabKeys ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
+        Shortcut {
+            sequence: "Y"; enabled: root.approvalId.length > 0 && root.hudEnabled && root.connected
+            onActivated: {approvalProc.command = ["omarchy-assistant", "approve", root.approvalId]; approvalProc.running = true; root.approvalId = ""; root.approvalText = "";}
+        }
+        Shortcut {
+            sequence: "N"; enabled: root.approvalId.length > 0 && root.hudEnabled && root.connected
+            onActivated: {approvalProc.command = ["omarchy-assistant", "deny", root.approvalId]; approvalProc.running = true; root.approvalId = ""; root.approvalText = "";}
+        }
         Shortcut {
             sequences: ["Escape"]
             enabled: root.grabKeys
@@ -332,7 +389,7 @@ ShellRoot {
                         anchors.verticalCenter: parent.verticalCenter
                     }
                     Text {
-                        text: root.name + "  ·  " + root.daemonState
+                        text: root.name + "  ·  " + root.daemonState + (root.sessionMode === "wake" ? "" : " · " + root.sessionMode + " " + root.sessionRemaining + "s")
                         color: root.cFg
                         font.family: root.hudFont
                         font.pixelSize: root.fontName
@@ -354,6 +411,14 @@ ShellRoot {
                     }
                 }
 
+                Text { visible: root.toolProgress.length > 0 && root.daemonState !== "idle"; width: body.width; text: root.toolProgress; color: root.cMuted; font.family: root.hudFont; wrapMode: Text.WrapAnywhere }
+                Text { visible: root.dictationDraft.length > 0; width: body.width; text: "Draft for " + root.dictationTarget + ": " + root.dictationDraft; color: root.cFg; font.family: root.hudFont; wrapMode: Text.WrapAnywhere }
+                Flickable {
+                    visible: root.approvalId.length > 0
+                    width: parent.width; height: Math.min(180, approvalLabel.implicitHeight)
+                    contentHeight: approvalLabel.implicitHeight; clip: true
+                    Text {id: approvalLabel; width: parent.width; text: root.approvalText; color: root.cFg; font.family: root.hudFont; wrapMode: Text.WrapAnywhere}
+                }
                 Text {
                     visible: root.transcript.length > 0
                     width: body.width
@@ -371,16 +436,6 @@ ShellRoot {
                     color: root.cFg
                     font.family: root.hudFont
                     font.pixelSize: root.fontReply
-                    wrapMode: Text.Wrap
-                }
-
-                Text {
-                    visible: root.daemonState === "offline"
-                    width: body.width
-                    text: "Waiting for omarchy-assistantd."
-                    color: root.cMuted
-                    font.family: root.hudFont
-                    font.pixelSize: root.fontName
                     wrapMode: Text.Wrap
                 }
 

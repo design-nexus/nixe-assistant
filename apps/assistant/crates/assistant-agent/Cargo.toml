@@ -3,7 +3,7 @@ name = "assistant-agent"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Nyx turn pipeline: STT, LLM stream, phrase chunker, TTS glue"
+description = "Assistant turn pipeline: STT, LLM stream, phrase chunker, TTS glue"
 
 [dependencies]
 anyhow.workspace = true

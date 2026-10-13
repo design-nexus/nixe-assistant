@@ -1,4 +1,5 @@
 mod app;
+mod session;
 
 use anyhow::Context;
 use tracing_subscriber::EnvFilter;

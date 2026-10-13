@@ -1,0 +1,17 @@
+manifest_version = 1
+id = "capture"
+version = "1.0.0"
+description = "Explicit clipboard capture and screen OCR"
+executable = "python3"
+args = ["./main.py"]
+tools = ["capture.clipboard", "capture.screen"]
+
+[[routes]]
+pattern = "^(?i:read (?:my |the )?clipboard)$"
+tool = "capture.clipboard"
+template = true
+
+[[routes]]
+pattern = "^(?i:(?:read|capture|explain) (?:my |the )?screen)$"
+tool = "capture.screen"
+template = true

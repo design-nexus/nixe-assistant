@@ -1,4 +1,4 @@
-# Nyx-only Voxtype daemon. F9 dictation keeps ~/.config/voxtype (Whisper).
+# Voice assistant Voxtype daemon. F9 dictation keeps ~/.config/voxtype (Whisper).
 state_file = "auto"
 engine = "parakeet"
 
@@ -18,7 +18,7 @@ on_demand_loading = false
 [output]
 mode = "file"
 fallback_to_clipboard = false
-post_output_command = "tee /tmp/omarchy-assistant/stt.txt >/dev/null"
+# Per-request output files are supplied by the assistant via --file.
 
 [output.notification]
 on_recording_start = false

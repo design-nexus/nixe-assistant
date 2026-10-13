@@ -5,6 +5,38 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
+    Plugins {
+        state: serde_json::Value,
+    },
+    Session {
+        session_id: u64,
+        mode: String,
+        remaining_secs: u64,
+        target: String,
+        draft: String,
+    },
+    Result {
+        request_id: String,
+        ok: bool,
+        data: serde_json::Value,
+        error: Option<String>,
+    },
+    Turn {
+        turn_id: u64,
+        event: serde_json::Value,
+    },
+    ToolApproval {
+        approval_id: String,
+        turn_id: u64,
+        tool: String,
+        arguments: serde_json::Value,
+        expires_at_ms: u64,
+    },
+    Settings {
+        running: serde_json::Value,
+        restart_required: Vec<String>,
+        hud_enabled: bool,
+    },
     State {
         state: AssistantState,
         at_ms: u64,
