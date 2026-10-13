@@ -1,0 +1,27 @@
+manifest_version = 1
+id = "power"
+version = "1.0.0"
+description = "Resource reporting and host power controls"
+executable = "python3"
+args = ["./main.py"]
+tools = ["power.status", "power.configure", "power.unload", "power.battery", "power.normal"]
+
+[[routes]]
+pattern = "^(?i:assistant resource usage)$"
+tool = "power.status"
+template = true
+
+[[routes]]
+pattern = "^(?i:unload assistant model)$"
+tool = "power.unload"
+template = true
+
+[[routes]]
+pattern = "^(?i:(?:enable |assistant )?battery mode)$"
+tool = "power.battery"
+template = true
+
+[[routes]]
+pattern = "^(?i:(?:enable |assistant )?normal mode)$"
+tool = "power.normal"
+template = true

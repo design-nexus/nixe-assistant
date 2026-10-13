@@ -1,0 +1,26 @@
+# Voice assistant Voxtype daemon. F9 dictation keeps ~/.config/voxtype (Whisper).
+state_file = "auto"
+engine = "parakeet"
+
+[hotkey]
+enabled = false
+
+[audio]
+device = "default"
+sample_rate = 16000
+max_duration_secs = 60
+pause_media = false
+
+[parakeet]
+model = "parakeet-tdt-0.6b-v3"
+on_demand_loading = false
+
+[output]
+mode = "file"
+fallback_to_clipboard = false
+# Per-request output files are supplied by the assistant via --file.
+
+[output.notification]
+on_recording_start = false
+on_recording_stop = false
+on_transcription = false

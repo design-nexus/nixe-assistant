@@ -1,0 +1,32 @@
+manifest_version = 1
+id = "projects"
+version = "1.0.0"
+description = "Project context and approved project workflows"
+executable = "python3"
+args = ["./main.py"]
+tools = ["projects.list", "projects.delete", "projects.undo", "projects.save", "projects.use", "projects.current", "projects.resolve", "projects.action"]
+
+[[routes]]
+pattern = "^(?i:use project (?P<name>.+))$"
+tool = "projects.use"
+template = true
+
+[[routes]]
+pattern = "^(?i:list projects)$"
+tool = "projects.list"
+template = true
+
+[[routes]]
+pattern = "^(?i:(?:what is|what\\x27s) my current project)$"
+tool = "projects.current"
+template = true
+
+[[routes]]
+pattern = "^(?i:run (?:the )?(?P<action>tests|test|build|lint))$"
+tool = "projects.action"
+template = true
+
+[[routes]]
+pattern = "^(?i:open project (?P<action>terminal|browser|app|agent))$"
+tool = "projects.action"
+template = true

@@ -1,0 +1,191 @@
+diff --git i/src/index.ts w/src/index.ts
+index 7cd1802..f72e576 100644
+--- i/src/index.ts
++++ w/src/index.ts
+@@ -37,24 +37,26 @@ server.registerTool(
+   {
+     description: 'Searches DuckDuckGo and extracts full content from top results. Use for current information (time, weather, news, prices, events). If results don\'t contain what you need, search again with different terms.',
+     inputSchema: {
+-      query: z.string().describe('Search terms'),
+-      numResults: z.number().default(3).describe('Number of results to extract (default: 3, max: 5)'),
++      query: z.string().min(1).max(2048).describe('Search terms'),
++      numResults: z.number().int().min(1).max(5).default(3).describe('Number of results to extract (default: 3, max: 5)'),
+     },
+   },
+-  async ({ query, numResults }) => {
++  async ({ query, numResults }, extra) => {
+     console.error(`[Server] Searching and extracting: "${query}" (${numResults} results)`);
+     
+-    const searchResults = await searchDuckDuckGo(query, numResults);
++    const searchResults = await searchDuckDuckGo(query, numResults, extra.signal);
+     
+     const results = await Promise.all(
+       searchResults.map(async (result, index) => {
+         try {
+-          const content = await extractWebContent(result.url);
++          const content = await extractWebContent(result.url, extra.signal);
+           return {
+             number: index + 1,
+             title: result.title,
+             url: result.url,
+-            content: content.markdown,
++            content: content.markdown.slice(0, 1800),
++            description: result.description,
++            publishedAt: content.publishedAt,
+             success: true,
+           };
+         } catch (error) {
+@@ -89,7 +91,15 @@ server.registerTool(
+       output += '--- ';
+     }
+ 
++    const normalized = results.map(result => ({
++      title: result.title, url: result.url,
++      snippet: result.description?.slice(0, 600) || '',
++      text: result.success ? result.content : undefined,
++      published_at: result.success ? result.publishedAt : undefined,
++      error: result.success ? undefined : result.error,
++    }));
+     return {
++      structuredContent: { engine: 'duckduckgo-mcp', results: normalized, retrieved_at: new Date().toISOString() },
+       content: [
+         {
+           type: 'text',
+diff --git i/src/tools/extractWebContent.ts w/src/tools/extractWebContent.ts
+index 169c5d4..2d8aa41 100644
+--- i/src/tools/extractWebContent.ts
++++ w/src/tools/extractWebContent.ts
+@@ -6,7 +6,7 @@
+ import { load } from 'cheerio';
+ import TurndownService from 'turndown';
+ import { Cache } from '@/tools/cache';
+-import { rateLimiter } from '@/tools/shared';
++import { rateLimiter, boundedText } from '@/tools/shared';
+ 
+ export interface ExtractedContent {
+   url: string;
+@@ -16,6 +16,7 @@ export interface ExtractedContent {
+   markdown: string;
+   excerpt: string;
+   length: number;
++  publishedAt?: string;
+   siteName?: string;
+ }
+ 
+@@ -37,7 +38,7 @@ function cleanMarkdown(md: string): string {
+  * @param url - URL de la que extraer contenido
+  * @returns Objeto de contenido extraído
+  */
+-export async function extractWebContent(url: string): Promise<ExtractedContent> {
++export async function extractWebContent(url: string, signal?: AbortSignal): Promise<ExtractedContent> {
+   const cacheKey = `extract:${url}`;
+ 
+   // Verificar caché primero
+@@ -56,6 +57,7 @@ export async function extractWebContent(url: string): Promise<ExtractedContent>
+     
+     // Obtener la página
+     const response = await fetch(url, {
++      signal: AbortSignal.any([AbortSignal.timeout(4000), ...(signal ? [signal] : [])]),
+       headers: {
+         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
+       },
+@@ -65,19 +67,21 @@ export async function extractWebContent(url: string): Promise<ExtractedContent>
+       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+     }
+ 
+-    const html = await response.text();
++    const html = await boundedText(response);
+     
+     // Parsear con Cheerio
+     const $ = load(html);
+     
+     // Obtener título
++    const publishedAt = $('meta[property="article:published_time"],meta[name="date"],time[datetime]').first().attr('content') || $('time[datetime]').first().attr('datetime');
+     const title = $('title').text() || $('h1').first().text() || 'No title';
+     
+     // Eliminar elementos no deseados
+-    $('script, style, nav, footer, header, iframe, noscript, aside, .ad, .advertisement, [role="complementary"]').remove();
++    $('script, style, nav, footer, header, iframe, noscript, aside, img, svg, video, .ad, .advertisement, [role="complementary"]').remove();
+     
+     // Extraer contenido del body
+-    const bodyHtml = $('body').html() || '';
++    const main = $('article, main, [role="main"]').first();
++    const bodyHtml = (main.length ? main.html() : $('body').html()) || '';
+     const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
+     
+     // Configurar Turndown para convertir HTML a Markdown
+@@ -91,6 +95,7 @@ export async function extractWebContent(url: string): Promise<ExtractedContent>
+     
+     const extractedContent: ExtractedContent = {
+       url,
++      publishedAt,
+       title,
+       content: bodyHtml,
+       textContent: bodyText,
+diff --git i/src/tools/searchDuckDuckGo.ts w/src/tools/searchDuckDuckGo.ts
+index 9c113c0..d2039e7 100644
+--- i/src/tools/searchDuckDuckGo.ts
++++ w/src/tools/searchDuckDuckGo.ts
+@@ -5,7 +5,7 @@
+ 
+ import { load } from 'cheerio';
+ import { Cache } from '@/tools/cache';
+-import { rateLimiter } from '@/tools/shared';
++import { rateLimiter, boundedText } from '@/tools/shared';
+ 
+ export interface SearchResult {
+   title: string;
+@@ -25,7 +25,8 @@ const searchCache = new Cache<SearchResult[]>();
+  */
+ export async function searchDuckDuckGo(
+   query: string,
+-  maxResults: number
++  maxResults: number,
++  signal?: AbortSignal
+ ): Promise<SearchResult[]> {
+   const cacheKey = `search:${query}:${maxResults}`;
+ 
+@@ -47,6 +48,7 @@ export async function searchDuckDuckGo(
+     await rateLimiter.wait(searchUrl);
+     
+     const response = await fetch(searchUrl, {
++      signal: AbortSignal.any([AbortSignal.timeout(4000), ...(signal ? [signal] : [])]),
+       headers: {
+         'User-Agent': 'Mozilla/5.0',
+       },
+@@ -56,7 +58,8 @@ export async function searchDuckDuckGo(
+       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+     }
+ 
+-    const html = await response.text();
++    const html = await boundedText(response);
++    if (/challenge-form|anomaly\.js|Unfortunately, bots use DuckDuckGo/i.test(html)) throw new Error('DuckDuckGo requires manual verification');
+     const $ = load(html);
+     const results: SearchResult[] = [];
+ 
+diff --git i/src/tools/shared.ts w/src/tools/shared.ts
+index ff1b22f..e1bbc6d 100644
+--- i/src/tools/shared.ts
++++ w/src/tools/shared.ts
+@@ -6,3 +6,21 @@ import { PerDomainRateLimiter } from '@/tools/rateLimiter';
+ 
+ // Rate limiter por dominio compartido para todas las operaciones web
+ export const rateLimiter = new PerDomainRateLimiter(1, 2);
++
++// Local integration: bound remote page bodies before parsing.
++export async function boundedText(response: Response): Promise<string> {
++  if (!response.body) return '';
++  const reader = response.body.getReader();
++  const decoder = new TextDecoder();
++  let size = 0, text = '';
++  try {
++    while (true) {
++      const { value, done } = await reader.read();
++      if (done) break;
++      size += value.byteLength;
++      if (size > 1048576) throw new Error('Remote page exceeds 1 MiB');
++      text += decoder.decode(value, { stream: true });
++    }
++    return text + decoder.decode();
++  } finally { await reader.cancel().catch(() => {}); }
++}

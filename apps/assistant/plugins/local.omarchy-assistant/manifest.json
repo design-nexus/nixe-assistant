@@ -1,0 +1,37 @@
+{
+  "activation": "on-demand",
+  "author": "Ken",
+  "barWidget": {
+    "aliases": [
+      "echo",
+      "echo",
+      "assistant",
+      "voice",
+      "ai",
+      "microphone",
+      "eco",
+      "ecko",
+      "ekko",
+      "gecko",
+      "hecko",
+      "eggo"
+    ],
+    "allowMultiple": false,
+    "category": "System",
+    "defaultSection": "right",
+    "description": "Show live voice assistant status, toggle mute, and launch settings TUI",
+    "displayName": "Echo"
+  },
+  "description": "Live status, quick mute/unmute, speech testing, and settings for Echo.",
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "id": "local.omarchy-assistant",
+  "kinds": [
+    "bar-widget"
+  ],
+  "license": "MIT",
+  "name": "Echo",
+  "schemaVersion": 1,
+  "version": "1.0.0"
+}

@@ -1,0 +1,15 @@
+[Unit]
+Description=Omarchy Assistant HUD overlay
+After=graphical-session.target omarchy-assistantd.service
+PartOf=graphical-session.target omarchy-assistantd.service
+StopWhenUnneeded=yes
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/qs --path %h/.local/share/omarchy-assistant/quickshell --no-duplicate
+Restart=on-failure
+RestartSec=2
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
+
+[Install]
+WantedBy=omarchy-assistantd.service

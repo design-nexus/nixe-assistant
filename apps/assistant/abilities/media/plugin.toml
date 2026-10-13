@@ -1,0 +1,22 @@
+manifest_version = 1
+id = "media"
+version = "1.0.0"
+description = "MPRIS playback and application volume"
+executable = "python3"
+args = ["./main.py"]
+tools = ["media.players", "media.status", "media.control", "media.volume", "media.applications"]
+
+[[routes]]
+pattern = "^(?i:list media players)$"
+tool = "media.players"
+template = true
+
+[[routes]]
+pattern = "^(?i:(?:what song is playing|what is playing))$"
+tool = "media.status"
+template = true
+
+[[routes]]
+pattern = "^(?i:(?P<action>play|pause|stop|next|previous|toggle) (?:music|media|track))$"
+tool = "media.control"
+template = true

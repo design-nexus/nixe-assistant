@@ -1,0 +1,17 @@
+[package]
+name = "assistant-ipc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Unix socket and HTTP IPC for voice assistant"
+
+[dependencies]
+anyhow.workspace = true
+assistant-core.workspace = true
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-stream = { version = "0.1", features = ["sync"] }
+tracing.workspace = true

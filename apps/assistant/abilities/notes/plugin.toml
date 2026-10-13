@@ -1,0 +1,42 @@
+manifest_version = 1
+id = "notes"
+version = "1.1.0"
+description = "Persistent local notes"
+executable = "python3"
+args = ["./main.py"]
+tools = ["notes.create", "notes.list", "notes.read", "notes.search", "notes.edit", "notes.delete", "notes.export", "notes.undo"]
+
+[[routes]]
+pattern = "^(?i:take a note(?: that)?[ :]+(?P<text>.+))$"
+tool = "notes.create"
+template = true
+
+[[routes]]
+pattern = "^(?i:find my notes about (?P<query>.+))$"
+tool = "notes.search"
+template = true
+
+[[routes]]
+pattern = "^(?i:list (?:my )?notes)$"
+tool = "notes.list"
+template = true
+
+[[routes]]
+pattern = "^(?i:read (?:my )?note (?P<id>[a-zA-Z0-9-]+))$"
+tool = "notes.read"
+template = true
+
+[[routes]]
+pattern = "^(?i:delete (?:my )?note (?P<id>[a-zA-Z0-9-]+))$"
+tool = "notes.delete"
+template = true
+
+[[routes]]
+pattern = "^(?i:replace (?:my )?note (?P<id>[a-zA-Z0-9-]+) with (?P<text>.+))$"
+tool = "notes.edit"
+template = true
+
+[[routes]]
+pattern = "^(?i:export (?:my )?notes)$"
+tool = "notes.export"
+template = true

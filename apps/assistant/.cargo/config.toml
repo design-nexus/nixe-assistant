@@ -1,0 +1,2 @@
+# Optional CUDA architecture override is read by scripts/install.sh from
+# ~/.config/omarchy-assistant/build.env or the caller environment.

@@ -1,0 +1,17 @@
+[Unit]
+Description=Omarchy Assistant voice daemon
+After=pipewire.service nyx-parakeet.service
+Wants=pipewire.service nyx-parakeet.service omarchy-assistant-hud.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/omarchy-assistantd
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2
+Environment=RUST_LOG=info
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
+EnvironmentFile=-%h/.config/omarchy-assistant/runtime.env
+
+[Install]
+WantedBy=default.target

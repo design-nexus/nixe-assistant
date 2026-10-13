@@ -1,0 +1,12 @@
+[package]
+name = "assistant-omarchy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Hyprland and Omarchy integration wrappers for assistant tools"
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true

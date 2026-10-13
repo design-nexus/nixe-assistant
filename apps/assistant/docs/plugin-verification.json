@@ -1,0 +1,62 @@
+{
+  "date": "2026-10-07",
+  "workspace_tests_passed": 61,
+  "python_tests_passed": 4,
+  "formatting": "passed",
+  "clippy": "passed, including all targets",
+  "release_build": "passed with CUDA architecture 120a-real",
+  "daemon": {
+    "daemon_pid": "3777540",
+    "daemon_sha256": "7d800333ead819e3d01bf0bca2e5c7cf351a51f5126946c0ffbb53689488a515",
+    "tui_apply": true,
+    "approval_invalidation": true
+  },
+  "plugins_running": [
+    "desktop-controls",
+    "apps",
+    "terminal",
+    "coding-agents",
+    "files",
+    "git",
+    "system-status",
+    "clock",
+    "location",
+    "weather",
+    "browser",
+    "web-search",
+    "duckduckgo",
+    "notes",
+    "reminders"
+  ],
+  "example_plugin": "installed and invoked with confirmation; left disabled",
+  "configuration": "config.toml, apps.toml and commands.toml byte-identical to predeployment backup",
+  "checks": [
+    "hot installation and invocation without daemon PID/binary change",
+    "TUI Plugins rendering, enablement draft and discard",
+    "acknowledged PluginApply IPC; no model reload",
+    "disable during approval invalidates pending approval",
+    "failed reload retains prior working process",
+    "dependent disabling rejected until dependents disabled",
+    "process cleanup and malformed manifest/schema rejection",
+    "unsafe archive links rejected",
+    "notes create/read/full-text search, persistence and confirmed deletion",
+    "reminder SQLite persistence, timezone/DST clarification, snooze/cancel",
+    "muted and Omarchy DND delivery deferred until unmuted/DND off",
+    "startup overdue summary and acknowledged-delivery deduplication",
+    "explicit Chicago weather with Location disabled uses Fahrenheit/mph",
+    "adopted DuckDuckGo search returns source titles/URLs",
+    "desktop workspace voice routing and Clock voice routing",
+    "Kokoro \u2192 Parakeet \u2192 LLM \u2192 playback loop",
+    "reminder AM followup resolves tomorrow at 09:00 UTC-05:00",
+    "daemon, HUD and STT services healthy",
+    "Clock prompt context respects disabled/denied provider",
+    "overlapping voice routes rejected before dispatch",
+    "visible Google reports human verification; direct example.com navigation succeeds"
+  ],
+  "backups": [
+    "/home/ken/.local/state/omarchy-assistant/backups/plugins-20261007-133933",
+    "/home/ken/.local/state/omarchy-assistant/backups/plugins-20261007-135132",
+    "/home/ken/.local/state/omarchy-assistant/backups/plugins-20261007-141202"
+  ],
+  "deployment_note": "Initial framework deployment plus two corrective framework restarts for DND/lifecycle cleanup and Clock prompt gating/ambiguous route rejection. Plugin operations do not restart models."
+}

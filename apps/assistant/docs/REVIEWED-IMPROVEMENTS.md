@@ -1,0 +1,104 @@
+# Settings, tools and local interfaces
+
+The TUI keeps a draft separate from saved configuration and the daemon's running
+settings. Ctrl+S applies and acknowledges a reload. Ctrl+R applies and restarts.
+The daemon reports every field that needs a restart; resident model, audio,
+STT, HTTP and MCP connection settings remain truthful until then. Quit protects
+unsaved drafts. Malformed configuration causes an error and cannot be replaced
+by defaults. Saves retain comments and unknown fields and use atomic replacement.
+
+Tabs 6–9 provide Diagnostics, Activity, Audio Calibration, and Apps & Commands.
+Activity keeps 100 turns in memory, with transcripts, responses, stage timings
+and exact tool arguments/results. `c` clears it. Calibration records five seconds
+of quiet and five seconds of speech, measures RMS and (when loaded) Silero
+probabilities, and offers suggestions. `a` copies them to the draft; Apply saves.
+`t` previews the draft voice/speed through TTS only, with no saving, STT or LLM.
+
+Apps & Commands edits individual JSON entries while preserving the surrounding
+TOML document. Arguments are arrays, including arguments containing whitespace.
+Phrase collisions are rejected. `p` previews routing without executing it.
+Persona IDs remain stable when renamed; built-in alias deletions survive startup.
+
+Downloads have one active task, cancellable connection/read waits, HTTP status
+checks, GGUF metadata/tensor bounds validation and an atomic installation that
+never replaces an existing model. Incomplete temporary files are cleaned up.
+`/` searches Hugging Face; arrows focus repositories/files; Enter selects a
+repository and then downloads a file. `u` downloads a direct HTTP(S) GGUF URL.
+Split model files are unsupported and marked explicitly.
+
+## MCP
+
+Ordinary chat keeps its streaming path. Say “use tools to …” or use Ctrl+T to
+toggle tool mode. The daemon initializes configured stdio servers, negotiates
+supported versions (2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05), discovers
+paginated tools, and combines them with `files.read`, `git.status`, and
+`system.status`. Initialization failures appear in Diagnostics.
+
+Planning uses a JSON grammar: one registered tool with schema-valid arguments,
+or finish. Clear browser/terminal requests enter tool mode automatically. A request may execute at most twelve calls, each with a 15 second
+limit. Results preserve `content`, `structuredContent`, and `isError`. Output
+schemas are validated. Results are untrusted data, never instructions.
+
+External tools require confirmation by default. The TUI and HUD display exact
+arguments; `y` allows once, `n` denies. Approvals expire after 60 seconds.
+Cancellation and denial prevent dispatch. CLI equivalents are `approve ID` and
+`deny ID`. Permission overrides use the names displayed in Diagnostics:
+
+```toml
+[mcp]
+enabled = true
+
+[mcp.servers.example]
+command = "my-mcp-server"
+args = ["--stdio"]
+# env = { SOME_SETTING = "value" }
+
+[mcp.permissions]
+"example.harmless_tool" = "allow"
+"example.write_file" = "confirm"
+"example.delete_file" = "deny"
+```
+
+Built-in file/git access canonicalizes paths and restricts them to HOME. Reads
+are limited to 64 KiB and 500 lines. External MCP servers control their own
+filesystem access: configure their allowed directories independently. Processes
+are killed on teardown; disconnected requests fail promptly; cancelled requests
+send MCP cancellation notifications. The client does not advertise sampling,
+roots, elicitation, resources or tasks capabilities.
+
+Protocol references: [tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
+and [lifecycle](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle).
+
+## Local interfaces
+
+First-party CLI, TUI, HUD and plugin controls use owner-only Unix IPC. Additive
+`request` commands carry `request_id` and a tagged action. `result` events report
+success/error with the same ID. `turn` events carry turn IDs and transcripts,
+responses, timings or tool activity. `settings` publishes running settings,
+restart requirements, and effective HUD enablement. `tool_approval` carries
+arguments, approval ID and expiry. Existing commands/events remain supported.
+
+HTTP binds only to a loopback IP. Every endpoint requires
+`Authorization: Bearer TOKEN`. The randomly generated token is in
+`$XDG_RUNTIME_DIR/omarchy-assistant/http.token`, mode 0600 (runtime directory 0700).
+HTTP action responses indicate queued work, not successful execution; use IPC
+for acknowledged reloads. No browser-origin access is enabled.
+
+CLI additions: `doctor [--json]`, `status --json`, `activity [clear]`,
+`preview [voice speed]`, `calibrate`, `tool-mode on|off`, `approve ID`, `deny ID`.
+`doctor` works when the daemon is stopped.
+
+## Installation
+
+`scripts/install.sh` builds and installs locally, backs up installed files and
+configuration, migrates configuration additively, restarts affected services,
+and verifies model health. Startup failure restores the backup. HUD assets live
+in `~/.local/share/omarchy-assistant/quickshell`, independent of the checkout.
+The plugin keeps any existing assistant plugin identifier used by the bar.
+
+CUDA is an optional build feature. The installer selects it when `nvcc` exists;
+manual builds use `cargo build --release --features cuda -p omarchy-assistantd`.
+For this host's Blackwell GPU, put `CMAKE_CUDA_ARCHITECTURES=120a-real` in
+`~/.config/omarchy-assistant/build.env`; other hosts choose their own override.
+Runtime library overrides go in `runtime.env`, for example
+`LD_LIBRARY_PATH=/opt/cuda/lib64`. Existing user config is preserved.

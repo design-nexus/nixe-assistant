@@ -1,0 +1,32 @@
+manifest_version = 1
+id = "routines"
+version = "1.0.0"
+description = "Named routines with reviewed host dispatch"
+executable = "python3"
+args = ["./main.py"]
+tools = ["routines.list", "routines.delete", "routines.undo", "routines.save", "routines.preview", "routines.run"]
+
+[[routes]]
+pattern = "^(?i:run routine (?P<name>.+))$"
+tool = "routines.run"
+template = true
+
+[[routes]]
+pattern = "^(?i:start routine (?P<name>.+))$"
+tool = "routines.run"
+template = true
+
+[[routes]]
+pattern = "^(?i:preview routine (?P<name>.+))$"
+tool = "routines.preview"
+template = true
+
+[[routes]]
+pattern = "^(?i:list routines)$"
+tool = "routines.list"
+template = true
+
+[[routes]]
+pattern = "^(?i:start (?P<name>coding|work|writing))$"
+tool = "routines.run"
+template = true

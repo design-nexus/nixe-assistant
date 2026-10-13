@@ -1,0 +1,22 @@
+manifest_version = 1
+id = "history"
+version = "1.0.0"
+description = "Action history and conflict-safe undo"
+executable = "python3"
+args = ["./main.py"]
+tools = ["history.list", "history.undo"]
+
+[[routes]]
+pattern = "^(?i:undo that)$"
+tool = "history.undo"
+template = true
+
+[[routes]]
+pattern = "^(?i:undo last action)$"
+tool = "history.undo"
+template = true
+
+[[routes]]
+pattern = "^(?i:show action history)$"
+tool = "history.list"
+template = true
