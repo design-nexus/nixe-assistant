@@ -1,4 +1,4 @@
-# Nyx setup
+# Assistant setup
 
 ## Build deps (Hades / Omarchy)
 
@@ -12,7 +12,7 @@ Blackwell (RTX 5080): set `CMAKE_CUDA_ARCHITECTURES=120a-real`
 in `~/.config/nixe-assistant/build.env` for the installer so llama.cpp MXFP4 kernels compile.
 
 Kokoro CUDA needs `libcudnn.so` and an ONNX Runtime CUDA EP with kernels for
-this GPU. On Blackwell (compute 12.0) ORT has no sm_120 kernels, so Nyx skips
+this GPU. On Blackwell (compute 12.0) ORT has no sm_120 kernels, so the assistant skips
 CUDA TTS and uses CPU. llama.cpp CUDA does not need cuDNN. To retry Kokoro on
 GPU later, delete `~/.cache/nixe-assistant/kokoro-cuda-skip`. To put Kokoro
 on GPU after kernels exist:
@@ -58,7 +58,7 @@ nixe-assistant ptt-stop
 
 Logs: `journalctl --user -u nixe-assistantd -f`
 
-## Rename Nyx
+## Rename the assistant
 
 In `~/.config/nixe-assistant/config.toml`:
 
@@ -75,8 +75,8 @@ The system prompt, HUD label, and wake phrase follow this name. `{name}` in
 
 `[vad] backend = "silero"` (default) runs Silero v5 on CPU through the same
 ONNX Runtime as Kokoro. `threshold` is speech probability (try `0.5`). Wake,
-follow-up listen, and barge-in use it. If the ONNX fails to load, Nyx falls
-back to energy/RMS. Force energy:
+follow-up listen, and barge-in use it. If the ONNX fails to load, the assistant
+falls back to energy/RMS. Force energy:
 
 ```toml
 [vad]
@@ -88,10 +88,11 @@ Then `nixe-assistant reload`.
 
 ## Hands-free wake
 
-Say **Hey Nyx** (or just **Nyx**) while idle, then the request. Anything after
-her name is the ask. Alt+Space PTT still works. While she is listening or
-speaking, **Escape** on the HUD overlay stops her. Escape is not a Hyprland
-bind, so other apps keep the key when she is idle.
+Say a wake phrase of the current persona (e.g. **Hey Echo**, or just **Echo**)
+while idle, then the request. Anything after the name is the ask. Alt+Space PTT
+still works. While the assistant is listening or speaking, **Escape** on the HUD
+overlay stops it. Escape is not a Hyprland bind, so other apps keep the key when
+the assistant is idle.
 
 Wake sensitivity, hangover, and STT aliases live in
 `~/.config/nixe-assistant/config.toml` under `[wake_word]` (`phrases`,
@@ -106,7 +107,7 @@ Then `nixe-assistant reload`.
 
 ## Clock
 
-The local GGUF has no wall clock. Nyx reads OS local time from `[clock]` in
+The local GGUF has no wall clock. The assistant reads OS local time from `[clock]` in
 `config.toml` (`time_phrases`, `date_phrases`, `time_format`, `date_format`,
 templates). Matching phrases skip the model and speak the time; other questions
 still get `{time}` and `{date}` in the system prompt. Reload after edits.
@@ -142,14 +143,14 @@ instruct models for spoken latency. Skip reasoning/thinking checkpoints.
 
 ## Voxtype
 
-F9 dictation stays Whisper. Nyx STT is Parakeet in `nixe-assistant-stt.service`
+F9 dictation stays Whisper. Assistant STT is Parakeet in `nixe-assistant-stt.service`
 (`voxtype-onnx-avx2`, isolated runtime). `install.sh` enables that unit.
 Do not point `/usr/bin/voxtype` at ONNX unless you mean to change F9 too.
 
 ## VRAM
 
 The daemon keeps one GGUF and Kokoro ONNX resident. Do not also park a large
-Ollama/LM Studio model on the 5080 while measuring Nyx, or the numbers lie.
+Ollama/LM Studio model on the 5080 while measuring the assistant, or the numbers lie.
 
 ## PTT bind
 

@@ -412,7 +412,7 @@ fn unload_assistant_echo_cancel() {
         return;
     };
     for line in String::from_utf8_lossy(&out.stdout).lines() {
-        if !line.contains("assistant-echo-cancel") && !line.contains("nyx-echo-cancel") {
+        if !line.contains("assistant-echo-cancel") {
             continue;
         }
         if let Some(id) = line.split_whitespace().next() {

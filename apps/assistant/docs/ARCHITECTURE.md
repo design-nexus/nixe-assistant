@@ -1,7 +1,7 @@
-# Nyx architecture
+# Assistant architecture
 
-Nyx is a low-latency local voice-assistant runtime for Omarchy/Hyprland.
-The persona name is **Nyx** (rename via `assistant.name`). The process is `nixe-assistantd`.
+Nixe Assistant is a low-latency local voice-assistant runtime for Omarchy/Hyprland.
+Its name comes from the persona (rename via `assistant.name`). The process is `nixe-assistantd`.
 
 This is not an Ollama replacement. It is a resident capture → STT → LLM → TTS loop
 with a Unix socket for the HUD and Hyprland.
@@ -69,8 +69,8 @@ Blackwell (RTX 5080, sm_120): use `CMAKE_CUDA_ARCHITECTURES=120a-real` in the lo
 ## Voxtype boundary
 
 F9 dictation keeps the stock Whisper daemon (`/usr/bin/voxtype`, `~/.config/voxtype`).
-Nyx STT is a second, isolated Parakeet daemon (`nixe-assistant-stt.service`,
-`XDG_RUNTIME_DIR=…/nyx-voxtype`, config `~/.config/nixe-assistant/voxtype-parakeet.toml`).
+Assistant STT is a second, isolated Parakeet daemon (`nixe-assistant-stt.service`,
+`XDG_RUNTIME_DIR=…/nixe-assistant-stt`, config `~/.config/nixe-assistant/voxtype-parakeet.toml`).
 
 - PTT uses `record start --no-osd --file` against that warm daemon.
 - We do not change `~/.config/voxtype/config.toml` or the F9 binds.
@@ -106,10 +106,10 @@ Default: hold **Alt+Space**. Key-up ends the utterance.
 Talking over TTS after a short grace, or pressing Alt+Space during a reply,
 cancels playback (barge-in). Phase 2: PipeWire webrtc echo-cancel
 (`[barge_in] aec = true`). HUD/PTT capture the analog mic. A second stream
-targets `nyx-echo-cancel` for barge-in levels. Playback goes to the analog
+targets `assistant-echo-cancel` for barge-in levels. Playback goes to the analog
 speakers; `settings_eq` is for music/video and is not used. A wire loop keeps
 `echo-cancel-playback` unlinked from the speakers and links the analog
-monitor into `echo-cancel-sink` so the canceller hears Nyx. Barge-in on the
+monitor into `echo-cancel-sink` so the canceller hears the assistant. Barge-in on the
 AEC stream sits above residual TTS leak measured during grace. Matches the
 session sink format; does not force 16 kHz mono.
 

@@ -1,9 +1,9 @@
-# Nyx — phases
+# Assistant — phases
 
 Live plan. One phase at a time. Do not edit `/usr/share/omarchy/` or
 `~/.config/voxtype/` until Phase 10, and only after Ken confirms.
 
-See `docs/ARCHITECTURE.md` for how Nyx runs. The Oct 5 session draft is
+See `docs/ARCHITECTURE.md` for how the assistant runs. The Oct 5 session draft is
 superseded by this list.
 
 ## Phase 1 — spoken loop (closing)
@@ -23,9 +23,9 @@ overlap LLM tokens. Streaming Kokoro PCM is Phase 2+ polish if needed.
 ## Phase 2 — AEC (done)
 
 PipeWire webrtc echo-cancel via `pactl load-module module-echo-cancel`
-(`source_name=nyx-echo-cancel`, session sink format, typically 48 kHz stereo).
+(`source_name=assistant-echo-cancel`, session sink format, typically 48 kHz stereo).
 HUD and PTT capture the analog mic (AEC near-end is too quiet for the level
-bar). A second stream (`Nyx-AEC`) listens on `nyx-echo-cancel` for barge-in
+bar). A second stream (`Assistant-AEC`) listens on `assistant-echo-cancel` for barge-in
 so TTS echo does not trip energy VAD. Playback goes straight to the analog
 speakers (`settings_eq` is music/video only). Pulse `monitor_mode` does not
 feed the canceller a speaker reference, so a background wire loop disconnects
@@ -113,7 +113,7 @@ Only with an explicit ask. Do not auto-edit `/usr/share/omarchy/` or
 
 ## Environment (inspected 2026-10-05, host Hades)
 
-Build a specialized low-latency local voice-assistant runtime for Omarchy/Hyprland. The assistant's name is **Nyx** (user-renameable later via config). The process is still `nixe-assistantd`; Nyx is the persona, HUD label, and system-prompt name. This is not a general Ollama replacement.
+Build a specialized low-latency local voice-assistant runtime for Omarchy/Hyprland. The assistant's name comes from its persona (user-renameable via config). The process is `nixe-assistantd`; the name is the HUD label and system-prompt name. This is not a general Ollama replacement.
 
 Repo: `/home/ken/Projects/nixe-assistant` (new). Do not edit `/usr/share/omarchy/` or the user's Voxtype dictation config.
 
@@ -167,7 +167,7 @@ Do not auto-switch the user's Voxtype GPU variant. Document a setup hint: Whispe
 
 Local GGUF already present (LM Studio): Gemma 4 E4B Q4, Mistral 7B Instruct Q4, Qwen3.5 9B Q4. Those are valid first-run candidates. We are **not** limited to them.
 
-Nyx may download better GGUF into `~/.local/share/nixe-assistant/models/` when a smaller/faster instruct model will cut speech-end → first-audio. Prefer latency and spoken-answer quality over leaderboard prestige. Skip reasoning/thinking models (R1, Phi-4-reasoning, etc.).
+The assistant may download better GGUF into `~/.local/share/nixe-assistant/models/` when a smaller/faster instruct model will cut speech-end → first-audio. Prefer latency and spoken-answer quality over leaderboard prestige. Skip reasoning/thinking models (R1, Phi-4-reasoning, etc.).
 
 Likely first download if E4B is not the right shape: a 1–4B instruct (Qwen3 / Llama 3.2 class) for the conversational path, Q4_K_M or similar. Measure on this 5080 before making it the default.
 
@@ -248,7 +248,7 @@ Avoid HTTP. llama.cpp is in-process. Voxtype is a local subprocess, not a networ
 
 ```toml
 [assistant]
-name = "Nyx"
+name = "Echo"
 mode = "push-to-talk"
 
 [stt]
@@ -350,7 +350,7 @@ If the first benchmark shows model reload dominating (`transcribe` spawning a co
 ### 5. llama.cpp CUDA
 - Load configured GGUF at startup, all layers on GPU (`n_gpu_layers = -1`)
 - Streaming tokens, cooperative cancel
-- Short system prompt: Nyx, Omarchy desktop assistant, concise spoken answers, no markdown. Name comes from `assistant.name`.
+- Short system prompt: the assistant's name, Omarchy desktop assistant, concise spoken answers, no markdown. Name comes from `assistant.name`.
 - No tool calling in this slice
 - Time: load, VRAM, TTFT, tok/s
 
@@ -362,7 +362,7 @@ If the first benchmark shows model reload dominating (`transcribe` spawning a co
 
 ### 7. Push-to-talk wiring
 - IPC `ptt.start` / `ptt.stop`
-- Hyprland: `o.bind("ALT + SPACE", "Nyx PTT", "nixe-assistant ptt-start")` and the matching release bind for `ptt-stop` — same pattern Omarchy uses for Voxtype F9
+- Hyprland: `o.bind("ALT + SPACE", "Assistant PTT", "nixe-assistant ptt-start")` and the matching release bind for `ptt-stop` — same pattern Omarchy uses for Voxtype F9
 - Bind lives in **user** `~/.config/hypr/bindings.lua` via install script / documented snippet. Never patch `/usr/share/omarchy/default/hypr/`.
 
 ### 8. Timing traces
@@ -383,7 +383,7 @@ Append a dated row to `docs/BENCHMARKS.md`. Empty template committed on day one.
 ### 9. Minimal HUD (only after audio E2E works)
 Quickshell overlay in `quickshell/`, launched by the daemon or a second user unit. Connects to the unix socket.
 
-States: Listening / Thinking / Speaking / Complete / Error. Title/persona **Nyx**. Waveform from our capture RMS, partial/final transcript, assistant text.
+States: Listening / Thinking / Speaking / Complete / Error. Title: the persona's name. Waveform from our capture RMS, partial/final transcript, assistant text.
 
 This is an **overlay plugin candidate** (`kinds: ["overlay"]`) later. First version can be a standalone `qs -c …` config in the repo so we do not touch `shell.json` until the socket protocol is stable.
 
@@ -412,7 +412,7 @@ phase at a time.
 
 - `docs/ARCHITECTURE.md` — crate map, traits, IPC, state machine, library decisions, Voxtype boundary
 - `docs/BENCHMARKS.md` — metric definitions + empty results table + how to run `cargo bench` / the timing log
-- `docs/SETUP.md` — build deps (cuda, clang, pipewire), first run, Alt+Space bind, renaming Nyx, model download dir, Voxtype GPU hint, VRAM budget
+- `docs/SETUP.md` — build deps (cuda, clang, pipewire), first run, Alt+Space bind, renaming the assistant, model download dir, Voxtype GPU hint, VRAM budget
 
 ---
 

@@ -1,4 +1,4 @@
-# Nyx benchmarks
+# Assistant benchmarks
 
 Primary metric: **speech end → first audible response word**.
 
@@ -10,7 +10,7 @@ trace into the results table. Do not invent numbers.
 Logged at info after every successful turn:
 
 ```
-Nyx timing
+Assistant timing
   VAD end                 0 ms
   STT complete          +… ms
   routing               +… ms
@@ -32,7 +32,7 @@ RUST_LOG=info journalctl --user -u nixe-assistantd -f
 RUST_LOG=info nixe-assistantd
 ```
 
-Hold Alt+Space, speak one short sentence, release. Paste the `Nyx timing` block
+Hold Alt+Space, speak one short sentence, release. Paste the `Assistant timing` block
 and fill a row below.
 
 Also record, when practical:

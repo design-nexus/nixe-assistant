@@ -11,22 +11,9 @@ pub fn runtime_dir() -> PathBuf {
 }
 
 /// Isolated Voxtype runtime so the assistant's Parakeet daemon does not share F9's lock.
+/// Matches `XDG_RUNTIME_DIR` in `nixe-assistant-stt.service`.
 pub fn assistant_voxtype_runtime() -> PathBuf {
-    let p = xdg_runtime().join("assistant-voxtype");
-    if p.exists() {
-        p
-    } else {
-        let legacy = xdg_runtime().join("nyx-voxtype");
-        if legacy.exists() {
-            legacy
-        } else {
-            p
-        }
-    }
-}
-
-pub fn nyx_voxtype_runtime() -> PathBuf {
-    assistant_voxtype_runtime()
+    xdg_runtime().join("nixe-assistant-stt")
 }
 
 pub fn socket_path() -> PathBuf {
