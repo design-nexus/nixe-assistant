@@ -35,8 +35,10 @@ paginated tools, and combines them with `files.read`, `git.status`, and
 `system.status`. Initialization failures appear in Diagnostics.
 
 Planning uses a JSON grammar: one registered tool with schema-valid arguments,
-or finish. Clear browser/terminal requests enter tool mode automatically. Each call
-has a 15 second limit. Results preserve `content`, `structuredContent`, and `isError`. Output
+or finish. Clear browser/terminal requests enter tool mode automatically. The planner
+sees only the tool groups a request names (notes, calendar, media, …), up to 24 tools,
+or every tool when nothing matches; `null` for an optional argument counts as not
+given. Each call has a 15 second limit. Results preserve `content`, `structuredContent`, and `isError`. Output
 schemas are validated. Results are untrusted data, never instructions.
 
 ## Tasks

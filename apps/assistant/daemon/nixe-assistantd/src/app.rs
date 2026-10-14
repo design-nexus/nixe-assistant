@@ -1876,6 +1876,9 @@ impl App {
                     _ => true,
                 }
             });
+            if !matches!(kind, RequestKind::Browse | RequestKind::Terminal) {
+                *tools = assistant_tools::relevance::relevant(tools, ask, &[]);
+            }
         }
         let configured = cfg
             .terminal
@@ -2019,7 +2022,7 @@ ws ::= [ \t\n\r]*
                 return Ok(TaskEnd::Finished);
             }
             let name = plan["tool"].as_str().context("missing tool name")?;
-            let args = &plan["arguments"];
+            let args = &self.registry.normalize_args(name, plan["arguments"].clone());
             let digest = assistant_policy::digest(args);
             let call_start = Instant::now();
             if task.lock().unwrap().already_done(name, &digest) {

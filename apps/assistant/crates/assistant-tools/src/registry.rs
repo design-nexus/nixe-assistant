@@ -282,6 +282,24 @@ impl Registry {
     pub fn journal(&self, record: Record) {
         self.audit.record(record);
     }
+    fn input_schema(&self, name: &str) -> Option<Value> {
+        match &self.plugins {
+            Some(plugins) => plugins
+                .tools()
+                .into_iter()
+                .find(|t| t.name == name)
+                .map(|t| t.input_schema),
+            None => self.tools.get(name).map(|t| t.input_schema.clone()),
+        }
+    }
+    /// Drop `null` for optional arguments the schema doesn't allow to be null. Small models
+    /// write `"cwd": null` for "not given", which would otherwise fail validation.
+    pub fn normalize_args(&self, name: &str, args: Value) -> Value {
+        match self.input_schema(name) {
+            Some(schema) => drop_null_optionals(&schema, args),
+            None => args,
+        }
+    }
     pub fn validate(&self, name: &str, args: &Value) -> Result<()> {
         if let Some(plugins) = &self.plugins {
             return plugins.validate(name, args);
@@ -464,6 +482,25 @@ impl Registry {
     }
 }
 
+fn drop_null_optionals(schema: &Value, args: Value) -> Value {
+    let Value::Object(mut map) = args else {
+        return args;
+    };
+    let required: Vec<&str> = schema["required"]
+        .as_array()
+        .map(|r| r.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    map.retain(|key, value| {
+        let allows_null = match &schema["properties"][key]["type"] {
+            Value::String(t) => t == "null",
+            Value::Array(types) => types.iter().any(|t| t == "null"),
+            _ => false,
+        };
+        !value.is_null() || required.contains(&key.as_str()) || allows_null
+    });
+    Value::Object(map)
+}
+
 fn dirs_home() -> String {
     std::env::var("HOME").unwrap_or_else(|_| ".".into())
 }
@@ -483,6 +520,13 @@ async fn open_job(id: &str) -> Result<()> {
 #[cfg(test)]
 mod lifecycle_tests {
     use super::*;
+    #[test]
+    fn null_optionals_are_dropped() {
+        let schema = json!({"type":"object","properties":{"argv":{"type":"array"},"cwd":{"type":"string"},"note":{"type":["string","null"]}},"required":["argv"]});
+        let out = drop_null_optionals(&schema, json!({"argv":null,"cwd":null,"note":null,"show":false}));
+        assert_eq!(out, json!({"argv":null,"note":null,"show":false}));
+        assert_eq!(drop_null_optionals(&schema, json!([1])), json!([1]));
+    }
     #[tokio::test]
     async fn permissions_cancellation_results_and_cleanup() {
         let dir = tempfile::tempdir().unwrap();

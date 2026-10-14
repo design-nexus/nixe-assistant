@@ -159,7 +159,7 @@ impl Default for LlmCfg {
             backend: "llama.cpp".into(),
             model: "auto".into(),
             n_gpu_layers: -1,
-            ctx: 4096,
+            ctx: 16384,
             n_predict: 256,
             temperature: 0.7,
             flash_attn: true,

@@ -871,6 +871,7 @@ impl App {
         anyhow::ensure!(depth <= 1, "nested host dispatch limit");
         *self.last_activity.lock().unwrap() = Instant::now();
         let cfg = self.cfg();
+        let args = self.registry.normalize_args(name, args);
         self.registry.validate(name, &args)?;
         let generation = self
             .registry
