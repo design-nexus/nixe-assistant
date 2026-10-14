@@ -255,8 +255,11 @@ impl App {
             result["structuredContent"] =
                 json!({"undone":action.id,"tool":action.tool,"acknowledgement":"Action undone."});
         }
-        // Keep text and structured content consistent after host processing.
-        result["content"] = json!([{"type":"text","text":result["structuredContent"].to_string()}]);
+        // Keep text and structured content consistent after host processing. Tools that
+        // return only text (system.status, files.read) keep it.
+        if !result["structuredContent"].is_null() {
+            result["content"] = json!([{"type":"text","text":result["structuredContent"].to_string()}]);
+        }
         Ok(result)
     }
     pub(super) fn power_json(&self) -> Value {
