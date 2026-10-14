@@ -4,6 +4,7 @@ use anyhow::Result;
 #[path = "../../assistant-agent/src/router.rs"]
 mod router;
 use assistant_core::{AppsFile, CommandsFile, Config};
+use assistant_policy::Grant;
 use assistant_tools::{mcp::McpTool, registry::Registry};
 use router::{route_with, Intent};
 use serde_json::{json, Value};
@@ -139,8 +140,11 @@ async fn main() -> Result<()> {
                 "tools/call"=> {
                     let name=v["params"]["name"].as_str().unwrap_or("");let args=v["params"]["arguments"].clone();
                     let tool=tools.iter().find(|t|t.name==name).ok_or_else(||anyhow::anyhow!("unknown tool"))?;
-                    // Host validates schemas and approvals; worker rejects non-owned tools too.
+                    // The host decides and asks; the worker refuses any call without the host's
+                    // grant for exactly this tool and these arguments, and non-owned tools.
                     let _=tool;
+                    let grant=Grant::from_attestation(&v["params"]["_meta"])?;
+                    if name=="clock.now" || args["request"].is_string() {grant.check(name,&args)?;}
                     if name=="clock.now" {let text=cfg.clock.spoken_reply(args["request"].as_str().unwrap_or("")).ok_or_else(||anyhow::anyhow!("unknown clock request"))?;return Ok(json!({"content":[{"type":"text","text":text}],"isError":false}));}
                     if args["request"].is_string() {
                         let request=args["request"].as_str().unwrap();
@@ -151,7 +155,7 @@ async fn main() -> Result<()> {
                             return Ok(json!({"content":[{"type":"text","text":text}],"isError":false}));
                         }
                     }
-                    registry.call(name,args,&cfg,&token,true).await
+                    registry.call(name,args,&cfg,&token,&grant).await
                 },
                 _=>anyhow::bail!("unsupported method"),
             }}.await;

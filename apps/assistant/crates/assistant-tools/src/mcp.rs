@@ -278,13 +278,22 @@ impl McpClient {
         arguments: Value,
         cancel: &CancellationToken,
     ) -> Result<Value> {
-        let result = self
-            .request(
-                "tools/call",
-                json!({"name":name,"arguments":arguments}),
-                cancel,
-            )
-            .await?;
+        self.call_tool_meta(name, arguments, None, cancel).await
+    }
+
+    /// `tools/call` with request `_meta` (the host's grant for a first-party worker).
+    pub async fn call_tool_meta(
+        &self,
+        name: &str,
+        arguments: Value,
+        meta: Option<Value>,
+        cancel: &CancellationToken,
+    ) -> Result<Value> {
+        let mut params = json!({"name":name,"arguments":arguments});
+        if let Some(meta) = meta {
+            params["_meta"] = meta;
+        }
+        let result = self.request("tools/call", params, cancel).await?;
         if !result["content"].is_array() || result.get("isError").is_some_and(|v| !v.is_boolean()) {
             anyhow::bail!("invalid MCP tool result");
         }

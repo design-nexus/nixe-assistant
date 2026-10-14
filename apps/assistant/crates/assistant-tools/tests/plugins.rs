@@ -3,9 +3,27 @@ use assistant_tools::{
     plugins::{self, Manifest, PluginManager, Route, Saved},
     registry::Registry,
 };
-use serde_json::json;
+use assistant_policy::{decide, AutonomyMode, Context, Decision, Grant, Rules};
+use serde_json::{json, Value};
 use std::{collections::BTreeMap, path::Path};
 use tokio_util::sync::CancellationToken;
+/// A grant the host has already checked, as the plugin manager receives it.
+fn checked(tool: &str, args: &Value) -> Grant {
+    let rules = Rules::default();
+    let verdict = decide(
+        tool,
+        &Context {
+            available: true,
+            trusted: true,
+            tool_rule: Some(Decision::Allow),
+            rules: &rules,
+            mode: AutonomyMode::Autonomous,
+        },
+    );
+    let grant = Grant::allowed(&verdict, args).unwrap();
+    grant.check(tool, args).unwrap();
+    grant
+}
 fn manifest(id: &str, tools: Vec<String>, args: Vec<String>) -> Manifest {
     Manifest {
         manifest_version: 1,
@@ -107,7 +125,8 @@ async fn manifest_dispatch_reload_disable_and_extraction() {
                 "fixture.echo",
                 json!({"text":"working"}),
                 &cfg,
-                &CancellationToken::new()
+                &CancellationToken::new(),
+                &checked("fixture.echo", &json!({"text":"working"})),
             )
             .await
             .unwrap()["structuredContent"]["text"],
@@ -116,7 +135,8 @@ async fn manifest_dispatch_reload_disable_and_extraction() {
     package(&m);
     let owned = manager.token("fixture.echo");
     let cancel = CancellationToken::new();
-    let waiting = manager.call("fixture.echo", json!({"text":"wait"}), &cfg, &cancel);
+    let grant = checked("fixture.echo", &json!({"text":"wait"}));
+    let waiting = manager.call("fixture.echo", json!({"text":"wait"}), &cfg, &cancel, &grant);
     let disable = async {
         tokio::time::sleep(std::time::Duration::from_millis(80)).await;
         manager.change("disable", "fixture", &cfg).await.unwrap();
@@ -139,14 +159,7 @@ async fn manifest_dispatch_reload_disable_and_extraction() {
         .system_prompt(&prompt_cfg)
         .contains("PRIVATE_CLOCK_SENTINEL"));
     assert!(registry
-        .call(
-            "fixture.echo",
-            json!({"text":"denied"}),
-            &cfg,
-            &CancellationToken::new(),
-            true
-        )
-        .await
+        .authorize("fixture.echo", &json!({"text":"denied"}), &cfg)
         .is_err());
     // Safe extraction rejects links rather than following an escaping target.
     let archive = temp.path().join("unsafe.tar");
@@ -231,12 +244,11 @@ async fn manifest_dispatch_reload_disable_and_extraction() {
     assert_eq!(registry.policy("history.undo", &cfg), "allow");
     assert_eq!(registry.policy("notes.undo", &cfg), "confirm");
     assert!(registry
-        .call(
+        .call_allowed(
             "capture.clipboard",
             json!({}),
             &cfg,
-            &CancellationToken::new(),
-            false
+            &CancellationToken::new()
         )
         .await
         .is_err());
@@ -274,34 +286,28 @@ async fn manifest_dispatch_reload_disable_and_extraction() {
         "history.undo"
     );
     let note = registry
-        .call(
+        .call_allowed(
             "notes.create",
             json!({"text":"undo fixture"}),
             &cfg,
             &CancellationToken::new(),
-            false,
         )
         .await
         .unwrap();
     assert_eq!(note["structuredContent"]["undo"]["tool"], "notes.undo");
     assert!(registry
-        .call(
+        .call_allowed(
             "notes.undo",
             note["structuredContent"]["undo"]["arguments"].clone(),
             &cfg,
-            &CancellationToken::new(),
-            false
+            &CancellationToken::new()
         )
         .await
         .is_err());
+    let undo = note["structuredContent"]["undo"]["arguments"].clone();
+    let grant = Grant::approved(&registry.verdict("notes.undo", &cfg), &undo, "test").unwrap();
     registry
-        .call(
-            "notes.undo",
-            note["structuredContent"]["undo"]["arguments"].clone(),
-            &cfg,
-            &CancellationToken::new(),
-            true,
-        )
+        .call("notes.undo", undo, &cfg, &CancellationToken::new(), &grant)
         .await
         .unwrap();
     for id in ids {

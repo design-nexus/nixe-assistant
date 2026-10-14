@@ -308,6 +308,44 @@ async fn main() -> anyhow::Result<()> {
             };
             println!("{}", request(action, 2000).await?);
         }
+        "audit" => {
+            let rest: Vec<_> = args.collect();
+            let limit = rest
+                .iter()
+                .position(|a| a == "--limit")
+                .and_then(|i| rest.get(i + 1))
+                .map(|n| n.parse::<usize>())
+                .transpose()?
+                .unwrap_or(50);
+            let path =
+                assistant_policy::store::default_path(&assistant_core::paths::state_dir());
+            let rows = assistant_policy::store::recent(&path, limit)?;
+            if rest.iter().any(|a| a == "--json") {
+                println!("{}", serde_json::to_string(&rows)?);
+                return Ok(());
+            }
+            if rows.is_empty() {
+                println!("No audit records in {}", path.display());
+            }
+            for r in &rows {
+                let when = chrono::DateTime::from_timestamp_millis(r.at_ms as i64)
+                    .map(|t| t.with_timezone(&chrono::Local).format("%F %T").to_string())
+                    .unwrap_or_default();
+                println!(
+                    "{when}  {:<8} {:<9} {:<28} {:<8} {}{}  {}",
+                    r.event,
+                    r.outcome,
+                    r.tool,
+                    r.decision,
+                    r.rule,
+                    r.duration_ms.map(|d| format!(" {d}ms")).unwrap_or_default(),
+                    r.args
+                );
+                if let Some(detail) = &r.detail {
+                    println!("    {detail}");
+                }
+            }
+        }
         "preview" => {
             let cfg = assistant_core::Config::load()?;
             let voice = args.next().unwrap_or(cfg.tts.voice);
@@ -658,6 +696,7 @@ fn print_help() {
            tool NAME JSON  invoke through enabled-state and approval checks\n\
            doctor [--json] diagnostics (works offline)\n\
            activity [clear] latest 100 turns\n\
+           audit [--limit N] [--json] tool decisions, approvals and calls (works offline)\n\
            preview [voice speed] TTS only, without saving\n\
            calibrate      quiet/speech measurement; suggestions only\n\
            search-provider [show|builtin|duckduckgo]\n\

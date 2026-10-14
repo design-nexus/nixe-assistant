@@ -7,7 +7,7 @@ impl App {
         let cancel = self.cancel.lock().await.clone();
         let result = self
             .registry
-            .call("location.current", json!({}), &cfg, &cancel, false)
+            .call_allowed("location.current", json!({}), &cfg, &cancel)
             .await?;
         let location = serde_json::from_value(result["structuredContent"].clone())?;
         Ok(location)
@@ -20,12 +20,11 @@ impl App {
         if matches!(action, "show" | "refresh") {
             let result = self
                 .registry
-                .call(
+                .call_allowed(
                     "location.current",
                     json!({}),
                     &self.cfg(),
                     &CancellationToken::new(),
-                    false,
                 )
                 .await?;
             return Ok(result["structuredContent"].clone());
@@ -475,12 +474,11 @@ impl App {
                 self.resume_browser().await?
             } else {
                 self.registry
-                    .call(
+                    .call_allowed(
                         name,
                         json!({}),
                         &self.cfg(),
                         &CancellationToken::new(),
-                        true,
                     )
                     .await?
             };
@@ -500,12 +498,11 @@ impl App {
         {
             let result = self
                 .registry
-                .call(
+                .call_allowed(
                     "browser.open_source",
                     json!({"index":0}),
                     &self.cfg(),
                     &CancellationToken::new(),
-                    false,
                 )
                 .await?;
             self.emit_tool("browser.open_source", &json!({"index":0}), &result);
@@ -610,7 +607,7 @@ impl App {
             let args = json!({"city":city.unwrap_or_default(),"celsius":ask.to_lowercase().contains("celsius")});
             let result = self
                 .registry
-                .call("weather.lookup", args.clone(), &cfg, &cancel, false)
+                .call_allowed("weather.lookup", args.clone(), &cfg, &cancel)
                 .await;
             return match result {
                 Ok(result) => {
@@ -657,7 +654,7 @@ impl App {
         };
         let result = self
             .registry
-            .call(search_tool, args.clone(), &cfg, &cancel, false)
+            .call_allowed(search_tool, args.clone(), &cfg, &cancel)
             .await;
         let result = match result {
             Ok(result) => result,
@@ -697,12 +694,11 @@ impl App {
                     .collect();
                 let _ = self
                     .registry
-                    .call(
+                    .call_allowed(
                         "browser.remember_sources",
                         json!({"sources":citations}),
                         &cfg,
                         &cancel,
-                        false,
                     )
                     .await;
             }
@@ -714,7 +710,7 @@ impl App {
                 let args = json!({"url":source["url"]});
                 let r = self
                     .registry
-                    .call("web.read", args.clone(), &cfg, &cancel, false)
+                    .call_allowed("web.read", args.clone(), &cfg, &cancel)
                     .await;
                 let mut r = match r {
                     Ok(v) => v,
@@ -846,19 +842,21 @@ impl App {
             .plugins
             .as_ref()
             .and_then(|p| p.generation(name));
-        let policy = self.registry.policy(name, &cfg);
-        anyhow::ensure!(policy != "deny", "tool denied or plugin disabled");
+        let verdict = self.registry.verdict(name, &cfg);
+        if verdict.decision() == assistant_policy::Decision::Deny {
+            return Err(self.registry.refuse(&verdict, &args));
+        }
+        let policy = verdict.decision().as_str();
         let mut args = args;
         let mut review_args = args.clone();
         if name == "routines.run" {
             let preview = self
                 .registry
-                .call(
+                .call_allowed(
                     "routines.preview",
                     json!({"name":args["name"]}),
                     &self.cfg(),
                     cancel,
-                    false,
                 )
                 .await?;
             anyhow::ensure!(preview["isError"] != true, "routine preview failed");
@@ -867,16 +865,26 @@ impl App {
         }
         self.registry.validate(name, &args)?;
         let mut approval_ms = 0;
-        if policy == "confirm" {
-            let approval_start = Instant::now();
-            let id = format!("plugin-{}-{}", self.turn_id(), now_ms());
-            anyhow::ensure!(
-                self.request_approval(id, name, &review_args, cancel)
-                    .await?,
-                "approval denied, expired or cancelled"
-            );
-            approval_ms = approval_start.elapsed().as_millis() as u64;
+        let grant = match self.registry.authorize(name, &args, &cfg)? {
+            Authorization::Granted(grant) => grant,
+            Authorization::NeedsApproval(verdict) => {
+                let approval_start = Instant::now();
+                let id = format!("plugin-{}-{}", self.turn_id(), now_ms());
+                let approved = self
+                    .request_approval(id.clone(), name, &review_args, cancel)
+                    .await?;
+                let mut record = self.registry.record("approval", &verdict, &review_args);
+                record.turn = Some(self.turn_id().to_string());
+                record.approval_id = Some(id.clone());
+                record.outcome = if approved { "approved" } else { "denied" }.into();
+                self.registry.journal(record);
+                anyhow::ensure!(approved, "approval denied, expired or cancelled");
+                approval_ms = approval_start.elapsed().as_millis() as u64;
+                // Bound to the final arguments (routines.run adds the reviewed digest).
+                Grant::approved(&verdict, &args, &id)?
+            }
         }
+        .for_turn(self.turn_id().to_string());
         anyhow::ensure!(
             generation
                 == self
@@ -892,7 +900,7 @@ impl App {
         );
         let result = self
             .registry
-            .call(name, args.clone(), &self.cfg(), cancel, true)
+            .call(name, args.clone(), &self.cfg(), cancel, &grant)
             .await?;
         let mut result = self
             .host_extensions(name, result, cancel, depth, budget)

@@ -20,7 +20,8 @@ use assistant_core::state::{AssistantState, StateMachine};
 use assistant_core::timing::TurnTiming;
 use assistant_inference::LlamaCppBackend;
 use assistant_ipc::{Command, Control, Ipc};
-use assistant_tools::registry::Registry;
+use assistant_policy::Grant;
+use assistant_tools::registry::{Authorization, Registry};
 use interaction::compact_result;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -69,7 +70,12 @@ pub async fn run(cfg: Config) -> Result<()> {
         CommandsFile::shipped()
     });
     tracing::info!(n = voice_commands.command.len(), "loaded voice commands");
-    let registry = Registry::load(&cfg).await;
+    let audit_path = assistant_policy::store::default_path(&assistant_core::paths::state_dir());
+    let audit = assistant_policy::store::AuditLog::open(&audit_path).unwrap_or_else(|err| {
+        tracing::warn!(%err, path = %audit_path.display(), "audit journal unavailable");
+        assistant_policy::store::AuditLog::disabled()
+    });
+    let registry = Registry::load(&cfg).await.with_audit(audit);
     let app = Arc::new(App {
         registry,
         power: std::sync::Mutex::new(power),
@@ -553,23 +559,21 @@ impl App {
             }
             Control::JobStatus { job_id } => self
                 .registry
-                .call(
+                .call_allowed(
                     "terminal.status",
                     json!({"job_id":job_id}),
                     &self.cfg(),
                     &CancellationToken::new(),
-                    false,
                 )
                 .await
                 .map(|r| r["structuredContent"].clone()),
             Control::JobCancel { job_id } => self
                 .registry
-                .call(
+                .call_allowed(
                     "terminal.cancel",
                     json!({"job_id":job_id}),
                     &self.cfg(),
                     &CancellationToken::new(),
-                    false,
                 )
                 .await
                 .map(|r| r["structuredContent"].clone()),
@@ -1813,7 +1817,7 @@ impl App {
         };
         let project_context = if self.registry.policy("projects.current", &cfg) == "allow" {
             self.registry
-                .call("projects.current", json!({}), &cfg, &cancel, false)
+                .call_allowed("projects.current", json!({}), &cfg, &cancel)
                 .await
                 .ok()
                 .map(|v| v["structuredContent"].to_string())

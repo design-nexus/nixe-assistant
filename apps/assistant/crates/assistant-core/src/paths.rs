@@ -52,6 +52,13 @@ pub fn models_dir() -> PathBuf {
     data_dir().join("models")
 }
 
+/// Approvals and the audit journal (`agent.db`).
+pub fn state_dir() -> PathBuf {
+    dirs::state_dir()
+        .unwrap_or_else(|| PathBuf::from(".").join(".local/state"))
+        .join("nixe-assistant")
+}
+
 pub fn cache_dir() -> PathBuf {
     dirs::cache_dir()
         .unwrap_or_else(|| PathBuf::from(".").join(".cache"))

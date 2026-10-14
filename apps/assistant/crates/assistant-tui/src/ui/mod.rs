@@ -212,28 +212,24 @@ fn commands(f: &mut Frame, app: &App, area: Rect) {
     );
     let selected = entries.get(app.selected_route).cloned().unwrap_or_default();
     let tool = selected["tool"].as_str().unwrap_or("app.launch");
-    let permissions = &app.config.permissions;
-    let policy = if [
-        "audio.volume_up",
-        "audio.volume_down",
-        "audio.mute",
-        "audio.output_switch",
-    ]
-    .contains(&tool)
-    {
-        permissions.volume.as_str()
-    } else if tool == "app.launch" {
-        permissions.launch_app.as_str()
-    } else if tool == "system.shutdown" {
-        permissions.shutdown.as_str()
-    } else if assistant_tools::builtin_tools()
-        .iter()
-        .any(|t| t.name == tool)
-    {
-        "allow"
-    } else {
-        "deny"
-    };
+    let cfg = &app.config;
+    let rules = cfg.permissions.rules();
+    let policy = assistant_policy::decide(
+        tool,
+        &assistant_policy::Context {
+            available: true,
+            trusted: true,
+            tool_rule: cfg
+                .mcp
+                .permissions
+                .get(tool)
+                .and_then(|s| assistant_policy::Decision::parse(s)),
+            rules: &rules,
+            mode: cfg.agent.mode,
+        },
+    )
+    .decision()
+    .as_str();
     text(
         f,
         app,

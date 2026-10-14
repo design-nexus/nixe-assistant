@@ -30,7 +30,8 @@ Primary metric: **user speech end → first audible response word**.
 | `assistant-inference` | `LlamaCppBackend` — in-process llama.cpp CUDA |
 | `assistant-agent` | Voxtype STT, Kokoro TTS, phrase chunker, desktop router |
 | `assistant-ipc` | Unix NDJSON socket |
-| `assistant-tools` | typed tool specs + permission classes |
+| `assistant-tools` | tool registry (the enforcement point), plugins, MCP, terminal jobs |
+| `assistant-policy` | permission decisions, grants, autonomy modes, the audit journal |
 | `assistant-omarchy` | `hyprctl` / `omarchy` / Hyprland `exec_cmd` wrappers |
 | `nixe-assistantd` | daemon + `nixe-assistant` CLI |
 
@@ -120,7 +121,8 @@ listen. Unmatched speech stays idle. Alt+Space PTT is unchanged.
 
 ## Later phases
 
-See `docs/plan.md`: dual-model (skipped), MCP, HTTP, TensorRT,
+[AUDIT.md](AUDIT.md) compares this code with the Assistant 2.0 plan and lists the
+next phases. See also `docs/plan.md`: dual-model (skipped), MCP, HTTP, TensorRT,
 Kokoro sm_120, F9/Voxtype/Omarchy system trees. One phase at a time.
 
 Latest 100 LLM turns stay in RAM for follow-ups. Say "forget everything" or "start over" to clear. Not written to disk.

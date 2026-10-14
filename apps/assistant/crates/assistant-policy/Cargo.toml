@@ -1,0 +1,17 @@
+[package]
+name = "assistant-policy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Permission decisions, approval grants and the audit journal"
+
+[dependencies]
+anyhow.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

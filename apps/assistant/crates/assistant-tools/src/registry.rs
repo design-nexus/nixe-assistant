@@ -4,11 +4,19 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use assistant_core::Config;
+use assistant_policy::{store::AuditLog, store::Record, Decision, Grant, GrantKind, Verdict};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use tokio_util::sync::CancellationToken;
 
+/// The outcome of `Registry::authorize`.
+pub enum Authorization {
+    Granted(Grant),
+    NeedsApproval(Verdict),
+}
+
 pub struct Registry {
+    pub audit: std::sync::Arc<AuditLog>,
     pub plugins: Option<std::sync::Arc<crate::plugins::PluginManager>>,
     pub tools: BTreeMap<String, McpTool>,
     clients: BTreeMap<String, McpClient>,
@@ -20,6 +28,7 @@ pub struct Registry {
 impl Registry {
     pub async fn load_worker(cfg: &Config) -> Self {
         let mut registry = Self {
+            audit: std::sync::Arc::new(AuditLog::disabled()),
             plugins: None,
             tools: BTreeMap::new(),
             clients: BTreeMap::new(),
@@ -182,6 +191,7 @@ impl Registry {
         let plugins = std::sync::Arc::new(crate::plugins::PluginManager::new());
         let errors = plugins.load(cfg).await;
         Self {
+            audit: std::sync::Arc::new(AuditLog::disabled()),
             plugins: Some(plugins),
             tools: BTreeMap::new(),
             clients: BTreeMap::new(),
@@ -190,6 +200,11 @@ impl Registry {
             location: Default::default(),
             errors,
         }
+    }
+    /// Journal decisions and calls to `log` (the daemon passes `agent.db`).
+    pub fn with_audit(mut self, log: AuditLog) -> Self {
+        self.audit = std::sync::Arc::new(log);
+        self
     }
     pub fn system_prompt(&self, cfg: &Config) -> String {
         let mut prompt_cfg = cfg.clone();
@@ -204,99 +219,68 @@ impl Registry {
             plugins.cancel_jobs().await;
         }
     }
-    pub fn policy<'a>(&self, name: &str, cfg: &'a Config) -> &'a str {
-        if self.plugins.as_ref().is_some_and(|p| !p.available(name)) {
-            return "deny";
+    /// The decision point for one tool under the running config.
+    pub fn verdict(&self, name: &str, cfg: &Config) -> Verdict {
+        let plugins = self.plugins.as_ref();
+        let rules = cfg.permissions.rules();
+        assistant_policy::decide(
+            name,
+            &assistant_policy::Context {
+                available: plugins.is_none_or(|p| p.available(name)),
+                trusted: plugins.is_none_or(|p| p.trusted_tool(name)),
+                tool_rule: cfg.mcp.permissions.get(name).and_then(|s| Decision::parse(s)),
+                rules: &rules,
+                mode: cfg.agent.mode,
+            },
+        )
+    }
+    /// `allow`, `confirm` or `deny`, as Diagnostics, the TUI and IPC show it.
+    pub fn policy(&self, name: &str, cfg: &Config) -> &'static str {
+        self.verdict(name, cfg).decision().as_str()
+    }
+    /// Decide a call: a grant when it is allowed, the verdict when it needs approval.
+    /// Denials are journalled here; approvals and calls where they happen.
+    pub fn authorize(&self, name: &str, args: &Value, cfg: &Config) -> Result<Authorization> {
+        let verdict = self.verdict(name, cfg);
+        match verdict.decision() {
+            Decision::Allow => Ok(Authorization::Granted(Grant::allowed(&verdict, args)?)),
+            Decision::Deny => Err(self.refuse(&verdict, args)),
+            _ => Ok(Authorization::NeedsApproval(verdict)),
         }
-        if let Some(policy) = cfg.mcp.permissions.get(name) {
-            return policy;
+    }
+    /// Journal a denial and return the error to report.
+    pub fn refuse(&self, verdict: &Verdict, args: &Value) -> anyhow::Error {
+        let mut record = self.record("decision", verdict, args);
+        record.outcome = "denied".into();
+        self.journal(record);
+        anyhow::anyhow!("tool denied or plugin disabled")
+    }
+    /// For calls that must not wait for a person: allowed, or refused.
+    pub fn grant_now(&self, name: &str, args: &Value, cfg: &Config) -> Result<Grant> {
+        match self.authorize(name, args, cfg)? {
+            Authorization::Granted(grant) => Ok(grant),
+            Authorization::NeedsApproval(_) => anyhow::bail!("{name} needs approval"),
         }
-        if self.plugins.as_ref().is_some_and(|p| !p.trusted_tool(name)) {
-            return "confirm";
-        }
-        // Destructive edits, captures, coordinated effects, and resource changes always
-        // start with confirmation. Explicit user grants still apply above.
-        if name == "history.undo" {
-            return "allow";
-        }
-        if name.ends_with(".undo")
-            || matches!(
-                name,
-                "notes.edit"
-                    | "notes.delete"
-                    | "routines.save"
-                    | "routines.delete"
-                    | "routines.run"
-                    | "projects.save"
-                    | "projects.delete"
-                    | "projects.action"
-                    | "calendar.create"
-                    | "calendar.edit"
-                    | "calendar.delete"
-                    | "capture.clipboard"
-                    | "capture.screen"
-                    | "file_search.index"
-                    | "file_search.clear"
-                    | "power.battery"
-                    | "power.normal"
-                    | "power.configure"
-                    | "power.unload"
-            )
-        {
-            return "confirm";
-        }
-        if [
-            "routines.",
-            "projects.",
-            "calendar.",
-            "file_search.",
-            "media.",
-            "power.",
-            "history.",
-        ]
-        .iter()
-        .any(|p| name.starts_with(p))
-        {
-            return "allow";
-        }
-        if name.starts_with("notes.") || name.starts_with("reminders.") || name == "clock.now" {
-            return "allow";
-        }
-        if crate::builtin_tools().iter().any(|t| t.name == name) {
-            if name.starts_with("audio.") {
-                return &cfg.permissions.volume;
-            }
-            if name == "app.launch" {
-                return &cfg.permissions.launch_app;
-            }
-            if name == "system.shutdown" {
-                return &cfg.permissions.shutdown;
-            }
-            return "allow";
-        }
-        match name {
-            "files.read" | "git.status" => &cfg.permissions.files_read,
-            "weather.lookup"
-            | "location.current"
-            | "system.status"
-            | "terminal.configured"
-            | "terminal.status"
-            | "terminal.cancel"
-            | "terminal.open"
-            | "browser.search"
-            | "browser.navigate"
-            | "browser.remember_sources"
-            | "browser.open_source"
-            | "browser.snapshot"
-            | "browser.tabs"
-            | "browser.scroll"
-            | "browser.takeover"
-            | "browser.resume"
-            | "web.search"
-            | "web.read" => "allow",
-            "agent.handoff" | "apps.launch" => &cfg.permissions.launch_app,
-            _ => "confirm",
-        }
+    }
+    /// Call a tool the policy allows outright; never waits for approval.
+    pub async fn call_allowed(
+        &self,
+        name: &str,
+        args: Value,
+        cfg: &Config,
+        cancel: &CancellationToken,
+    ) -> Result<Value> {
+        let grant = self.grant_now(name, &args, cfg)?;
+        self.call(name, args, cfg, cancel, &grant).await
+    }
+    pub fn record(&self, event: &str, verdict: &Verdict, args: &Value) -> Record {
+        let mut record = Record::new(event, verdict.tool(), args);
+        record.decision = verdict.decision().as_str().into();
+        record.rule = verdict.rule().into();
+        record
+    }
+    pub fn journal(&self, record: Record) {
+        self.audit.record(record);
     }
     pub fn validate(&self, name: &str, args: &Value) -> Result<()> {
         if let Some(plugins) = &self.plugins {
@@ -313,20 +297,51 @@ impl Registry {
         args: Value,
         cfg: &Config,
         cancel: &CancellationToken,
-        approved: bool,
+        grant: &Grant,
     ) -> Result<Value> {
         self.validate(name, &args)?;
-        let policy = self.policy(name, cfg);
-        if policy == "deny" || (policy == "confirm" && !approved) {
-            anyhow::bail!("tool permission not granted");
+        // The enforcement point: a grant for exactly this call, and a policy that still
+        // permits it (a reload may have tightened it since the grant was made).
+        grant.check(name, &args)?;
+        let verdict = self.verdict(name, cfg);
+        match (verdict.decision(), grant.kind()) {
+            (Decision::Deny, _) => anyhow::bail!("tool permission not granted"),
+            (d, GrantKind::Allowed) if d != Decision::Allow => {
+                anyhow::bail!("tool permissions changed; retry")
+            }
+            _ => {}
         }
         if cancel.is_cancelled() {
             anyhow::bail!("cancelled before dispatch");
         }
+        let mut record = self.record("call", &verdict, &args);
+        record.turn = grant.turn().map(String::from);
+        record.approval_id = grant.approval_id().map(String::from);
+        let started = std::time::Instant::now();
+        let result = self.dispatch(name, args, cfg, cancel, grant).await;
+        record.duration_ms = Some(started.elapsed().as_millis() as u64);
+        record.outcome = match &result {
+            Ok(v) if v["isError"] == true => "error".into(),
+            Ok(_) => "ok".into(),
+            Err(_) if cancel.is_cancelled() => "cancelled".into(),
+            Err(_) => "error".into(),
+        };
+        record.detail = result.as_ref().err().map(|e| e.to_string());
+        self.journal(record);
+        result
+    }
+    async fn dispatch(
+        &self,
+        name: &str,
+        args: Value,
+        cfg: &Config,
+        cancel: &CancellationToken,
+        grant: &Grant,
+    ) -> Result<Value> {
         if let Some(plugins) = &self.plugins {
             return tokio::time::timeout(
                 std::time::Duration::from_secs(15),
-                plugins.call(name, args, cfg, cancel),
+                plugins.call(name, args, cfg, cancel, grant),
             )
             .await
             .context("plugin call deadline exceeded")?;
@@ -420,6 +435,8 @@ impl Registry {
             .await?;
             json!({"content":[{"type":"text","text":spoken}],"isError":false})
         } else {
+            // The grant was checked above; the typed tool's own files_read check must not
+            // refuse a call the user approved.
             let mut authorized = cfg.clone();
             if ["files.read", "git.status"].contains(&name) {
                 authorized.permissions.files_read = "allow".into();
@@ -492,15 +509,31 @@ mod lifecycle_tests {
         assert!(registry.tools.contains_key("fixture.echo"));
         let cancel = CancellationToken::new();
         let args = json!({"text":"hello"});
+        // External tools ask by default: no grant without approval.
+        assert!(matches!(
+            registry.authorize("fixture.echo", &args, &cfg).unwrap(),
+            Authorization::NeedsApproval(_)
+        ));
         assert!(registry
-            .call("fixture.echo", args.clone(), &cfg, &cancel, false)
+            .call_allowed("fixture.echo", args.clone(), &cfg, &cancel)
             .await
             .is_err());
+        let verdict = registry.verdict("fixture.echo", &cfg);
+        assert!(Grant::allowed(&verdict, &args).is_err());
+        // An approval for other arguments doesn't cover these.
+        let other = Grant::approved(&verdict, &json!({"text":"other"}), "t1").unwrap();
+        assert!(registry
+            .call("fixture.echo", args.clone(), &cfg, &cancel, &other)
+            .await
+            .is_err());
+        // A deny wins over an approval made before it.
+        let approved = Grant::approved(&verdict, &args, "t2").unwrap();
         cfg.mcp
             .permissions
             .insert("fixture.echo".into(), "deny".into());
+        assert!(registry.authorize("fixture.echo", &args, &cfg).is_err());
         assert!(registry
-            .call("fixture.echo", args.clone(), &cfg, &cancel, true)
+            .call("fixture.echo", args.clone(), &cfg, &cancel, &approved)
             .await
             .is_err());
         let raw = std::fs::read_to_string(&log).unwrap();
@@ -509,26 +542,25 @@ mod lifecycle_tests {
             .permissions
             .insert("fixture.echo".into(), "allow".into());
         assert!(registry
-            .call("fixture.echo", json!({"text":42}), &cfg, &cancel, false)
+            .call_allowed("fixture.echo", json!({"text":42}), &cfg, &cancel)
             .await
             .is_err());
         let result = registry
-            .call("fixture.echo", args, &cfg, &cancel, false)
+            .call_allowed("fixture.echo", args, &cfg, &cancel)
             .await
             .unwrap();
         assert_eq!(result["structuredContent"]["text"], "hello");
         let result = registry
-            .call(
+            .call_allowed(
                 "fixture.echo",
                 json!({"text":"error"}),
                 &cfg,
                 &cancel,
-                false,
             )
             .await
             .unwrap();
         assert_eq!(result["isError"], true);
-        let waiting = registry.call("fixture.echo", json!({"text":"wait"}), &cfg, &cancel, false);
+        let waiting = registry.call_allowed("fixture.echo", json!({"text":"wait"}), &cfg, &cancel);
         let trigger = async {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             cancel.cancel();
@@ -540,12 +572,11 @@ mod lifecycle_tests {
             .unwrap()
             .contains("notifications/cancelled"));
         assert!(registry
-            .call(
+            .call_allowed(
                 "fixture.echo",
                 json!({"text":"disconnect"}),
                 &cfg,
-                &CancellationToken::new(),
-                false
+                &CancellationToken::new()
             )
             .await
             .is_err());

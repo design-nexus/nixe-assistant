@@ -522,6 +522,20 @@ pub struct PermissionsCfg {
     pub shutdown: String,
 }
 
+impl PermissionsCfg {
+    /// The capability rules for the policy. Values were checked by `Config::validate`;
+    /// anything else asks.
+    pub fn rules(&self) -> assistant_policy::Rules {
+        let d = |s: &str| assistant_policy::Decision::parse(s).unwrap_or(assistant_policy::Decision::Ask);
+        assistant_policy::Rules {
+            launch_app: d(&self.launch_app),
+            volume: d(&self.volume),
+            files_read: d(&self.files_read),
+            shutdown: d(&self.shutdown),
+        }
+    }
+}
+
 impl Default for PermissionsCfg {
     fn default() -> Self {
         Self {
@@ -541,6 +555,8 @@ pub struct AgentCfg {
     pub enabled: bool,
     pub default_agent: String,
     pub terminal: String,
+    /// How much runs without asking: autonomous, assisted or manual.
+    pub mode: assistant_policy::AutonomyMode,
 }
 
 impl Default for AgentCfg {
@@ -549,6 +565,7 @@ impl Default for AgentCfg {
             enabled: true,
             default_agent: "agy".into(),
             terminal: "omarchy-launch-terminal".into(),
+            mode: Default::default(),
         }
     }
 }
@@ -747,8 +764,8 @@ impl Config {
         .into_iter()
         .chain(self.mcp.permissions.values())
         {
-            if !["allow", "confirm", "deny"].contains(&policy.as_str()) {
-                return fail("permission must be allow, confirm, or deny");
+            if assistant_policy::Decision::parse(policy).is_none() {
+                return fail("permission must be allow, confirm (or ask), or deny");
             }
         }
         for (name, server) in &self.mcp.servers {
@@ -991,6 +1008,18 @@ mod tests {
     }
 
     #[test]
+    fn autonomy_mode_and_permission_spellings() {
+        let cfg: Config = toml::from_str("[agent]\nmode = \"manual\"").unwrap();
+        assert_eq!(cfg.agent.mode, assistant_policy::AutonomyMode::Manual);
+        assert!(toml::from_str::<Config>("[agent]\nmode = \"yolo\"").is_err());
+        let mut cfg = Config::default();
+        cfg.permissions.volume = "ask".into();
+        assert!(cfg.validate().is_ok());
+        cfg.permissions.volume = "alow".into();
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
     fn shipped_config_parses() {
         let cfg: Config = toml::from_str(default_toml()).unwrap();
         assert_eq!(cfg.assistant.name, "Echo");
@@ -1000,6 +1029,8 @@ mod tests {
         assert_eq!(cfg.llm.backend, "llama.cpp");
         assert_eq!(cfg.tts.provider, "kokoro");
         assert_eq!(cfg.permissions.shell, "deny");
+        assert_eq!(cfg.agent.mode, assistant_policy::AutonomyMode::Autonomous);
+        assert_eq!(cfg.permissions.rules().shutdown, assistant_policy::Decision::Ask);
         assert!(cfg.barge_in.enabled);
         assert_eq!(cfg.barge_in.grace_ms, 500);
         assert!(cfg.wake_word.enabled);

@@ -42,7 +42,19 @@ schemas are validated. Results are untrusted data, never instructions.
 External tools require confirmation by default. The TUI and HUD display exact
 arguments; `y` allows once, `n` denies. Approvals expire after 60 seconds.
 Cancellation and denial prevent dispatch. CLI equivalents are `approve ID` and
-`deny ID`. Permission overrides use the names displayed in Diagnostics:
+`deny ID`.
+
+Every call goes through one decision point (`assistant-policy`). An explicit deny,
+per tool or in `[permissions]`, beats any allow. Generated terminal commands and
+scripts always ask. `[agent] mode` tightens the rest: `autonomous` (default) runs
+whatever is allowed, `assisted` asks before changes other than desktop, volume and
+app launches, `manual` asks before any change. An allowed or approved call gets a
+grant bound to the tool and a digest of its exact arguments, valid for one use
+within 60 seconds; the registry dispatches nothing without one. Denials,
+approvals and call outcomes go to `~/.local/state/nixe-assistant/agent.db` with
+secret-looking values redacted; `nixe-assistant audit` lists them.
+
+Permission overrides use the names displayed in Diagnostics:
 
 ```toml
 [mcp]
@@ -84,7 +96,7 @@ HTTP binds only to a loopback IP. Every endpoint requires
 HTTP action responses indicate queued work, not successful execution; use IPC
 for acknowledged reloads. No browser-origin access is enabled.
 
-CLI additions: `doctor [--json]`, `status --json`, `activity [clear]`,
+CLI additions: `doctor [--json]`, `status --json`, `activity [clear]`, `audit [--limit N] [--json]`,
 `preview [voice speed]`, `calibrate`, `tool-mode on|off`, `approve ID`, `deny ID`.
 `doctor` works when the daemon is stopped.
 

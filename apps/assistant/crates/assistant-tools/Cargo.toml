@@ -9,6 +9,7 @@ description = "Typed tools and permission classes for voice assistant"
 anyhow.workspace = true
 assistant-core.workspace = true
 assistant-omarchy.workspace = true
+assistant-policy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

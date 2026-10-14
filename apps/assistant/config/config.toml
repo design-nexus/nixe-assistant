@@ -101,18 +101,26 @@ strip_tails = ["please", "now", "right now", "for me"]
 [ui]
 enabled = true
 
+# Each rule is "allow", "confirm" (or "ask") or "deny". A deny always wins over an allow,
+# here or in [mcp.permissions]. Generated terminal commands and scripts always ask,
+# whatever a rule says. Decisions, approvals and calls are journalled
+# (`nixe-assistant audit`).
 [permissions]
-launch_app = "allow"
-volume = "allow"
-files_read = "allow"
-files_write = "confirm"
-shell = "deny"
+launch_app = "allow"  # configured apps and coding-agent handoff
+volume = "allow"      # volume, mute and output devices
+files_read = "allow"  # files.read and git.status inside HOME
+files_write = "confirm"  # reserved: no tool writes files yet
+shell = "deny"        # reserved: there is no unrestricted shell tool
 shutdown = "confirm"
 
 [agent]
 enabled = true
 default_agent = "agy" # "agy", "claude", "codex", "cursor"
 terminal = "omarchy-launch-terminal"
+# "autonomous": permitted tools run without asking (rules above still apply).
+# "assisted": reads and desktop, volume and app changes run; other changes ask.
+# "manual": anything that changes state asks.
+mode = "autonomous"
 
 [mcp]
 enabled = true

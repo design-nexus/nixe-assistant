@@ -253,6 +253,7 @@ impl PluginManager {
         args: Value,
         cfg: &Config,
         cancel: &CancellationToken,
+        grant: &assistant_policy::Grant,
     ) -> Result<Value> {
         self.validate(name, &args)?;
         let (id, client, own, schema, wire_name) = {
@@ -291,7 +292,9 @@ impl PluginManager {
                     .is_none_or(|p| p == "allow"),
                 "location permission requires confirmation; please specify a city"
             );
-            let location = self.call_raw("location.current", json!({}), cancel).await?;
+            // Part of the checked weather call; the location rule was checked just above.
+            let meta = grant.attest("location.current", &json!({}))?;
+            let location = self.call_raw("location.current", json!({}), meta, cancel).await?;
             anyhow::ensure!(
                 cfg.mcp
                     .permissions
@@ -305,7 +308,7 @@ impl PluginManager {
                 json!(cfg.browser.weather_location)
             };
         }
-        let result = tokio::select! { _=own.cancelled()=>anyhow::bail!("plugin disabled during call"), _=cancel.cancelled()=>anyhow::bail!("cancelled"), r=client.call_tool(&wire_name,args,cancel)=>r };
+        let result = tokio::select! { _=own.cancelled()=>anyhow::bail!("plugin disabled during call"), _=cancel.cancelled()=>anyhow::bail!("cancelled"), r=async { let meta = grant.attest(&wire_name, &args)?; client.call_tool_meta(&wire_name,args,Some(meta),cancel).await }=>r };
         match result {
             Ok(value) => {
                 if value["isError"] != true {
@@ -329,7 +332,13 @@ impl PluginManager {
             }
         }
     }
-    async fn call_raw(&self, name: &str, args: Value, cancel: &CancellationToken) -> Result<Value> {
+    async fn call_raw(
+        &self,
+        name: &str,
+        args: Value,
+        meta: Value,
+        cancel: &CancellationToken,
+    ) -> Result<Value> {
         self.validate(name, &args)?;
         let (client, own) = {
             let entries = self.entries.lock().unwrap();
@@ -339,7 +348,7 @@ impl PluginManager {
                 .context("provider disabled")?;
             (r.client.clone(), r.cancel.clone())
         };
-        tokio::select! {_=own.cancelled()=>anyhow::bail!("provider disabled"),r=client.call_tool(name,args,cancel)=>r}
+        tokio::select! {_=own.cancelled()=>anyhow::bail!("provider disabled"),r=client.call_tool_meta(name,args,Some(meta),cancel)=>r}
     }
     pub async fn route(&self, request: &str, cancel: &CancellationToken) -> Result<Option<Value>> {
         let entries: Vec<_> = self

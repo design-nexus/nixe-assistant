@@ -25,6 +25,7 @@ assistant-inference.workspace = true
 assistant-ipc.workspace = true
 assistant-omarchy.workspace = true
 assistant-tools.workspace = true
+assistant-policy.workspace = true
 dirs.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
