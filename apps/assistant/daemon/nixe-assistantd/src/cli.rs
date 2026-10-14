@@ -862,15 +862,18 @@ async fn bench_turn(prompt: &str) -> anyhow::Result<(Vec<(String, String, u64, u
 /// `bench duplex`: false interruptions with nobody talking, then prompted live trials.
 /// Every number comes from the daemon's events; nothing is estimated.
 async fn bench_duplex(live: bool) -> anyhow::Result<()> {
-    const STORY: &str = "Tell me a long story about a lighthouse keeper, at least ten sentences.";
+    // About eight seconds of speech: time enough to speak over, short enough to repeat.
+    const COUNT: &str = "Count slowly from one to twelve in words, one number per sentence, and say nothing else.";
+    const ECHO: [&str; 2] = [COUNT, "Describe a lighthouse at night in three short sentences."];
     let notify = |text: &str| {
         let _ = std::process::Command::new("notify-send").args(["-u", "critical", "-t", "6000", "Duplex bench", text]).status();
     };
-    println!("## Echo: three long replies, nobody talking\n");
+    println!("## Echo: two short replies, nobody talking\n");
     let (mut onsets, mut cut, mut audio) = (0, 0, Vec::new());
-    for i in 1..=3 {
+    for (i, prompt) in ECHO.iter().enumerate() {
+        let i = i + 1;
         notify("Stay quiet while she talks.");
-        let (seen, first) = bench_turn(STORY).await?;
+        let (seen, first) = bench_turn(prompt).await?;
         onsets += seen.len();
         cut += seen.iter().filter(|s| s.0 == "stop" || s.0 == "redirect").count();
         audio.extend(first);
@@ -881,7 +884,7 @@ async fn bench_duplex(live: bool) -> anyhow::Result<()> {
         return Ok(());
     }
     anyhow::ensure!(io::stdin().is_terminal(), "live trials need a terminal (or pass --echo-only)");
-    println!("## Live: say the phrase shown, a few seconds after she starts\n");
+    println!("## Live: she counts to twelve; say the phrase shown once she has started\n");
     println!("| Said | Verdicts | Pause/duck after onset | Decided after onset |\n|---|---|---|---|");
     for (said, expect) in [("mm-hm", "backchannel"), ("stop", "stop"), ("actually, what's the weather in Paris?", "redirect")] {
         eprint!("Next: say \"{said}\" (expect {expect}). Press Enter to start… ");
@@ -889,7 +892,7 @@ async fn bench_duplex(live: bool) -> anyhow::Result<()> {
         let mut line = String::new();
         io::stdin().read_line(&mut line)?;
         notify(&format!("When she starts speaking, say: {said}"));
-        let (seen, _) = bench_turn(STORY).await?;
+        let (seen, _) = bench_turn(COUNT).await?;
         if seen.is_empty() {
             println!("| {said} | (no onset heard) | not measured | not measured |");
         }
@@ -897,13 +900,13 @@ async fn bench_duplex(live: bool) -> anyhow::Result<()> {
             println!("| {said} | {verdict} “{text}” | {:.2} ms | {decide_ms} ms |", react_us as f64 / 1000.0);
         }
         // Let a redirected or stopped reply settle before the next trial.
-        tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
         let _ = send_command(&Command::Cancel).await;
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
     if !audio.is_empty() {
         audio.sort();
-        println!("\nFirst audio for the story prompt (text turn, routing included): median {} ms of {}", audio[audio.len() / 2], audio.len());
+        println!("\nFirst audio for the echo prompts (text turns, routing included): median {} ms of {}", audio[audio.len() / 2], audio.len());
     }
     Ok(())
 }
