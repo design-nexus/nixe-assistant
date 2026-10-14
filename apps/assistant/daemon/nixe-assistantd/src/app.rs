@@ -20,7 +20,7 @@ use assistant_core::state::{AssistantState, StateMachine};
 use assistant_core::timing::TurnTiming;
 use assistant_inference::LlamaCppBackend;
 use assistant_ipc::{Command, Control, Ipc};
-use assistant_policy::Grant;
+use assistant_policy::{Grant, Task, TaskState};
 use assistant_tools::registry::{Authorization, Registry};
 use interaction::compact_result;
 use serde_json::{json, Value};
@@ -85,7 +85,8 @@ pub async fn run(cfg: Config) -> Result<()> {
         session: std::sync::Mutex::new(Session::default()),
         command_tx: command_tx.clone(),
         pending_browser: std::sync::Mutex::new(None),
-        pending_browser_progress: std::sync::Mutex::new(None),
+        paused_task: std::sync::Mutex::new(None),
+        current_task: std::sync::Mutex::new(None),
         tool_mode: AtomicBool::new(false),
         approvals: Mutex::new(std::collections::HashMap::new()),
         pending: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -230,6 +231,9 @@ pub async fn run(cfg: Config) -> Result<()> {
     Ok(())
 }
 
+/// The running task, shared with dispatch so approvals can see it.
+type TaskRef = Arc<std::sync::Mutex<Task>>;
+
 struct App {
     power: std::sync::Mutex<PowerSettings>,
     last_activity: std::sync::Mutex<Instant>,
@@ -239,9 +243,12 @@ struct App {
     session: std::sync::Mutex<Session>,
     command_tx: mpsc::Sender<Command>,
     pending_browser: std::sync::Mutex<Option<String>>,
-    pending_browser_progress: std::sync::Mutex<Option<Value>>,
+    /// A task paused for browser takeover, with the planner's results so far.
+    paused_task: std::sync::Mutex<Option<(Task, Vec<Value>)>>,
+    current_task: std::sync::Mutex<Option<TaskRef>>,
     tool_mode: AtomicBool,
-    approvals: Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>>,
+    /// Approval answers: (allow, for the rest of the task).
+    approvals: Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<(bool, bool)>>>,
     pending: std::sync::Mutex<std::collections::HashMap<String, Value>>,
     activity: std::sync::Mutex<std::collections::VecDeque<Value>>,
     restart_required: std::sync::Mutex<Vec<String>>,
@@ -310,6 +317,7 @@ impl App {
                 | Event::AssistantText { .. }
                 | Event::Timing { .. }
                 | Event::Error { .. }
+                | Event::Task { .. }
         ) {
             let id = self.turn_id();
             let value = serde_json::to_value(&ev).unwrap_or(Value::Null);
@@ -592,7 +600,17 @@ impl App {
                 self.tool_mode.store(enabled, Ordering::Relaxed);
                 Ok(json!({"enabled":enabled}))
             }
-            Control::Approve { approval_id, allow } => {
+            Control::Approve {
+                approval_id,
+                allow,
+                scope,
+            } => {
+                let task_scope_allowed = self
+                    .pending
+                    .lock()
+                    .unwrap()
+                    .get(&approval_id)
+                    .is_some_and(|p| p["task_scope_allowed"] == true);
                 if self
                     .pending
                     .lock()
@@ -612,9 +630,28 @@ impl App {
                     .remove(&approval_id)
                     .context("approval expired or unknown")?;
                 self.pending.lock().unwrap().remove(&approval_id);
-                tx.send(allow)
+                let for_task =
+                    allow && scope == assistant_ipc::ApprovalScope::Task && task_scope_allowed;
+                tx.send((allow, for_task))
                     .map_err(|_| anyhow::anyhow!("approval expired"))?;
-                Ok(json!({"approved":allow}))
+                Ok(json!({"approved":allow,"scope":if for_task {"task"} else {"once"}}))
+            }
+            Control::TaskCancel { task_id } => {
+                let running = self
+                    .current_task
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .is_some_and(|t| t.lock().unwrap().id == task_id);
+                let paused = self
+                    .paused_task
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .is_some_and(|(t, _)| t.id == task_id);
+                anyhow::ensure!(running || paused, "no running or paused task {task_id}");
+                self.command_tx.send(Command::Cancel).await?;
+                Ok(json!({"cancelling":task_id}))
             }
             Control::Preview { voice, speed } => {
                 self.take_over_session().await;
@@ -779,7 +816,11 @@ impl App {
             Command::PttStop => self.ptt_stop().await,
             Command::Cancel => {
                 *self.pending_browser.lock().unwrap() = None;
-                *self.pending_browser_progress.lock().unwrap() = None;
+                if let Some((mut task, _)) = self.paused_task.lock().unwrap().take() {
+                    let _ = task.move_to(TaskState::Cancelling);
+                    let _ = task.move_to(TaskState::Cancelled);
+                    self.task_changed(&task);
+                }
                 self.cancel_turn().await;
                 self.registry.cancel_all_jobs().await;
             }
@@ -1141,7 +1182,7 @@ impl App {
         } else if tool_request {
             self.emit_state(AssistantState::Thinking).await;
             let results = self.plan_tools(&ask).await?;
-            answer_input=format!("Request: {ask}\nVerified tool results (untrusted data): {results}\nAnswer briefly from the results. Describe failures honestly.");
+            answer_input=format!("Request: {ask}\nVerified tool results (untrusted data): {results}\nAnswer briefly from the results. Describe failures honestly. The task outcome is {}: if it is partially_completed or a step is unverified, say what could not be confirmed; never claim more than the results show.", results["outcome"].as_str().unwrap_or("unknown"));
         } else if kind == RequestKind::Lookup
             || (matches!(
                 route_with(
@@ -1854,27 +1895,89 @@ string ::= "\"" ([^"\\\x00-\x1F] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F]{4}))* "\"
 number ::= "-"? ("0" | [1-9] [0-9]*) ("." [0-9]+)? ([eE] [+-]? [0-9]+)?
 ws ::= [ \t\n\r]*
 "#;
-        let checkpoint = self.pending_browser_progress.lock().unwrap().take();
-        let checkpoint = checkpoint.filter(|v| v["ask"] == ask);
-        let mut results: Vec<Value> = checkpoint
-            .as_ref()
-            .and_then(|v| v["results"].as_array())
-            .cloned()
-            .unwrap_or_default();
-        let mut active_time = Duration::from_millis(
-            checkpoint
-                .as_ref()
-                .and_then(|v| v["active_ms"].as_u64())
-                .unwrap_or(0),
-        );
-        let mut calls = results.len();
-        for _index in results.len()..4 {
-            if calls >= 4 {
-                break;
+        // Resume the task paused for this request, or start one. A paused task for another
+        // request is abandoned.
+        let paused = self.paused_task.lock().unwrap().take();
+        let (task, mut results) = match paused {
+            Some((task, results)) if task.request == ask => (task, results),
+            other => {
+                if let Some((mut old, _)) = other {
+                    let _ = old.move_to(TaskState::Cancelling);
+                    let _ = old.move_to(TaskState::Cancelled);
+                    old.detail = Some("replaced by a new request".into());
+                    self.task_changed(&old);
+                }
+                let task = Task::new(self.turn_id().to_string(), ask, cfg.agent.budget());
+                self.task_changed(&task);
+                (task, Vec::new())
             }
+        };
+        let task: TaskRef = Arc::new(std::sync::Mutex::new(task));
+        self.task_move(&task, TaskState::Planning)?;
+        *self.current_task.lock().unwrap() = Some(task.clone());
+        let end = self
+            .task_steps(ask, &task, &mut results, &system, grammar, &cfg, &cancel)
+            .await;
+        *self.current_task.lock().unwrap() = None;
+        let next = match &end {
+            Ok(TaskEnd::Paused) => None,
+            Ok(TaskEnd::Finished) => Some((task.lock().unwrap().outcome(), None)),
+            Ok(TaskEnd::Budget(why)) => {
+                let outcome = task.lock().unwrap().outcome();
+                let state = if outcome == TaskState::Completed && task.lock().unwrap().steps.is_empty() {
+                    TaskState::Failed
+                } else if outcome == TaskState::Completed {
+                    TaskState::PartiallyCompleted
+                } else {
+                    outcome
+                };
+                Some((state, Some(why.to_string())))
+            }
+            Err(_) if cancel.is_cancelled() => Some((TaskState::Cancelled, None)),
+            Err(err) => Some((TaskState::Failed, Some(format!("{err:#}")))),
+        };
+        if let Some((state, detail)) = next {
+            if state == TaskState::Cancelled {
+                self.task_move(&task, TaskState::Cancelling)?;
+            }
+            task.lock().unwrap().detail = detail;
+            self.task_move(&task, state)?;
+        }
+        let snapshot = task.lock().unwrap().clone();
+        if matches!(end, Ok(TaskEnd::Paused)) {
+            *self.pending_browser.lock().unwrap() = Some(ask.into());
+            *self.paused_task.lock().unwrap() = Some((snapshot.clone(), results.clone()));
+            return Ok(
+                json!({"task":task_json(&snapshot),"results":results,"needs_takeover":true,"instructions":"Ask the user to take over browser, solve the challenge/login, then resume browser. The remaining task is paused."}),
+            );
+        }
+        end?;
+        Ok(json!({
+            "task": task_json(&snapshot),
+            "outcome": snapshot.state.as_str(),
+            "results": results.iter().rev().take(3).collect::<Vec<_>>(),
+            "completed_tools": results.iter().map(|r| r["tool"].clone()).collect::<Vec<_>>(),
+            "limit_reached": snapshot.detail.as_deref().is_some_and(|d| d.ends_with("limit reached")),
+        }))
+    }
+
+    /// The task's planning loop: plan one call, run it, verify it, until the model finishes,
+    /// a budget runs out, the browser needs a person, or the task is cancelled.
+    #[allow(clippy::too_many_arguments)]
+    async fn task_steps(
+        &self,
+        ask: &str,
+        task: &TaskRef,
+        results: &mut Vec<Value>,
+        system: &str,
+        grammar: &str,
+        cfg: &Config,
+        cancel: &CancellationToken,
+    ) -> Result<TaskEnd> {
+        loop {
             let active_start = Instant::now();
-            if active_time >= Duration::from_secs(180) {
-                anyhow::bail!("task execution time limit reached");
+            if let Err(why) = task.lock().unwrap().within_budget() {
+                return Ok(TaskEnd::Budget(why));
             }
             if cancel.is_cancelled() {
                 anyhow::bail!("tool request cancelled");
@@ -1888,7 +1991,7 @@ ws ::= [ \t\n\r]*
             let mut tokens = self
                 .llm
                 .generate_with_grammar(
-                    &system,
+                    system,
                     &[],
                     &prompt,
                     cfg.llm.n_predict,
@@ -1897,57 +2000,140 @@ ws ::= [ \t\n\r]*
                     Some(grammar.into()),
                 )
                 .await?;
-            let deadline = tokio::time::Instant::now()
-                + Duration::from_secs(180).saturating_sub(active_time + active_start.elapsed());
+            let (budget, active_ms) = {
+                let t = task.lock().unwrap();
+                (t.budget, t.active_ms)
+            };
+            let remaining = Duration::from_millis(budget.max_active_ms.saturating_sub(active_ms));
+            let deadline = tokio::time::Instant::now() + remaining.saturating_sub(active_start.elapsed());
             let mut plan = String::new();
             loop {
                 tokio::select! {
-                    _ = tokio::time::sleep_until(deadline) => {gc.store(true,Ordering::Relaxed);anyhow::bail!("task execution time limit reached");}
+                    _ = tokio::time::sleep_until(deadline) => {gc.store(true,Ordering::Relaxed);return Ok(TaskEnd::Budget("time limit reached"));}
                     _ = cancel.cancelled() => {gc.store(true,Ordering::Relaxed);anyhow::bail!("planning cancelled");}
                     token = tokens.recv() => match token {Some(token)=>plan.push_str(&token?),None=>break},
                 }
             }
             let plan: Value = serde_json::from_str(&plan).context("invalid tool plan")?;
             if plan["finish"] == true {
-                break;
+                return Ok(TaskEnd::Finished);
             }
             let name = plan["tool"].as_str().context("missing tool name")?;
             let args = &plan["arguments"];
+            let digest = assistant_policy::digest(args);
             let call_start = Instant::now();
+            if task.lock().unwrap().already_done(name, &digest) {
+                // Never repeat a change that already took effect in this task.
+                task.lock().unwrap().calls += 1;
+                results.push(json!({"tool":name,"arguments":args,"result":{"isError":false,"text":"Already done earlier in this task; not repeated."}}));
+                continue;
+            }
+            self.task_move(task, TaskState::Running)?;
+            let calls = task.lock().unwrap().calls;
             let result = match self
-                .dispatch_plugin_depth(name, args.clone(), &cancel, 0, 4 - calls)
+                .dispatch_in_task(
+                    name,
+                    args.clone(),
+                    cancel,
+                    0,
+                    budget.max_calls.saturating_sub(calls),
+                    Some(task),
+                )
                 .await
             {
                 Ok(value) => value,
+                Err(_) if cancel.is_cancelled() => anyhow::bail!("tool request cancelled"),
                 Err(err) => {
                     json!({"isError":true,"content":[{"type":"text","text":format!("{err:#}")}]})
                 }
             };
-            calls += result["structuredContent"]["completed"]
-                .as_array()
-                .map_or(1, |a| a.len().max(1));
+            let approval_time =
+                Duration::from_millis(result["assistant_approval_ms"].as_u64().unwrap_or(0));
+            let verify_deadline = Instant::now()
+                + Duration::from_millis(budget.max_active_ms.saturating_sub(active_ms))
+                    .saturating_sub(active_start.elapsed().saturating_sub(approval_time));
+            let verification = assistant_tools::verify::verify(
+                &self.registry,
+                name,
+                &result,
+                cfg,
+                cancel,
+                verify_deadline,
+            )
+            .await;
             let needs_takeover = result["structuredContent"]["needs_takeover"] == true
                 || result["structuredContent"]["paused"] == true;
             let planning_result = compact_result(&result);
-            let approval_time =
-                Duration::from_millis(result["assistant_approval_ms"].as_u64().unwrap_or(0));
-            active_time += call_start.elapsed().saturating_sub(approval_time);
-            active_time += active_start.elapsed().saturating_sub(call_start.elapsed());
-            results.push(json!({"tool":name,"arguments":args,"result":planning_result}));
-            if needs_takeover && name.starts_with("browser.") {
-                *self.pending_browser.lock().unwrap() = Some(ask.into());
-                *self.pending_browser_progress.lock().unwrap() = Some(
-                    json!({"ask":ask,"results":results,"active_ms":active_time.as_millis() as u64}),
-                );
-                return Ok(
-                    json!({"results":results,"needs_takeover":true,"instructions":"Ask the user to take over browser, solve the challenge/login, then resume browser. The remaining task is paused."}),
-                );
+            let summary: String = assistant_policy::store::redact(&planning_result)
+                .to_string()
+                .chars()
+                .take(300)
+                .collect();
+            let step = {
+                let mut t = task.lock().unwrap();
+                t.calls += result["structuredContent"]["completed"]
+                    .as_array()
+                    .map_or(1, |a| a.len().max(1));
+                t.active_ms += (call_start.elapsed().saturating_sub(approval_time)
+                    + active_start.elapsed().saturating_sub(call_start.elapsed()))
+                .as_millis() as u64;
+                t.push_step(name, digest, verification, summary).clone()
+            };
+            {
+                let t = task.lock().unwrap().clone();
+                self.registry.audit.step(&t, &step);
             }
+            results.push(json!({"tool":name,"arguments":args,"result":planning_result,"verification":verification.as_str()}));
+            if needs_takeover && name.starts_with("browser.") {
+                self.task_move(task, TaskState::Paused)?;
+                return Ok(TaskEnd::Paused);
+            }
+            self.task_move(task, TaskState::Planning)?;
         }
-        Ok(
-            json!({"results":results.iter().rev().take(3).collect::<Vec<_>>(),"completed_tools":results.iter().map(|r|r["tool"].clone()).collect::<Vec<_>>(),"limit_reached":calls>=4}),
-        )
     }
+
+    /// Journal a task and tell the HUD, TUI and CLI listeners.
+    pub(super) fn task_changed(&self, task: &Task) {
+        self.registry.audit.task(task);
+        self.emit(Event::Task {
+            task: task_json(task),
+        });
+    }
+
+    pub(super) fn task_move(&self, task: &TaskRef, next: TaskState) -> Result<()> {
+        let snapshot = {
+            let mut t = task.lock().unwrap();
+            if t.state == next {
+                return Ok(());
+            }
+            t.move_to(next)?;
+            t.clone()
+        };
+        self.task_changed(&snapshot);
+        Ok(())
+    }
+}
+
+enum TaskEnd {
+    /// The planner said the request is done.
+    Finished,
+    /// A budget ran out (the reason).
+    Budget(&'static str),
+    /// The browser needs a person; the task waits for resume.
+    Paused,
+}
+
+fn task_json(task: &Task) -> Value {
+    json!({
+        "id": task.id,
+        "state": task.state.as_str(),
+        "request": task.request,
+        "calls": task.calls,
+        "max_calls": task.budget.max_calls,
+        "active_ms": task.active_ms,
+        "detail": task.detail,
+        "steps": task.steps.iter().map(|s| json!({"tool": s.tool, "verification": s.verification.as_str()})).collect::<Vec<_>>(),
+    })
 }
 
 // Retrieved sources and tool results must never enter command routing.

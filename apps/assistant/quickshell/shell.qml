@@ -28,6 +28,7 @@ ShellRoot {
     property string approvalId: ""
     property string approvalText: ""
     property double approvalExpires: 0
+    property bool approvalTaskScope: false
     property bool connected: false
     property bool holdVisible: false
     property var theme: ({})
@@ -144,7 +145,8 @@ ShellRoot {
         case "tool_approval":
             root.approvalId = obj.approval_id;
             root.approvalExpires = obj.expires_at_ms;
-            root.approvalText = obj.tool + "\n" + JSON.stringify(obj.arguments, null, 2) + "\nY: allow once · N: deny · 60s expiry";
+            root.approvalTaskScope = obj.task_scope_allowed === true;
+            root.approvalText = obj.tool + "\n" + JSON.stringify(obj.arguments, null, 2) + "\nY: allow once" + (root.approvalTaskScope ? " · T: allow for this task" : "") + " · N: deny · 60s expiry";
             break;
         case "turn":
             if (obj.event && obj.event.type === "tool") { root.toolProgress = obj.event.tool + " · " + obj.event.status + " · " + JSON.stringify(obj.event.arguments || {}); }
@@ -338,6 +340,10 @@ ShellRoot {
         Shortcut {
             sequence: "Y"; enabled: root.approvalId.length > 0 && root.hudEnabled && root.connected
             onActivated: {approvalProc.command = ["nixe-assistant", "approve", root.approvalId]; approvalProc.running = true; root.approvalId = ""; root.approvalText = "";}
+        }
+        Shortcut {
+            sequence: "T"; enabled: root.approvalId.length > 0 && root.approvalTaskScope && root.hudEnabled && root.connected
+            onActivated: {approvalProc.command = ["nixe-assistant", "approve", root.approvalId, "--task"]; approvalProc.running = true; root.approvalId = ""; root.approvalText = "";}
         }
         Shortcut {
             sequence: "N"; enabled: root.approvalId.length > 0 && root.hudEnabled && root.connected

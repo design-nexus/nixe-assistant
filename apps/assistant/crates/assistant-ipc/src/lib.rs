@@ -9,5 +9,5 @@ pub use server::{
 };
 
 pub use http::bearer_token;
-pub use protocol::Control;
+pub use protocol::{ApprovalScope, Control};
 pub use server::request;

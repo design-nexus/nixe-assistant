@@ -346,6 +346,74 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
+        "tasks" => {
+            let rest: Vec<_> = args.collect();
+            let path =
+                assistant_policy::store::default_path(&assistant_core::paths::state_dir());
+            let json_mode = rest.iter().any(|a| a == "--json");
+            let when = |ms: u64| {
+                chrono::DateTime::from_timestamp_millis(ms as i64)
+                    .map(|t| t.with_timezone(&chrono::Local).format("%F %T").to_string())
+                    .unwrap_or_default()
+            };
+            match rest.first().map(String::as_str) {
+                Some("cancel") => {
+                    let task_id = rest.get(1).context("task ID required")?.clone();
+                    println!("{}", request(Control::TaskCancel { task_id }, 5000).await?);
+                }
+                Some("show") => {
+                    let id = rest.get(1).context("task ID required")?;
+                    let (task, steps) = assistant_policy::store::task(&path, id)?
+                        .with_context(|| format!("no task {id}"))?;
+                    if json_mode {
+                        println!("{}", serde_json::json!({"task":task,"steps":steps}));
+                    } else {
+                        println!(
+                            "{}  {}  {}/{} calls  {:.1}s\n{}{}",
+                            task.id,
+                            task.state,
+                            task.calls,
+                            task.max_calls,
+                            task.active_ms as f64 / 1000.0,
+                            task.request,
+                            task.detail.map(|d| format!("\n  {d}")).unwrap_or_default()
+                        );
+                        for s in steps {
+                            println!(
+                                "  {}  {:<28} {:<11} {}",
+                                s.index, s.tool, s.verification, s.summary
+                            );
+                        }
+                    }
+                }
+                _ => {
+                    let limit = rest
+                        .iter()
+                        .position(|a| a == "--limit")
+                        .and_then(|i| rest.get(i + 1))
+                        .map(|n| n.parse::<usize>())
+                        .transpose()?
+                        .unwrap_or(20);
+                    let rows = assistant_policy::store::tasks(&path, limit)?;
+                    if json_mode {
+                        println!("{}", serde_json::to_string(&rows)?);
+                    } else if rows.is_empty() {
+                        println!("No tasks in {}", path.display());
+                    }
+                    for t in rows.iter().filter(|_| !json_mode) {
+                        let request: String = t.request.chars().take(60).collect();
+                        println!(
+                            "{}  {}  {:<20} {}/{}  {request}",
+                            when(t.created_ms),
+                            t.id,
+                            t.state,
+                            t.calls,
+                            t.max_calls
+                        );
+                    }
+                }
+            }
+        }
         "preview" => {
             let cfg = assistant_core::Config::load()?;
             let voice = args.next().unwrap_or(cfg.tts.voice);
@@ -375,12 +443,18 @@ async fn main() -> anyhow::Result<()> {
             let approval_id = args
                 .next()
                 .ok_or_else(|| anyhow::anyhow!("approval ID required"))?;
+            let scope = if args.any(|a| a == "--task") {
+                assistant_ipc::ApprovalScope::Task
+            } else {
+                assistant_ipc::ApprovalScope::Once
+            };
             println!(
                 "{}",
                 request(
                     Control::Approve {
                         approval_id,
-                        allow: cmd == "approve"
+                        allow: cmd == "approve",
+                        scope,
                     },
                     2000
                 )
@@ -703,7 +777,8 @@ fn print_help() {
            location [show|refresh|set CITY|clear|on|off]\n\
            conversation start|stop, dictation start|pause|resume|stop|insert\n\
            browser-takeover, browser-resume, jobs status|follow|cancel ID\n\
-           tool-mode on|off, approve ID, deny ID\n\
+           tool-mode on|off, approve ID [--task], deny ID\n\
+           tasks [--limit N] [--json], tasks show ID, tasks cancel ID\n\
          Commands:\n\
            persona [set/new/aliases/add-alias]  manage saved assistant personas\n\
            ptt-start      start push-to-talk capture\n\

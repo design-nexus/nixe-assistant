@@ -517,9 +517,13 @@ impl App {
             }
             Update::Event(ev) => match ev {
                 assistant_core::Event::ToolApproval {
-                    tool, arguments, ..
+                    tool,
+                    arguments,
+                    task_scope_allowed,
+                    ..
                 } => self.set_toast(format!(
-                    "Approval needed: {tool} {arguments} — y allow / n deny"
+                    "Approval needed: {tool} {arguments} — y allow{} / n deny",
+                    if task_scope_allowed { " / t allow for this task" } else { "" }
                 )),
                 assistant_core::Event::Turn { event, .. } if event["type"] == "calibration" => {
                     self.set_toast(format!("Calibration: {} for five seconds", event["phase"]))
@@ -538,7 +542,7 @@ impl App {
             30_000,
         );
     }
-    pub fn approve(&mut self, allow: bool) {
+    pub fn approve(&mut self, allow: bool, scope: assistant_ipc::ApprovalScope) {
         if let Some(id) = self
             .daemon_status
             .as_ref()
@@ -550,6 +554,7 @@ impl App {
                 Control::Approve {
                     approval_id: id,
                     allow,
+                    scope,
                 },
                 2000,
             );

@@ -302,20 +302,24 @@ impl App {
         timing.stt_done = Some(Instant::now());
         self.respond(&tr.text, timing).await
     }
+    /// Returns (approved, for the rest of the task).
     pub(super) async fn voice_approval(
         &self,
         id: &str,
         tool: &str,
         arguments: &Value,
+        task_scope: bool,
         cancel: &CancellationToken,
-    ) -> Result<bool> {
+    ) -> Result<(bool, bool)> {
         self.emit_session_mode("approval");
         let by_voice = assistant_policy::Capability::of(tool).voice_approvable();
         let spoken = format!(
             "Approval needed for {}. {}. {}",
             tool,
             arguments.to_string().chars().take(240).collect::<String>(),
-            if by_voice {
+            if by_voice && task_scope {
+                "Say approve, approve for this task, or deny."
+            } else if by_voice {
                 "Say approve or deny."
             } else {
                 "Approve it on screen, or say deny."
@@ -324,18 +328,18 @@ impl App {
         let tts = self.tts.clone();
         let pcm = tokio::task::spawn_blocking(move || tts.speak(&spoken)).await??;
         if cancel.is_cancelled() {
-            return Ok(false);
+            return Ok((false, false));
         }
         self.audio.play(pcm)?;
-        tokio::select! {_=cancel.cancelled()=>return Ok(false),_=self.audio.wait_playback()=>{}}
+        tokio::select! {_=cancel.cancelled()=>return Ok((false, false)),_=self.audio.wait_playback()=>{}}
         let deadline = Instant::now() + Duration::from_secs(55);
         loop {
             if !self.pending.lock().unwrap().contains_key(id) || Instant::now() >= deadline {
-                return Ok(false);
+                return Ok((false, false));
             }
             let pcm = self.listen_pcm(deadline, None, cancel).await?;
             if pcm.len() < 3200 || cancel.is_cancelled() {
-                return Ok(false);
+                return Ok((false, false));
             }
             let tr = self.stt.transcribe(&pcm, cancel.clone()).await?;
             match tr
@@ -345,8 +349,11 @@ impl App {
                 .to_lowercase()
                 .as_str()
             {
-                "approve" | "yes approve" | "yes" | "allow once" if by_voice => return Ok(true),
-                "deny" | "no" | "cancel" => return Ok(false),
+                "approve for this task" | "allow for this task" if by_voice && task_scope => {
+                    return Ok((true, true))
+                }
+                "approve" | "yes approve" | "yes" | "allow once" if by_voice => return Ok((true, false)),
+                "deny" | "no" | "cancel" => return Ok((false, false)),
                 _ => {}
             }
         }
@@ -361,19 +368,24 @@ impl App {
             draft: s.draft.clone(),
         });
     }
+    /// Ask a person. Returns (approved, for the rest of the task); the second is only ever
+    /// true when `task_id` is set and the tool may be approved task-wide.
     pub(super) async fn request_approval(
         &self,
         id: String,
         tool: &str,
         args: &Value,
+        task_id: Option<String>,
         cancel: &CancellationToken,
-    ) -> Result<bool> {
+    ) -> Result<(bool, bool)> {
+        let task_scope =
+            task_id.is_some() && assistant_policy::Capability::of(tool).task_approvable();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.approvals.lock().await.insert(id.clone(), tx);
         let expires = now_ms() + 60_000;
         self.pending.lock().unwrap().insert(
             id.clone(),
-            json!({"tool":tool,"arguments":args,"expires_at_ms":expires}),
+            json!({"tool":tool,"arguments":args,"expires_at_ms":expires,"task_id":task_id,"task_scope_allowed":task_scope}),
         );
         self.emit(Event::ToolApproval {
             approval_id: id.clone(),
@@ -381,6 +393,8 @@ impl App {
             tool: tool.into(),
             arguments: args.clone(),
             expires_at_ms: expires,
+            task_id,
+            task_scope_allowed: task_scope,
         });
         let plugin_cancel = self
             .registry
@@ -388,13 +402,14 @@ impl App {
             .as_ref()
             .map(|p| p.token(tool))
             .unwrap_or_default();
-        let approved = tokio::select! {_=plugin_cancel.cancelled()=>false,_=cancel.cancelled()=>false,r=tokio::time::timeout(Duration::from_secs(60),rx)=>matches!(r,Ok(Ok(true))),r=async {match self.voice_approval(&id,tool,args,cancel).await {Ok(v)=>v,Err(err)=>{tracing::warn!(%err,"voice approval unavailable; keyboard approval remains available");std::future::pending::<bool>().await}}}=>r};
+        let (approved, for_task) = tokio::select! {_=plugin_cancel.cancelled()=>(false,false),_=cancel.cancelled()=>(false,false),r=tokio::time::timeout(Duration::from_secs(60),rx)=>r.ok().and_then(|r|r.ok()).unwrap_or((false,false)),r=async {match self.voice_approval(&id,tool,args,task_scope,cancel).await {Ok(v)=>v,Err(err)=>{tracing::warn!(%err,"voice approval unavailable; keyboard approval remains available");std::future::pending::<(bool,bool)>().await}}}=>r};
         let _ = self.audio.stop_capture();
         let _ = self.audio.cancel_playback();
         self.approvals.lock().await.remove(&id);
         self.pending.lock().unwrap().remove(&id);
         self.emit_session();
-        Ok(approved && !cancel.is_cancelled() && now_ms() < expires)
+        let approved = approved && !cancel.is_cancelled() && now_ms() < expires;
+        Ok((approved, approved && for_task && task_scope))
     }
     pub(super) async fn control_phrase(
         self: &Arc<Self>,
@@ -839,6 +854,20 @@ impl App {
         depth: usize,
         budget: usize,
     ) -> Result<Value> {
+        self.dispatch_in_task(name, args, cancel, depth, budget, None)
+            .await
+    }
+    /// Dispatch one call. Inside a task, approvals show the task, a task-wide approval
+    /// covers later calls to the same tool, and the task waits while a person decides.
+    pub(super) async fn dispatch_in_task(
+        &self,
+        name: &str,
+        args: Value,
+        cancel: &CancellationToken,
+        depth: usize,
+        budget: usize,
+        task: Option<&TaskRef>,
+    ) -> Result<Value> {
         anyhow::ensure!(depth <= 1, "nested host dispatch limit");
         *self.last_activity.lock().unwrap() = Instant::now();
         let cfg = self.cfg();
@@ -876,15 +905,37 @@ impl App {
             Authorization::NeedsApproval(verdict) => {
                 let approval_start = Instant::now();
                 let id = format!("plugin-{}-{}", self.turn_id(), now_ms());
-                let approved = self
-                    .request_approval(id.clone(), name, &review_args, cancel)
-                    .await?;
                 let mut record = self.registry.record("approval", &verdict, &review_args);
                 record.turn = Some(self.turn_id().to_string());
                 record.approval_id = Some(id.clone());
-                record.outcome = if approved { "approved" } else { "denied" }.into();
-                self.registry.journal(record);
-                anyhow::ensure!(approved, "approval denied, expired or cancelled");
+                let covered = task.is_some_and(|t| t.lock().unwrap().approved_for_task(name));
+                if covered {
+                    record.outcome = "approved".into();
+                    record.detail = Some("covered by a task-wide approval".into());
+                    self.registry.journal(record);
+                } else {
+                    let task_id = task.map(|t| t.lock().unwrap().id.clone());
+                    if let Some(t) = task {
+                        self.task_move(t, TaskState::WaitingForApproval)?;
+                    }
+                    let (approved, for_task) = self
+                        .request_approval(id.clone(), name, &review_args, task_id, cancel)
+                        .await?;
+                    record.outcome = if approved { "approved" } else { "denied" }.into();
+                    if for_task {
+                        record.detail = Some("for the rest of the task".into());
+                    }
+                    self.registry.journal(record);
+                    if let Some(t) = task {
+                        if for_task {
+                            t.lock().unwrap().approve_for_task(name);
+                        }
+                        if !cancel.is_cancelled() {
+                            self.task_move(t, TaskState::Running)?;
+                        }
+                    }
+                    anyhow::ensure!(approved, "approval denied, expired or cancelled");
+                }
                 approval_ms = approval_start.elapsed().as_millis() as u64;
                 // Bound to the final arguments (routines.run adds the reviewed digest).
                 Grant::approved(&verdict, &args, &id)?

@@ -8,10 +8,12 @@
 pub mod capability;
 pub mod grant;
 pub mod store;
+pub mod task;
 
 pub use capability::Capability;
 pub use grant::{digest, Grant, GrantKind};
 use serde::{Deserialize, Serialize};
+pub use task::{Budget, Task, TaskState, Verification};
 
 /// Ordered from least to most restrictive, so `max` picks the stricter one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

@@ -261,11 +261,15 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         .is_some_and(|s| !s.pending_approvals.is_empty())
     {
         if key.code == KeyCode::Char('y') {
-            app.approve(true);
+            app.approve(true, assistant_ipc::ApprovalScope::Once);
+            return false;
+        }
+        if key.code == KeyCode::Char('t') {
+            app.approve(true, assistant_ipc::ApprovalScope::Task);
             return false;
         }
         if key.code == KeyCode::Char('n') {
-            app.approve(false);
+            app.approve(false, assistant_ipc::ApprovalScope::Once);
             return false;
         }
     }

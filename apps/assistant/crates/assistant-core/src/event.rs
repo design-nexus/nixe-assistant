@@ -31,6 +31,15 @@ pub enum Event {
         tool: String,
         arguments: serde_json::Value,
         expires_at_ms: u64,
+        #[serde(default)]
+        task_id: Option<String>,
+        /// Whether "approve for this task" is offered for this tool.
+        #[serde(default)]
+        task_scope_allowed: bool,
+    },
+    /// A task changed state or finished a step.
+    Task {
+        task: serde_json::Value,
     },
     Settings {
         running: serde_json::Value,

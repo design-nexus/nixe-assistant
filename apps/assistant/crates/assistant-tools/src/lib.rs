@@ -7,3 +7,4 @@ pub mod mcp;
 pub mod plugins;
 pub mod registry;
 pub mod typed;
+pub mod verify;

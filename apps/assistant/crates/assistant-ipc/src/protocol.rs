@@ -91,5 +91,19 @@ pub enum Control {
     Approve {
         approval_id: String,
         allow: bool,
+        /// `task` also covers later calls to the same tool in the same task, where allowed.
+        #[serde(default)]
+        scope: ApprovalScope,
     },
+    TaskCancel {
+        task_id: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ApprovalScope {
+    #[default]
+    Once,
+    Task,
 }

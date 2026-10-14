@@ -145,6 +145,12 @@ impl Capability {
         !matches!(self, Self::TerminalGenerated | Self::Shutdown | Self::Capture)
     }
 
+    /// Whether one approval may cover the rest of a task. The same tools that need a key
+    /// press each time are approved one call at a time.
+    pub fn task_approvable(self) -> bool {
+        self.voice_approvable() && self != Self::Disabled
+    }
+
     pub(crate) fn low_risk(self) -> bool {
         matches!(self, Self::Desktop | Self::Audio | Self::AppLaunch)
     }

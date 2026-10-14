@@ -42,7 +42,7 @@ concurrent load §4.6 asks for. Tests: 62 passed before this work (73 after) (`c
 | §4 full duplex | partial | Concurrent capture during playback for barge-in exists; STT is not streaming, there are no partial transcripts, and responses are not cancelled by generation ID. The PipeWire AEC module stands in for in-process AEC3. |
 | §4.5 independent states | missing | One sequential state machine. Splitting it touches the HUD protocol (`state` events). |
 | §4.3 models | different | Parakeet, Kokoro and Gemma are in use and measured. Nemotron, Qwen3-TTS, PersonaPlex and Moshi are untested candidates. |
-| §5 agent engine | partial | A planning loop with budgets and cancellation exists per turn; there are no persistent tasks, IDs, checkpoints, verification step or resumption. |
+| §5 agent engine | **done in Phase 2** (core) | Tasks with IDs, states, budgets, per-step verification and resume after browser takeover. Planning is still one call at a time; there is no up-front plan or checkpoint/rollback. |
 | §6.1 desktop | mostly | Hyprland control goes through `hyprctl` argument arrays, not the IPC socket. Listing windows is missing as a typed tool. |
 | §6.2 system | partial | volume, Bluetooth toggle, power profiles and media exist; NetworkManager, UPower and systemd unit control are missing; D-Bus is used through commands, not a client. |
 | §6.3 files | partial | read-only inside HOME; no writes, moves, trash or backups. |
@@ -90,8 +90,9 @@ plus `assistant-policy`.
 - [x] Phase 0: this audit; baseline tests green (62).
 - [x] Phase 1: typed decisions and capabilities, decision point, grants at the enforcement
       point, deny overrides, autonomy modes, audit journal, tests.
-- [ ] Phase 2: tasks (ID, state, budgets, cancellation token) in the same `agent.db`; a
-      verification step after state-changing tools; resumable only with a valid grant.
+- [x] Phase 2: tasks (ID, state, budgets, cancellation) in `agent.db`; task-wide
+      approvals; a verification verdict per step; browser-paused tasks resume with
+      unexpired approvals only; restarts mark live tasks failed.
 - [ ] Phase 3: typed tools for windows (Hyprland socket), systemd user units, NetworkManager,
       UPower; file writes with backups and trash; bubblewrap for workspace commands.
 - [ ] Phase 4: privileged broker with polkit and typed actions.
@@ -101,9 +102,9 @@ plus `assistant-policy`.
 - [ ] Phase 7: "Agent & Permissions" in Nixe Settings; approvals in the HUD for high-impact tools.
 - [ ] Phase 8: security tests (injection, path traversal, approval reuse), latency under load.
 
-**Recommended next milestone:** Phase 2's task journal on `agent.db`, because tasks give
-grants a scope beyond one call (approve once for a task) and give verification and
-recovery somewhere to record results.
+**Recommended next milestone:** Phase 3's typed desktop and system tools, starting with
+Hyprland window listing over its socket, which also lets desktop steps be verified
+instead of staying unverified.
 
 ## Phase 1 as built
 

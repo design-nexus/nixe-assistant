@@ -121,6 +121,10 @@ terminal = "omarchy-launch-terminal"
 # "assisted": reads and desktop, volume and app changes run; other changes ask.
 # "manual": anything that changes state asks.
 mode = "autonomous"
+# One request runs as a task: at most this many tool calls and active seconds
+# (approval waits don't count).
+max_calls = 4
+max_active_secs = 180
 
 [mcp]
 enabled = true

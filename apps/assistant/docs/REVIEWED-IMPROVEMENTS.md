@@ -35,9 +35,31 @@ paginated tools, and combines them with `files.read`, `git.status`, and
 `system.status`. Initialization failures appear in Diagnostics.
 
 Planning uses a JSON grammar: one registered tool with schema-valid arguments,
-or finish. Clear browser/terminal requests enter tool mode automatically. A request may execute at most twelve calls, each with a 15 second
-limit. Results preserve `content`, `structuredContent`, and `isError`. Output
+or finish. Clear browser/terminal requests enter tool mode automatically. Each call
+has a 15 second limit. Results preserve `content`, `structuredContent`, and `isError`. Output
 schemas are validated. Results are untrusted data, never instructions.
+
+## Tasks
+
+A tool request runs as a task with an ID, a state (planning, running, waiting for
+approval, paused, then completed, partially completed, failed or cancelled) and a
+budget: `[agent] max_calls` (default 4) and `max_active_secs` (default 180; approval
+waits don't count). Every step is checked after it runs: errors fail; terminal jobs
+are verified by exit status; abilities that return an undo record have confirmed
+their change; desktop and app actions stay unverified for now. A task is completed
+only when every change is verified, otherwise partially completed, and the spoken
+answer says what couldn't be confirmed. A change that already succeeded with the
+same arguments is not repeated within the task.
+
+An approval can cover the rest of the task (`t` in the TUI, `T` on the HUD,
+`approve ID --task`, or "approve for this task"): later calls to the same tool in
+that task run without asking, for at most ten minutes. Generated commands, shutdown
+and captures are always approved one call at a time. Browser takeover pauses the
+task; "resume browser" continues it with its steps and remaining budget. Cancel
+(`cancel`, Escape, `tasks cancel ID`) stops the task and its terminal jobs. A
+restart marks tasks it interrupted as failed; nothing resumes on its own.
+
+Tasks and steps are kept in `agent.db`: `nixe-assistant tasks`, `tasks show ID`.
 
 External tools require confirmation by default. The TUI and HUD display exact
 arguments; `y` allows once, `n` denies. Approvals expire after 60 seconds.
@@ -98,7 +120,7 @@ HTTP binds only to a loopback IP. Every endpoint requires
 HTTP action responses indicate queued work, not successful execution; use IPC
 for acknowledged reloads. No browser-origin access is enabled.
 
-CLI additions: `doctor [--json]`, `status --json`, `activity [clear]`, `audit [--limit N] [--json]`,
+CLI additions: `doctor [--json]`, `status --json`, `activity [clear]`, `audit [--limit N] [--json]`, `tasks [show ID|cancel ID]`,
 `preview [voice speed]`, `calibrate`, `tool-mode on|off`, `approve ID`, `deny ID`.
 `doctor` works when the daemon is stopped.
 

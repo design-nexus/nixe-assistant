@@ -557,6 +557,19 @@ pub struct AgentCfg {
     pub terminal: String,
     /// How much runs without asking: autonomous, assisted or manual.
     pub mode: assistant_policy::AutonomyMode,
+    /// Tool calls one task may make (1–32).
+    pub max_calls: usize,
+    /// Active seconds one task may spend, not counting approval waits (10–1800).
+    pub max_active_secs: u64,
+}
+
+impl AgentCfg {
+    pub fn budget(&self) -> assistant_policy::Budget {
+        assistant_policy::Budget {
+            max_calls: self.max_calls,
+            max_active_ms: self.max_active_secs * 1000,
+        }
+    }
 }
 
 impl Default for AgentCfg {
@@ -566,6 +579,8 @@ impl Default for AgentCfg {
             default_agent: "agy".into(),
             terminal: "omarchy-launch-terminal".into(),
             mode: Default::default(),
+            max_calls: 4,
+            max_active_secs: 180,
         }
     }
 }
@@ -767,6 +782,11 @@ impl Config {
             if assistant_policy::Decision::parse(policy).is_none() {
                 return fail("permission must be allow, confirm (or ask), or deny");
             }
+        }
+        if !(1..=32).contains(&self.agent.max_calls)
+            || !(10..=1800).contains(&self.agent.max_active_secs)
+        {
+            return fail("agent max_calls must be 1–32 and max_active_secs 10–1800");
         }
         for (name, server) in &self.mcp.servers {
             if name.is_empty()
@@ -1016,6 +1036,13 @@ mod tests {
         cfg.permissions.volume = "ask".into();
         assert!(cfg.validate().is_ok());
         cfg.permissions.volume = "alow".into();
+        assert!(cfg.validate().is_err());
+        let mut cfg = Config::default();
+        assert_eq!((cfg.agent.budget().max_calls, cfg.agent.budget().max_active_ms), (4, 180_000));
+        cfg.agent.max_calls = 0;
+        assert!(cfg.validate().is_err());
+        cfg.agent.max_calls = 4;
+        cfg.agent.max_active_secs = 5;
         assert!(cfg.validate().is_err());
     }
 
