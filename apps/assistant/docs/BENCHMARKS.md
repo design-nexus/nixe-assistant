@@ -91,6 +91,19 @@ a missed "stop" lets the reply carry on (say it again, or Escape).
 | Redirect decided | — | 1.0–1.9 s after onset (waits for three content words or the end of speech) |
 | First audio, text turn incl. routing, under its own LLM + TTS load | < 900 ms | 607 / 980 / 1293 ms (median 980) |
 
+Live trials (`bench duplex`, 2026-10-14, Ken speaking at normal volume while she counts):
+
+| Said | Verdicts | Paused after onset | Decided after onset |
+|---|---|---|---|
+| mm-hm | noise “”, noise “” | 0.01–0.02 ms | 840 ms |
+| stop | noise “”, noise “” | 0.00–0.01 ms | 805–826 ms |
+| actually, what's the weather in Paris? | redirect “Actually, what's the weather in Paris” | 0.01 ms | 1897 ms |
+
+Echo in the same run: 0 onsets over two short replies; first audio 425 / 954 ms.
+"mm-hm" comes back without words, which has the right effect (she carries on). "stop" also
+comes back without words, so it does not stop the reply: the recognizer limit above. Escape,
+Alt+Space or a longer request still stop or redirect her.
+
 The first-audio figure includes a routing step that took 2.4 s in one earlier long-prompt
 turn; for short replies it is in the 0.3–0.5 s range (demo turns: 906–1180 ms total).
 
