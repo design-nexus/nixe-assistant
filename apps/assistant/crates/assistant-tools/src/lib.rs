@@ -2,10 +2,13 @@
 //! terminal jobs and the built-in typed tools. Decisions live in `assistant-policy`.
 
 pub mod agent;
+pub mod fs;
 pub mod jobs;
 pub mod mcp;
 pub mod plugins;
 pub mod registry;
 pub mod relevance;
+pub mod sandbox;
+pub mod system;
 pub mod typed;
 pub mod verify;

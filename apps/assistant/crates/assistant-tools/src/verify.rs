@@ -1,8 +1,9 @@
 //! After a call: did it take effect, as far as anything can confirm?
 //!
 //! A verdict per step, not on the whole goal. Errors fail; passive calls need nothing;
-//! terminal jobs are confirmed by their exit status; abilities that return an undo record
-//! have confirmed their own change; anything else ran but stays unverified.
+//! terminal jobs are confirmed by their exit status; tools that re-read what they changed
+//! report `verified`; abilities that return an undo record have confirmed their own change;
+//! anything else ran but stays unverified.
 
 use crate::registry::Registry;
 use assistant_core::Config;
@@ -31,6 +32,10 @@ pub fn check(tool: &str, result: &Value) -> Check {
             Some(id) => Check::Job(id.into()),
             None => Check::Done(Verification::Unverified),
         };
+    }
+    // Tools that re-read what they changed say so.
+    if let Some(verified) = data["verified"].as_bool() {
+        return Check::Done(if verified { Verification::Verified } else { Verification::Failed });
     }
     if data["undo"].is_object() {
         Check::Done(Verification::Verified)
@@ -94,6 +99,13 @@ mod tests {
         assert_eq!(check("notes.list", &json!({"isError":false})), Check::Done(NotNeeded));
         assert_eq!(check("notes.create", &json!({"structuredContent":{"undo":{"tool":"notes.undo"}}})), Check::Done(Verified));
         assert_eq!(check("hypr.workspace", &json!({"content":[]})), Check::Done(Unverified));
+        assert_eq!(check("windows.focus", &json!({"structuredContent":{"verified":true}})), Check::Done(Verified));
+        assert_eq!(check("windows.close", &json!({"structuredContent":{"verified":false}})), Check::Done(Failed));
+        assert_eq!(
+            check("files.write", &json!({"structuredContent":{"verified":false,"undo":{"tool":"files.undo"}}})),
+            Check::Done(Failed),
+            "a failed self-check beats the undo record"
+        );
         assert_eq!(check("terminal.run", &json!({"structuredContent":{"job_id":"7-0"}})), Check::Job("7-0".into()));
         assert_eq!(check("terminal.run", &json!({})), Check::Done(Unverified));
     }

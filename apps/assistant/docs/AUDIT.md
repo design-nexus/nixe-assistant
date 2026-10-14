@@ -43,14 +43,14 @@ concurrent load §4.6 asks for. Tests: 62 passed before this work (73 after) (`c
 | §4.5 independent states | missing | One sequential state machine. Splitting it touches the HUD protocol (`state` events). |
 | §4.3 models | different | Parakeet, Kokoro and Gemma are in use and measured. Nemotron, Qwen3-TTS, PersonaPlex and Moshi are untested candidates. |
 | §5 agent engine | **done in Phase 2** (core) | Tasks with IDs, states, budgets, per-step verification and resume after browser takeover. Planning is still one call at a time; there is no up-front plan or checkpoint/rollback. |
-| §6.1 desktop | mostly | Hyprland control goes through `hyprctl` argument arrays, not the IPC socket. Listing windows is missing as a typed tool. |
-| §6.2 system | partial | volume, Bluetooth toggle, power profiles and media exist; NetworkManager, UPower and systemd unit control are missing; D-Bus is used through commands, not a client. |
-| §6.3 files | partial | read-only inside HOME; no writes, moves, trash or backups. |
-| §6.4 terminal | partial | managed jobs with approval for generated commands; no read-only or workspace sandbox. |
+| §6.1 desktop | **done in Phase 3** | Typed window, workspace and monitor tools over Hyprland's socket; focus, move, close and switch re-read the state to verify. Phrase commands still use `hyprctl eval`. |
+| §6.2 system | **mostly (Phase 3)** | systemd user units (list, status, control with an allowlist), NetworkManager status and Wi-Fi, PipeWire devices and volume, power profiles. Bluetooth beyond toggling and UPower details are not typed; D-Bus is still reached through commands. |
+| §6.3 files | **done in Phase 3** | One guard for every file tool (secret folders off limits, the assistant's own folders read-only); list, search, write, move, trash with backups and `files.undo`. |
+| §6.4 terminal | **mostly (Phase 3)** | Generated commands run in a bubblewrap workspace sandbox and still ask; configured commands run as the user. The privileged environment waits for Phase 4. |
 | §6.5 browser | mostly | Playwright worker with takeover. |
 | §6.6–6.7 computer use, vision | missing | Screenshots and OCR exist as desktop actions only. |
 | §7–8 permissions | **done in Phase 1** | See below. |
-| §9 sandboxing | missing | No bubblewrap, seccomp or cgroup limits. Plugins run with the user's permissions (the CLI already says so). |
+| §9 sandboxing | partial | Bubblewrap for generated terminal commands (namespaces, read-only system, hidden home, no runtime sockets). No seccomp or cgroup limits yet, and plugins still run with the user's permissions. |
 | §10 privileged broker | missing | Nothing runs as root. |
 | §11.1 voice authorization | partial | Wake word and AEC exist. High-impact tools refuse spoken approval; the rest accept it. |
 | §11.2 prompt injection | partial | Tool results are passed as untrusted data, and the planner grammar admits only registered tools. |
@@ -93,8 +93,9 @@ plus `assistant-policy`.
 - [x] Phase 2: tasks (ID, state, budgets, cancellation) in `agent.db`; task-wide
       approvals; a verification verdict per step; browser-paused tasks resume with
       unexpired approvals only; restarts mark live tasks failed.
-- [ ] Phase 3: typed tools for windows (Hyprland socket), systemd user units, NetworkManager,
-      UPower; file writes with backups and trash; bubblewrap for workspace commands.
+- [x] Phase 3: typed tools for windows (Hyprland socket), systemd user units, NetworkManager,
+      PipeWire and power profiles; guarded file writes with backups and trash; bubblewrap for
+      generated commands; first-party manifests refresh on install.
 - [ ] Phase 4: privileged broker with polkit and typed actions.
 - [ ] Phase 5: streaming STT and generation IDs; independent states; interruption handling
       with context repair; echo-rejection benchmark under load.
@@ -102,9 +103,9 @@ plus `assistant-policy`.
 - [ ] Phase 7: "Agent & Permissions" in Nixe Settings; approvals in the HUD for high-impact tools.
 - [ ] Phase 8: security tests (injection, path traversal, approval reuse), latency under load.
 
-**Recommended next milestone:** Phase 3's typed desktop and system tools, starting with
-Hyprland window listing over its socket, which also lets desktop steps be verified
-instead of staying unverified.
+**Recommended next milestone:** Phase 4's privileged broker: a separate helper behind
+polkit with typed actions (install a repository package, restart a system service, set a
+power profile), so administrative tasks work without a root shell.
 
 ## Phase 1 as built
 
@@ -128,5 +129,6 @@ instead of staying unverified.
   `launch_app` governs `agent.handoff` (both were always allowed before, whatever the
   config said); a user `allow` on `terminal.run` or `terminal.shell` still asks; a capability
   deny (for example `volume = "deny"`) beats a per-tool allow. Defaults are unchanged.
-- Not yet: approval scopes beyond one call (task, session), and the `sandbox` decision,
-  which asks until Phase 3 adds bubblewrap.
+- Not yet in Phase 1: approval scopes beyond one call (Phase 2 added task scope; there is
+  no session scope). The `sandbox` decision still asks: since Phase 3, generated commands
+  run in bubblewrap and are approved each time, by Ken's choice.

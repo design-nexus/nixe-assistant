@@ -186,7 +186,17 @@ mod tests {
 
     fn verdict(tool: &str) -> Verdict {
         let rules = Rules::default();
-        decide(tool, &Cx { available: true, trusted: true, tool_rule: None, rules: &rules, mode: AutonomyMode::Autonomous })
+        decide(
+            tool,
+            &Cx {
+                available: true,
+                trusted: true,
+                tool_rule: None,
+                rules: &rules,
+                mode: AutonomyMode::Autonomous,
+                resource_approved: false,
+            },
+        )
     }
 
     #[test]

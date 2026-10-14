@@ -795,6 +795,9 @@ pub async fn migrate(cfg: &Config, worker: &Path, checkout: &Path) -> Result<()>
         "clock",
         "location",
         "weather",
+        "windows",
+        "services",
+        "network",
     ];
     for id in groups {
         let mut tools: Vec<_> = registry
@@ -809,6 +812,10 @@ pub async fn migrate(cfg: &Config, worker: &Path, checkout: &Path) -> Result<()>
                 "location" => name.starts_with("location."),
                 "weather" => name.starts_with("weather."),
                 "apps" => name.starts_with("apps."),
+                "windows" => ["windows.", "workspaces.", "monitors."].iter().any(|p| name.starts_with(p)),
+                "services" => name.starts_with("services."),
+                "network" => name.starts_with("network."),
+                "desktop-controls" => name.starts_with("audio.") || name.as_str() == "system.power_profile",
                 _ => false,
             })
             .cloned()
@@ -956,9 +963,14 @@ pub async fn migrate(cfg: &Config, worker: &Path, checkout: &Path) -> Result<()>
 fn write_migrated(m: &Manifest, state: &mut BTreeMap<String, Saved>, enabled: bool) -> Result<()> {
     m.validate()?;
     let dir = package_dir().join(&m.id);
-    if !dir.exists() {
+    let file = dir.join("plugin.toml");
+    let text = toml::to_string_pretty(m)?;
+    // First-party manifests are generated: refresh them so new tools reach existing installs.
+    // A package the user installed under the same ID is left alone.
+    let first_party = state.get(&m.id).is_none_or(|s| s.source == "migrated");
+    if !dir.exists() || (first_party && std::fs::read_to_string(&file).ok().as_deref() != Some(text.as_str())) {
         std::fs::create_dir_all(&dir)?;
-        std::fs::write(dir.join("plugin.toml"), toml::to_string_pretty(m)?)?;
+        assistant_core::config::atomic_write(&file, text.as_bytes())?;
     }
     state.entry(m.id.clone()).or_insert(Saved {
         enabled,

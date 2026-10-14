@@ -25,6 +25,14 @@ pub struct Config {
     pub browser: BrowserCfg,
     pub location: crate::location::LocationCfg,
     pub terminal: TerminalCfg,
+    pub system: SystemCfg,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct SystemCfg {
+    /// systemd user units the assistant may start, stop and restart without asking.
+    pub user_units: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,12 +90,20 @@ impl Default for BrowserCfg {
 pub struct TerminalCfg {
     pub timeout_secs: u64,
     pub commands: std::collections::BTreeMap<String, Vec<String>>,
+    /// Network inside the sandbox for generated commands (package downloads, git fetch).
+    pub sandbox_network: bool,
+    /// Folders under HOME the sandbox may read (toolchains); missing ones are skipped.
+    pub sandbox_read_only: Vec<String>,
 }
 impl Default for TerminalCfg {
     fn default() -> Self {
         Self {
             timeout_secs: 120,
             commands: Default::default(),
+            sandbox_network: true,
+            sandbox_read_only: ["~/.cargo", "~/.rustup", "~/.local/bin", "~/go", "~/.npm"]
+                .map(String::from)
+                .into(),
         }
     }
 }
@@ -531,6 +547,7 @@ impl PermissionsCfg {
             launch_app: d(&self.launch_app),
             volume: d(&self.volume),
             files_read: d(&self.files_read),
+            files_write: d(&self.files_write),
             shutdown: d(&self.shutdown),
         }
     }

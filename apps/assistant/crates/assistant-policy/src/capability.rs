@@ -18,8 +18,15 @@ pub enum Capability {
     AppLaunch,
     /// `permissions.shutdown`.
     Shutdown,
-    /// Files and git status inside HOME (`permissions.files_read`).
+    /// Reading, listing and searching files and git status inside HOME (`permissions.files_read`).
     FileRead,
+    /// Writing, moving, trashing and restoring files, with backups (`permissions.files_write`).
+    FileWrite,
+    /// Starting, stopping and restarting systemd user units. Asks unless the unit is listed
+    /// in `[system] user_units`.
+    Service,
+    /// Changing network state (Wi-Fi on/off).
+    Network,
     /// Screen and clipboard captures handed to a plugin.
     Capture,
     /// Configured terminal commands and job control.
@@ -59,7 +66,7 @@ const PLUGIN_EDITS: &[&str] = &[
 const PLUGIN_PREFIXES: &[&str] =
     &["routines.", "projects.", "calendar.", "file_search.", "media.", "power.", "history.", "notes.", "reminders."];
 
-const DESKTOP_PREFIXES: &[&str] = &["hypr.", "toggle.", "display.", "theme."];
+const DESKTOP_PREFIXES: &[&str] = &["hypr.", "toggle.", "display.", "theme.", "windows.", "workspaces.", "monitors."];
 
 const DESKTOP: &[&str] = &[
     "capture.screenshot",
@@ -69,6 +76,7 @@ const DESKTOP: &[&str] = &[
     "capture.screenrecord",
     "capture.text",
     "system.lock",
+    "system.power_profile",
     "bluetooth.toggle",
 ];
 
@@ -76,7 +84,7 @@ const DESKTOP: &[&str] = &[
 /// Stopping is never held for approval.
 const PASSIVE_VERBS: &[&str] = &[
     "cancel", "stop", "list", "get", "read", "search", "status", "current", "preview", "snapshot", "tabs", "now", "lookup",
-    "find", "show", "query", "scroll",
+    "find", "show", "query", "scroll", "active", "devices",
 ];
 
 impl Capability {
@@ -86,7 +94,11 @@ impl Capability {
             "terminal.run" | "terminal.shell" => return Self::TerminalGenerated,
             "terminal.configured" | "terminal.cancel" | "terminal.open" => return Self::Terminal,
             "weather.lookup" | "location.current" | "system.status" | "terminal.status" | "clock.now" => return Self::Inspect,
-            "files.read" | "git.status" => return Self::FileRead,
+            "files.read" | "files.list" | "files.search" | "git.status" => return Self::FileRead,
+            "files.write" | "files.move" | "files.trash" | "files.restore" => return Self::FileWrite,
+            "services.list" | "services.status" | "network.status" => return Self::Inspect,
+            "services.control" => return Self::Service,
+            "network.wifi" => return Self::Network,
             "app.launch" | "apps.launch" | "agent.handoff" => return Self::AppLaunch,
             "system.shutdown" => return Self::Shutdown,
             "capture.screen" | "capture.clipboard" => return Self::Capture,
@@ -114,6 +126,7 @@ impl Capability {
             Self::Audio => Some(rules.volume),
             Self::AppLaunch => Some(rules.launch_app),
             Self::FileRead => Some(rules.files_read),
+            Self::FileWrite => Some(rules.files_write),
             Self::Shutdown => Some(rules.shutdown),
             _ => None,
         }
@@ -122,7 +135,13 @@ impl Capability {
     pub(crate) fn default_decision(self, tool: &str) -> Decision {
         match self {
             Self::Disabled => Decision::Deny,
-            Self::Capture | Self::PluginEdit | Self::TerminalGenerated | Self::External => Decision::Ask,
+            Self::Capture
+            | Self::PluginEdit
+            | Self::TerminalGenerated
+            | Self::External
+            | Self::FileWrite
+            | Self::Service
+            | Self::Network => Decision::Ask,
             // Visible-browser form actions are external tools until they are typed.
             Self::Web if !READ_BROWSER.contains(&tool) => Decision::Ask,
             _ => Decision::Allow,
@@ -159,7 +178,7 @@ impl Capability {
         match self {
             Self::Inspect | Self::FileRead => true,
             Self::Web => READ_BROWSER.contains(&tool),
-            Self::PluginData | Self::Terminal => {
+            Self::PluginData | Self::Terminal | Self::Desktop | Self::Audio => {
                 tool.rsplit('.').next().is_some_and(|verb| PASSIVE_VERBS.iter().any(|r| verb.starts_with(r)))
             }
             _ => false,

@@ -1,0 +1,122 @@
+//! The bubblewrap sandbox for terminal commands the assistant writes itself.
+//!
+//! Inside: the system read-only, an empty home with only the working folder writable and
+//! the configured toolchain folders readable, a private /tmp, and no `XDG_RUNTIME_DIR`, so
+//! no Wayland, D-Bus or assistant socket. Network is shared only when configured.
+
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone)]
+pub struct Sandbox {
+    pub network: bool,
+    /// Folders under HOME the command may read (already expanded).
+    pub read_only: Vec<PathBuf>,
+}
+
+impl Sandbox {
+    pub fn from_config(cfg: &assistant_core::config::TerminalCfg, home: &Path) -> Self {
+        let read_only =
+            cfg.sandbox_read_only.iter().filter_map(|p| crate::fs::guard(home, p, crate::fs::Access::Read).ok()).collect();
+        Self { network: cfg.sandbox_network, read_only }
+    }
+}
+
+/// The bwrap arguments (before `--` and the command) for running in `cwd`.
+pub fn bwrap_args(sandbox: &Sandbox, home: &Path, cwd: &Path) -> Vec<String> {
+    let mut a: Vec<String> = Vec::new();
+    let mut push = |items: &[&str]| a.extend(items.iter().map(|s| s.to_string()));
+    push(&["--die-with-parent", "--new-session", "--unshare-all"]);
+    if sandbox.network {
+        push(&["--share-net"]);
+    }
+    push(&["--ro-bind", "/usr", "/usr", "--ro-bind", "/etc", "/etc"]);
+    for dir in ["/bin", "/lib", "/lib64", "/sbin"] {
+        match std::fs::read_link(dir) {
+            Ok(target) => push(&["--symlink", &target.display().to_string(), dir]),
+            Err(_) if Path::new(dir).exists() => push(&["--ro-bind", dir, dir]),
+            Err(_) => {}
+        }
+    }
+    push(&["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"]);
+    if sandbox.network {
+        // /etc/resolv.conf usually points into systemd-resolved's runtime folder.
+        push(&["--ro-bind-try", "/run/systemd/resolve", "/run/systemd/resolve"]);
+    }
+    let home_s = home.display().to_string();
+    push(&["--tmpfs", &home_s]);
+    for dir in &sandbox.read_only {
+        if dir.starts_with(home) && !cwd.starts_with(dir) {
+            let d = dir.display().to_string();
+            push(&["--ro-bind-try", &d, &d]);
+        }
+    }
+    let cwd_s = cwd.display().to_string();
+    push(&["--bind", &cwd_s, &cwd_s, "--chdir", &cwd_s, "--clearenv"]);
+    let path = std::env::var("PATH").unwrap_or_else(|_| "/usr/local/bin:/usr/bin".into());
+    push(&["--setenv", "PATH", &path, "--setenv", "HOME", &home_s, "--setenv", "TERM", "dumb"]);
+    if let Ok(lang) = std::env::var("LANG") {
+        push(&["--setenv", "LANG", &lang]);
+    }
+    a
+}
+
+/// The full command line: `bwrap <args> -- <argv>`.
+pub fn wrap(sandbox: &Sandbox, home: &Path, cwd: &Path, argv: Vec<String>) -> Vec<String> {
+    let mut out = vec!["bwrap".to_string()];
+    out.extend(bwrap_args(sandbox, home, cwd));
+    out.push("--".into());
+    out.extend(argv);
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pair(args: &[String], flag: &str, value: &str) -> bool {
+        args.windows(2).any(|w| w[0] == flag && w[1] == value)
+    }
+
+    #[test]
+    fn arguments() {
+        let home = Path::new("/home/u");
+        let s = Sandbox { network: false, read_only: vec![home.join(".cargo")] };
+        let a = bwrap_args(&s, home, &home.join("proj"));
+        assert!(a.contains(&"--unshare-all".to_string()) && !a.contains(&"--share-net".to_string()));
+        assert!(pair(&a, "--tmpfs", "/home/u"));
+        assert!(pair(&a, "--bind", "/home/u/proj") && pair(&a, "--chdir", "/home/u/proj"));
+        assert!(pair(&a, "--ro-bind-try", "/home/u/.cargo"));
+        assert!(a.contains(&"--clearenv".to_string()));
+        assert!(!a.iter().any(|x| x.contains("XDG_RUNTIME_DIR")));
+        let net = bwrap_args(&Sandbox { network: true, read_only: vec![] }, home, &home.join("proj"));
+        assert!(net.contains(&"--share-net".to_string()) && pair(&net, "--ro-bind-try", "/run/systemd/resolve"));
+        // The home tmpfs comes before the binds that punch through it.
+        let tmpfs = a.iter().position(|x| x == "/home/u").unwrap();
+        let bind = a.iter().position(|x| x == "--bind").unwrap();
+        assert!(tmpfs < bind);
+    }
+
+    /// Runs the real bubblewrap when it's installed.
+    #[test]
+    fn contains_a_real_command() {
+        if std::process::Command::new("bwrap").arg("--version").output().is_err() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().canonicalize().unwrap();
+        std::fs::create_dir_all(home.join(".ssh")).unwrap();
+        std::fs::write(home.join(".ssh/id"), "KEY").unwrap();
+        std::fs::create_dir_all(home.join("proj")).unwrap();
+        let s = Sandbox { network: false, read_only: vec![] };
+        let run = |script: &str| {
+            let argv = wrap(&s, &home, &home.join("proj"), vec!["sh".into(), "-c".into(), script.into()]);
+            std::process::Command::new(&argv[0]).args(&argv[1..]).output().unwrap()
+        };
+        assert!(!run("cat ~/.ssh/id").status.success(), "secrets are hidden");
+        assert!(!run("echo x > ~/outside").status.success() || !home.join("outside").exists(), "writes outside cwd don't land");
+        assert!(run("echo x > inside").status.success());
+        assert_eq!(std::fs::read_to_string(home.join("proj/inside")).unwrap(), "x\n");
+        let env = run("echo \"${XDG_RUNTIME_DIR:-unset}\"");
+        assert_eq!(String::from_utf8_lossy(&env.stdout).trim(), "unset");
+    }
+}

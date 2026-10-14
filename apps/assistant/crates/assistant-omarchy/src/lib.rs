@@ -1,3 +1,5 @@
+pub mod hypr;
+
 use anyhow::{Context, Result};
 use tokio::process::Command;
 

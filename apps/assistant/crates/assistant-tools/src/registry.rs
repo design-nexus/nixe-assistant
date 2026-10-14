@@ -78,15 +78,31 @@ impl Registry {
         let string = json!({"type":"string","maxLength":16384});
         let object = |properties: Value, required: Vec<&str>| json!({"type":"object","properties":properties,"required":required,"additionalProperties":false});
         for (name,description,schema) in [
-            ("terminal.run","Run an exact argument array as a managed terminal job. Generated commands require confirmation.",object(json!({"argv":{"type":"array","items":string,"minItems":1,"maxItems":128},"cwd":string,"show":{"type":"boolean"}}),vec!["argv"])),
+            ("terminal.run","Run an exact argument array as a managed terminal job, sandboxed to cwd (a project folder) unless sandbox is false. Always requires confirmation.",object(json!({"argv":{"type":"array","items":string,"minItems":1,"maxItems":128},"cwd":string,"show":{"type":"boolean"},"sandbox":{"type":"boolean"}}),vec!["argv"])),
             ("terminal.configured","Run an approved configured command by its exact name.",object(json!({"name":string,"cwd":string,"show":{"type":"boolean"}}),vec!["name"])),
-            ("terminal.shell","Run an explicit shell script. Always requires confirmation.",object(json!({"script":string,"cwd":string,"show":{"type":"boolean"}}),vec!["script"])),
+            ("terminal.shell","Run an explicit shell script, sandboxed to cwd (a project folder) unless sandbox is false. Always requires confirmation.",object(json!({"script":string,"cwd":string,"show":{"type":"boolean"},"sandbox":{"type":"boolean"}}),vec!["script"])),
             ("terminal.status","Read terminal job output and exit status.",object(json!({"job_id":string}),vec!["job_id"])),
             ("terminal.cancel","Cancel a terminal job and its descendants.",object(json!({"job_id":string}),vec!["job_id"])),
             ("terminal.open","Open a terminal or a live view of a managed job.",object(json!({"job_id":string,"cwd":string}),vec![])),
             ("agent.handoff","Open a coding agent with a prompt and working directory.",object(json!({"agent":string,"prompt":string,"cwd":string}),vec!["prompt"])),
             ("apps.launch","Launch an application using one exact configured app phrase.",object(json!({"phrase":string}),vec!["phrase"])),
         ] { registry.tools.insert(name.into(),McpTool {name:name.into(),description:Some(description.into()),input_schema:schema,output_schema:None,execution:Value::Null}); }
+        let path = json!({"type":"string","maxLength":4096});
+        let file_tools = [
+            ("files.list", "List a folder inside HOME (up to 200 entries).", object(json!({"path":path}), vec!["path"])),
+            ("files.search", "Find files under a folder by name, or by text inside them.", object(json!({"path":path,"name":{"type":"string","maxLength":256},"text":{"type":"string","maxLength":256}}), vec!["path"])),
+            ("files.write", "Create, overwrite or append to a text file inside HOME (up to 1 MiB). Keeps a backup to undo.", object(json!({"path":path,"content":{"type":"string","maxLength":crate::fs::MAX_WRITE},"mode":{"enum":["create","overwrite","append"]}}), vec!["path","content","mode"])),
+            ("files.move", "Move or rename a file or folder inside HOME.", object(json!({"from":path,"to":path,"overwrite":{"type":"boolean"}}), vec!["from","to"])),
+            ("files.trash", "Move a file or folder to the Trash.", object(json!({"path":path}), vec!["path"])),
+            ("files.undo", "Undo a file change from its backup ID.", object(json!({"backup":{"type":"string","maxLength":64}}), vec!["backup"])),
+        ];
+        for (name, description, schema) in file_tools {
+            registry.tools.insert(name.into(), McpTool { name: name.into(), description: Some(description.into()), input_schema: schema, output_schema: None, execution: Value::Null });
+        }
+        for (name, description, schema) in crate::system::TOOLS {
+            let input_schema = serde_json::from_str(schema).expect("system tool schema");
+            registry.tools.insert((*name).into(), McpTool { name: (*name).into(), description: Some((*description).into()), input_schema, output_schema: None, execution: Value::Null });
+        }
         if cfg.browser.enabled {
             let path = if cfg.browser.worker == "auto" {
                 assistant_core::paths::data_dir().join("browser/worker.mjs")
@@ -219,8 +235,12 @@ impl Registry {
             plugins.cancel_jobs().await;
         }
     }
-    /// The decision point for one tool under the running config.
+    /// The decision point for one tool under the running config, without a resource.
     pub fn verdict(&self, name: &str, cfg: &Config) -> Verdict {
+        self.verdict_for(name, None, cfg)
+    }
+    /// The decision for a call: the arguments can name a resource the user pre-approved.
+    pub fn verdict_for(&self, name: &str, args: Option<&Value>, cfg: &Config) -> Verdict {
         let plugins = self.plugins.as_ref();
         let rules = cfg.permissions.rules();
         assistant_policy::decide(
@@ -231,6 +251,7 @@ impl Registry {
                 tool_rule: cfg.mcp.permissions.get(name).and_then(|s| Decision::parse(s)),
                 rules: &rules,
                 mode: cfg.agent.mode,
+                resource_approved: args.is_some_and(|a| resource_approved(name, a, cfg)),
             },
         )
     }
@@ -241,7 +262,7 @@ impl Registry {
     /// Decide a call: a grant when it is allowed, the verdict when it needs approval.
     /// Denials are journalled here; approvals and calls where they happen.
     pub fn authorize(&self, name: &str, args: &Value, cfg: &Config) -> Result<Authorization> {
-        let verdict = self.verdict(name, cfg);
+        let verdict = self.verdict_for(name, Some(args), cfg);
         match verdict.decision() {
             Decision::Allow => Ok(Authorization::Granted(Grant::allowed(&verdict, args)?)),
             Decision::Deny => Err(self.refuse(&verdict, args)),
@@ -321,7 +342,7 @@ impl Registry {
         // The enforcement point: a grant for exactly this call, and a policy that still
         // permits it (a reload may have tightened it since the grant was made).
         grant.check(name, &args)?;
-        let verdict = self.verdict(name, cfg);
+        let verdict = self.verdict_for(name, Some(&args), cfg);
         match (verdict.decision(), grant.kind()) {
             (Decision::Deny, _) => anyhow::bail!("tool permission not granted"),
             (d, GrantKind::Allowed) if d != Decision::Allow => {
@@ -394,9 +415,14 @@ impl Registry {
                             .clone(),
                         _ => serde_json::from_value(args["argv"].clone())?,
                     };
+                    // Commands the assistant wrote run sandboxed unless the call says otherwise
+                    // (it still asks either way); configured commands are the user's own.
+                    let sandbox = (matches!(name, "terminal.run" | "terminal.shell") && args["sandbox"] != false)
+                        .then(|| crate::fs::home().map(|home| crate::sandbox::Sandbox::from_config(&cfg.terminal, &home)))
+                        .transpose()?;
                     let value = self
                         .jobs
-                        .start(argv, cwd, cfg.terminal.timeout_secs)
+                        .start_in(argv, cwd, cfg.terminal.timeout_secs, sandbox.as_ref())
                         .await?;
                     if args["show"].as_bool().unwrap_or(true) {
                         if let Err(err) = open_job(value["job_id"].as_str().unwrap()).await {
@@ -426,6 +452,17 @@ impl Registry {
                 }
                 _ => anyhow::bail!("unknown terminal tool"),
             };
+            json!({"content":[{"type":"text","text":value.to_string()}],"structuredContent":value,"isError":false})
+        } else if crate::system::TOOLS.iter().any(|(tool, ..)| *tool == name) {
+            let value = tokio::select! {
+                _ = cancel.cancelled() => anyhow::bail!("cancelled"),
+                r = crate::system::call(name, &args) => r.context("unknown system tool")??,
+            };
+            json!({"content":[{"type":"text","text":value.to_string()}],"structuredContent":value,"isError":false})
+        } else if name.starts_with("files.") && name != "files.read" {
+            let args = args.clone();
+            let name = name.to_string();
+            let value = tokio::task::spawn_blocking(move || file_tool(&name, &args)).await??;
             json!({"content":[{"type":"text","text":value.to_string()}],"structuredContent":value,"isError":false})
         } else if name == "apps.launch" {
             let apps = assistant_core::AppsFile::load()?;
@@ -480,6 +517,46 @@ impl Registry {
         }
         Value::Array(self.tools.iter().map(|(name,tool)| json!({"name":name,"description":tool.description,"inputSchema":tool.input_schema,"permission":self.policy(name,cfg)})).collect())
     }
+}
+
+fn file_tool(name: &str, args: &Value) -> Result<Value> {
+    let home = crate::fs::home()?;
+    let s = |k: &str| args[k].as_str().unwrap_or("");
+    match name {
+        "files.list" => crate::fs::list(&home, s("path")),
+        "files.search" => {
+            if !s("text").is_empty() {
+                search_text(&home, s("path"), s("text"))
+            } else {
+                anyhow::ensure!(!s("name").is_empty(), "give a name or text to search for");
+                crate::fs::find_names(&home, s("path"), s("name"))
+            }
+        }
+        "files.write" => crate::fs::write(&home, s("path"), s("content"), s("mode")),
+        "files.move" => crate::fs::rename(&home, s("from"), s("to"), args["overwrite"] == true),
+        "files.trash" => crate::fs::trash(&home, s("path")),
+        "files.undo" => crate::fs::undo(&home, s("backup")),
+        _ => anyhow::bail!("unknown file tool"),
+    }
+}
+
+/// Files under a folder containing `text`, via ripgrep (skips hidden and ignored files).
+fn search_text(home: &std::path::Path, path: &str, text: &str) -> Result<Value> {
+    let root = crate::fs::guard(home, path, crate::fs::Access::Read)?;
+    anyhow::ensure!(root.is_dir(), "not a folder");
+    let out = std::process::Command::new("rg")
+        .args(["-l", "-i", "-F", "--max-filesize", "1M", "--max-depth", "8", "--", text])
+        .arg(&root)
+        .output()
+        .context("ripgrep (rg) isn't available")?;
+    let matches: Vec<_> = String::from_utf8_lossy(&out.stdout).lines().take(50).map(String::from).collect();
+    Ok(json!({"path": root, "text": text, "matches": matches, "truncated": matches.len() == 50}))
+}
+
+/// A service unit listed in `[system] user_units` may be controlled without asking.
+fn resource_approved(name: &str, args: &Value, cfg: &Config) -> bool {
+    name == "services.control"
+        && args["unit"].as_str().is_some_and(|unit| cfg.system.user_units.iter().any(|u| u == unit))
 }
 
 fn drop_null_optionals(schema: &Value, args: Value) -> Value {

@@ -9,7 +9,6 @@ use assistant_core::config::{AgentCfg, PermissionsCfg};
 use serde_json::Value;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
-use std::path::Path;
 use tokio::process::Command;
 
 pub async fn execute_typed_tool(
@@ -179,21 +178,10 @@ pub async fn system_status() -> Result<String> {
     }
 }
 
+/// A readable path inside HOME, outside secret folders (see `crate::fs::guard`). Relative
+/// paths are relative to HOME.
 pub fn home_path(input: &str) -> Result<std::path::PathBuf> {
-    let home = std::env::var_os("HOME").ok_or_else(|| anyhow::anyhow!("HOME unavailable"))?;
-    let home = Path::new(&home).canonicalize()?;
-    let path = if input == "~" {
-        home.clone()
-    } else if let Some(rest) = input.strip_prefix("~/") {
-        home.join(rest)
-    } else {
-        std::path::PathBuf::from(input)
-    }
-    .canonicalize()?;
-    if !path.starts_with(&home) {
-        anyhow::bail!("path is outside the home directory");
-    }
-    Ok(path)
+    crate::fs::guard(&crate::fs::home()?, input, crate::fs::Access::Read)
 }
 
 #[cfg(test)]
@@ -202,7 +190,11 @@ mod tests {
 
     #[test]
     fn test_read_file_safe() {
-        let res = read_file_safe("Cargo.toml", Some(1), Some(5)).unwrap();
-        assert!(res.contains("1:"));
+        // The checkout is normally inside HOME; the guard refuses anything outside it.
+        let manifest = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
+        match read_file_safe(manifest, Some(1), Some(5)) {
+            Ok(res) => assert!(res.contains("1:")),
+            Err(e) => assert!(e.to_string().contains("outside the home directory"), "{e}"),
+        }
     }
 }

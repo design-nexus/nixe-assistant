@@ -226,6 +226,7 @@ fn commands(f: &mut Frame, app: &App, area: Rect) {
                 .and_then(|s| assistant_policy::Decision::parse(s)),
             rules: &rules,
             mode: cfg.agent.mode,
+            resource_approved: false,
         },
     )
     .decision()

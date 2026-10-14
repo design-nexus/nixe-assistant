@@ -69,12 +69,19 @@ pub struct Rules {
     pub launch_app: Decision,
     pub volume: Decision,
     pub files_read: Decision,
+    pub files_write: Decision,
     pub shutdown: Decision,
 }
 
 impl Default for Rules {
     fn default() -> Self {
-        Self { launch_app: Decision::Allow, volume: Decision::Allow, files_read: Decision::Allow, shutdown: Decision::Ask }
+        Self {
+            launch_app: Decision::Allow,
+            volume: Decision::Allow,
+            files_read: Decision::Allow,
+            files_write: Decision::Ask,
+            shutdown: Decision::Ask,
+        }
     }
 }
 
@@ -89,6 +96,9 @@ pub struct Context<'a> {
     pub tool_rule: Option<Decision>,
     pub rules: &'a Rules,
     pub mode: AutonomyMode,
+    /// The call's resource is one the user pre-approved in config (a service unit listed in
+    /// `[system] user_units`). Lets an asking capability run without asking; a deny still wins.
+    pub resource_approved: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,6 +151,8 @@ pub fn decide(tool: &str, cx: &Context) -> Verdict {
         (Decision::Ask, "untrusted plugin")
     } else if let Some(d) = capability_rule {
         (d, "capability rule")
+    } else if cx.resource_approved {
+        (Decision::Allow, "approved resource")
     } else {
         (capability.default_decision(tool), "default")
     };
@@ -166,7 +178,14 @@ mod tests {
     use super::*;
 
     fn cx(rules: &Rules) -> Context<'_> {
-        Context { available: true, trusted: true, tool_rule: None, rules, mode: AutonomyMode::Autonomous }
+        Context {
+            available: true,
+            trusted: true,
+            tool_rule: None,
+            rules,
+            mode: AutonomyMode::Autonomous,
+            resource_approved: false,
+        }
     }
 
     #[test]
@@ -240,6 +259,53 @@ mod tests {
         assert_eq!(decide("shell", &c).decision(), Decision::Deny);
         // Shutdown may be allowed explicitly, as before.
         assert_eq!(decide("system.shutdown", &c).decision(), Decision::Allow);
+    }
+
+    #[test]
+    fn phase3_capabilities() {
+        let rules = Rules::default();
+        let d = |t| decide(t, &cx(&rules)).decision();
+        for t in [
+            "windows.list",
+            "windows.focus",
+            "workspaces.switch",
+            "monitors.list",
+            "audio.devices",
+            "files.list",
+            "files.search",
+            "services.status",
+            "network.status",
+            "system.power_profile",
+        ] {
+            assert_eq!(d(t), Decision::Allow, "{t}");
+        }
+        for t in ["files.write", "files.move", "files.trash", "files.restore", "services.control", "network.wifi"] {
+            assert_eq!(d(t), Decision::Ask, "{t}");
+        }
+        // files_write governs the write tools.
+        let rules = Rules { files_write: Decision::Allow, ..Rules::default() };
+        assert_eq!(decide("files.write", &cx(&rules)).decision(), Decision::Allow);
+        // Read-only desktop tools stay passive in Manual mode; changes ask.
+        let rules = Rules::default();
+        let mut c = cx(&rules);
+        c.mode = AutonomyMode::Manual;
+        assert_eq!(decide("windows.list", &c).decision(), Decision::Allow);
+        assert_eq!(decide("windows.active", &c).decision(), Decision::Allow);
+        assert_eq!(decide("windows.focus", &c).decision(), Decision::Ask);
+    }
+
+    #[test]
+    fn approved_resources() {
+        let rules = Rules::default();
+        let mut c = cx(&rules);
+        c.resource_approved = true;
+        let v = decide("services.control", &c);
+        assert_eq!((v.decision(), v.rule()), (Decision::Allow, "approved resource"));
+        c.tool_rule = Some(Decision::Deny);
+        assert_eq!(decide("services.control", &c).decision(), Decision::Deny, "deny still wins");
+        c.tool_rule = None;
+        c.mode = AutonomyMode::Manual;
+        assert_eq!(decide("services.control", &c).decision(), Decision::Ask, "modes still tighten");
     }
 
     #[test]

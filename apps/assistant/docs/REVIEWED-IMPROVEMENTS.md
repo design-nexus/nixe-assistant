@@ -97,8 +97,29 @@ args = ["--stdio"]
 "example.delete_file" = "deny"
 ```
 
-Built-in file/git access canonicalizes paths and restricts them to HOME. Reads
-are limited to 64 KiB and 500 lines. External MCP servers control their own
+Built-in file/git access canonicalizes paths (symlinks included) and restricts
+them to HOME. Secret folders (`~/.ssh`, `~/.gnupg`, password stores, keyrings,
+browser profiles) are off limits to every file tool, and the assistant's own
+config, state and data are read-only to them. Reads are limited to 64 KiB and
+500 lines. `files.write` (create, overwrite or append, up to 1 MiB),
+`files.move` and `files.trash` keep a backup in
+`~/.local/state/nixe-assistant/file-backups`, and `files.undo` (or "undo that")
+puts it back; they ask unless `permissions.files_write = "allow"`.
+
+Typed desktop and system tools: `windows.*`, `workspaces.*` and `monitors.list`
+over Hyprland's socket; `services.*` for systemd user units (control asks unless
+the unit is in `[system] user_units`; the assistant's own units are refused);
+`network.status` and `network.wifi`; `audio.devices`, `audio.set_volume` and
+`audio.set_default`; `system.power_profile`. Each change re-reads what it
+changed and reports `verified`.
+
+Commands the assistant writes (`terminal.run`, `terminal.shell`) run in a
+bubblewrap sandbox: the system read-only, an empty home with only the working
+folder writable and `[terminal] sandbox_read_only` readable, a private /tmp,
+network per `sandbox_network`, and no `XDG_RUNTIME_DIR` (so no Wayland, D-Bus
+or assistant socket). Without a project folder the job gets a scratch folder in
+the cache, removed after a day. `sandbox: false` runs a command unsandboxed;
+both ways still ask. Configured commands run as you. External MCP servers control their own
 filesystem access: configure their allowed directories independently. Processes
 are killed on teardown; disconnected requests fail promptly; cancelled requests
 send MCP cancellation notifications. The client does not advertise sampling,

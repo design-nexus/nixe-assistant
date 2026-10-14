@@ -25,12 +25,43 @@ struct Job {
 }
 impl Jobs {
     pub async fn start(&self, argv: Vec<String>, cwd: &str, timeout: u64) -> Result<Value> {
+        self.start_in(argv, cwd, timeout, None).await
+    }
+    /// Start a job, inside `sandbox` when given. A sandboxed job writes only to its working
+    /// folder, which can't be HOME itself or a private folder; asking for HOME gets a fresh
+    /// scratch folder instead.
+    pub async fn start_in(
+        &self,
+        argv: Vec<String>,
+        cwd: &str,
+        timeout: u64,
+        sandbox: Option<&crate::sandbox::Sandbox>,
+    ) -> Result<Value> {
         anyhow::ensure!(
             !argv.is_empty() && argv.iter().all(|a| !a.contains('\0')),
             "invalid command arguments"
         );
-        let cwd = crate::typed::home_path(cwd)?;
+        let mut cwd = crate::typed::home_path(cwd)?;
         anyhow::ensure!(cwd.is_dir(), "working directory is not a directory");
+        let shown = argv.clone();
+        let argv = match sandbox {
+            None => argv,
+            Some(sandbox) => {
+                let home = crate::fs::home()?;
+                if cwd == home {
+                    let scratch = assistant_core::paths::cache_dir().join("sandbox");
+                    prune_scratch(&scratch);
+                    cwd = scratch.join(format!("{}-{}", std::process::id(), self.next.load(Ordering::Relaxed)));
+                    std::fs::create_dir_all(&cwd)?;
+                    cwd = cwd.canonicalize()?;
+                }
+                anyhow::ensure!(
+                    crate::fs::sandbox_dir_ok(&home, &cwd),
+                    "a sandboxed command needs a project folder; HOME itself and private folders can't be shared"
+                );
+                crate::sandbox::wrap(sandbox, &home, &cwd, argv)
+            }
+        };
         let mut entries = self.entries.lock().await;
         anyhow::ensure!(
             entries
@@ -67,7 +98,7 @@ impl Jobs {
             std::process::id(),
             self.next.fetch_add(1, Ordering::Relaxed)
         );
-        let data = json!({"job_id":id,"argv":argv,"cwd":cwd,"status":"running","exit_code":null,"output":""});
+        let data = json!({"job_id":id,"argv":shown,"cwd":cwd,"sandboxed":sandbox.is_some(),"status":"running","exit_code":null,"output":""});
         let job = Arc::new(Job {
             data: Mutex::new(data.clone()),
             cancel: CancellationToken::new(),
@@ -156,6 +187,18 @@ async fn drain(mut stream: impl AsyncRead + Unpin, job: Arc<Job>) {
         }
     }
 }
+/// Scratch folders of sandboxed jobs are kept a day for their output files, then removed.
+fn prune_scratch(dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let day = Duration::from_secs(24 * 3600);
+    for entry in entries.flatten() {
+        let old = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > day);
+        if old && entry.file_type().is_ok_and(|t| t.is_dir()) {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

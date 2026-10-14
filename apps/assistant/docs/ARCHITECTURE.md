@@ -32,7 +32,7 @@ Primary metric: **user speech end → first audible response word**.
 | `assistant-ipc` | Unix NDJSON socket |
 | `assistant-tools` | tool registry (the enforcement point), plugins, MCP, terminal jobs |
 | `assistant-policy` | permission decisions, grants, autonomy modes, the audit journal |
-| `assistant-omarchy` | `hyprctl` / `omarchy` / Hyprland `exec_cmd` wrappers |
+| `assistant-omarchy` | `hyprctl` / `omarchy` / Hyprland `exec_cmd` wrappers; Hyprland socket client (`hypr`) |
 | `nixe-assistantd` | daemon + `nixe-assistant` CLI |
 
 ## State machine

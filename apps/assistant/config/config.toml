@@ -109,7 +109,7 @@ enabled = true
 launch_app = "allow"  # configured apps and coding-agent handoff
 volume = "allow"      # volume, mute and output devices
 files_read = "allow"  # files.read and git.status inside HOME
-files_write = "confirm"  # reserved: no tool writes files yet
+files_write = "confirm"  # files.write, move, trash (each keeps a backup to undo)
 shell = "deny"        # reserved: there is no unrestricted shell tool
 shutdown = "confirm"
 
@@ -160,8 +160,19 @@ search_tool = ""
 
 [terminal]
 timeout_secs = 120
+# Commands the assistant writes (terminal.run, terminal.shell) run in a bubblewrap
+# sandbox: only their project folder is writable, the rest of home is hidden, and
+# they still ask first. These folders under home stay readable inside it:
+sandbox_read_only = ["~/.cargo", "~/.rustup", "~/.local/bin", "~/go", "~/.npm"]
+sandbox_network = true
+# Your own configured commands run unsandboxed.
 # [terminal.commands]
 # project_status = ["git", "status", "--short"]
+
+[system]
+# systemd user units the assistant may start, stop and restart without asking.
+# user_units = ["syncthing.service"]
+user_units = []
 
 
 [location]

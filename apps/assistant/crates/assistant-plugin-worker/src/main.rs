@@ -24,6 +24,9 @@ fn group(name: &str) -> &str {
         "git" => "git",
         "terminal" => "terminal",
         "apps" => "apps",
+        "windows" | "workspaces" | "monitors" => "windows",
+        "services" => "services",
+        "network" => "network",
         _ => "desktop-controls",
     }
 }
