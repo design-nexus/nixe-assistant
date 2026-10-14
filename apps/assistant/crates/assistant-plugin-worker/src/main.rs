@@ -27,6 +27,7 @@ fn group(name: &str) -> &str {
         "windows" | "workspaces" | "monitors" => "windows",
         "services" => "services",
         "network" => "network",
+        "admin" | "packages" => "admin",
         _ => "desktop-controls",
     }
 }

@@ -536,6 +536,7 @@ pub struct PermissionsCfg {
     pub files_read: String,
     pub files_write: String,
     pub shutdown: String,
+    pub admin: String,
 }
 
 impl PermissionsCfg {
@@ -549,6 +550,7 @@ impl PermissionsCfg {
             files_read: d(&self.files_read),
             files_write: d(&self.files_write),
             shutdown: d(&self.shutdown),
+            admin: d(&self.admin),
         }
     }
 }
@@ -562,6 +564,7 @@ impl Default for PermissionsCfg {
             files_read: "allow".into(),
             files_write: "confirm".into(),
             shutdown: "confirm".into(),
+            admin: "confirm".into(),
         }
     }
 }
@@ -792,6 +795,7 @@ impl Config {
             &p.files_read,
             &p.files_write,
             &p.shutdown,
+            &p.admin,
         ]
         .into_iter()
         .chain(self.mcp.permissions.values())

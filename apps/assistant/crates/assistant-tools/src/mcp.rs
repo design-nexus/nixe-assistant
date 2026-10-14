@@ -231,6 +231,15 @@ impl McpClient {
         params: Value,
         cancel: &CancellationToken,
     ) -> Result<Value> {
+        self.request_within(method, params, std::time::Duration::from_secs(15), cancel).await
+    }
+    async fn request_within(
+        &self,
+        method: &str,
+        params: Value,
+        deadline: std::time::Duration,
+        cancel: &CancellationToken,
+    ) -> Result<Value> {
         if cancel.is_cancelled() {
             anyhow::bail!("cancelled");
         }
@@ -244,7 +253,7 @@ impl McpClient {
         };
         tokio::select! {
             _ = cancel.cancelled() => anyhow::bail!("MCP request cancelled"),
-            result = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            result = tokio::time::timeout(deadline, async {
                 write_message(&self.stdin,&json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})).await?;
                 rx.await.context("MCP response channel closed")?
             }) => result.context("MCP request timed out")?,
@@ -293,7 +302,7 @@ impl McpClient {
         if let Some(meta) = meta {
             params["_meta"] = meta;
         }
-        let result = self.request("tools/call", params, cancel).await?;
+        let result = self.request_within("tools/call", params, crate::admin::deadline(name), cancel).await?;
         if !result["content"].is_array() || result.get("isError").is_some_and(|v| !v.is_boolean()) {
             anyhow::bail!("invalid MCP tool result");
         }

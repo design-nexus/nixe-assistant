@@ -1,0 +1,16 @@
+[package]
+name = "assistant-privileged"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Typed administrative actions and the root helper that runs them through polkit"
+
+[[bin]]
+name = "nixe-assistant-helper"
+path = "src/bin/nixe-assistant-helper.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+libc = "0.2"

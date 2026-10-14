@@ -11,6 +11,7 @@ members = [
     "crates/assistant-tui",
     "crates/assistant-plugin-worker",
     "crates/assistant-policy",
+    "crates/assistant-privileged",
     "daemon/nixe-assistantd",
 ]
 
@@ -30,6 +31,7 @@ assistant-inference = { path = "crates/assistant-inference" }
 assistant-ipc = { path = "crates/assistant-ipc" }
 assistant-omarchy = { path = "crates/assistant-omarchy" }
 assistant-policy = { path = "crates/assistant-policy" }
+assistant-privileged = { path = "crates/assistant-privileged" }
 assistant-tools = { path = "crates/assistant-tools" }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 crossterm = { version = "0.28", features = ["event-stream"] }

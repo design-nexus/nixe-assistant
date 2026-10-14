@@ -99,7 +99,7 @@ impl Registry {
         for (name, description, schema) in file_tools {
             registry.tools.insert(name.into(), McpTool { name: name.into(), description: Some(description.into()), input_schema: schema, output_schema: None, execution: Value::Null });
         }
-        for (name, description, schema) in crate::system::TOOLS {
+        for (name, description, schema) in crate::system::TOOLS.iter().chain(crate::admin::TOOLS) {
             let input_schema = serde_json::from_str(schema).expect("system tool schema");
             registry.tools.insert((*name).into(), McpTool { name: (*name).into(), description: Some((*description).into()), input_schema, output_schema: None, execution: Value::Null });
         }
@@ -379,7 +379,7 @@ impl Registry {
     ) -> Result<Value> {
         if let Some(plugins) = &self.plugins {
             return tokio::time::timeout(
-                std::time::Duration::from_secs(15),
+                crate::admin::deadline(name),
                 plugins.call(name, args, cfg, cancel, grant),
             )
             .await
@@ -457,6 +457,14 @@ impl Registry {
             let value = tokio::select! {
                 _ = cancel.cancelled() => anyhow::bail!("cancelled"),
                 r = crate::system::call(name, &args) => r.context("unknown system tool")??,
+            };
+            json!({"content":[{"type":"text","text":value.to_string()}],"structuredContent":value,"isError":false})
+        } else if crate::admin::TOOLS.iter().any(|(tool, ..)| *tool == name) {
+            // Cancelling during the password prompt stops pkexec; once the helper runs as
+            // root it can't be signalled and finishes on its own.
+            let value = tokio::select! {
+                _ = cancel.cancelled() => anyhow::bail!("cancelled; if the admin action had already started it finishes (see nixe-assistant admin-log)"),
+                r = crate::admin::call(name, &args) => r.context("unknown admin tool")??,
             };
             json!({"content":[{"type":"text","text":value.to_string()}],"structuredContent":value,"isError":false})
         } else if name.starts_with("files.") && name != "files.read" {

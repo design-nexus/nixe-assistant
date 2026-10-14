@@ -112,6 +112,8 @@ files_read = "allow"  # files.read and git.status inside HOME
 files_write = "confirm"  # files.write, move, trash (each keeps a backup to undo)
 shell = "deny"        # reserved: there is no unrestricted shell tool
 shutdown = "confirm"
+admin = "confirm"     # packages and system services through the polkit helper: "confirm" or
+                      # "deny" (an "allow" still asks; polkit also asks for your password)
 
 [agent]
 enabled = true

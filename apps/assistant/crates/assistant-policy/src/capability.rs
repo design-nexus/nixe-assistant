@@ -37,6 +37,9 @@ pub enum Capability {
     PluginData,
     /// Destructive edits, undo, routine runs and resource changes in abilities.
     PluginEdit,
+    /// Administrative actions run as root by the polkit helper: packages and system
+    /// services. Always asks, needs a key press each time, and polkit asks for a password.
+    Privileged,
     /// Never runs.
     Disabled,
     /// External MCP and third-party tools nothing else describes.
@@ -97,6 +100,7 @@ impl Capability {
             "files.read" | "files.list" | "files.search" | "git.status" => return Self::FileRead,
             "files.write" | "files.move" | "files.trash" | "files.restore" => return Self::FileWrite,
             "services.list" | "services.status" | "network.status" => return Self::Inspect,
+            "services.system_status" | "packages.search" | "packages.info" => return Self::Inspect,
             "services.control" => return Self::Service,
             "network.wifi" => return Self::Network,
             "app.launch" | "apps.launch" | "agent.handoff" => return Self::AppLaunch,
@@ -105,7 +109,9 @@ impl Capability {
             "history.undo" => return Self::PluginData,
             _ => {}
         }
-        if tool.ends_with(".undo") || PLUGIN_EDITS.contains(&tool) {
+        if tool.starts_with("admin.") {
+            Self::Privileged
+        } else if tool.ends_with(".undo") || PLUGIN_EDITS.contains(&tool) {
             Self::PluginEdit
         } else if PLUGIN_PREFIXES.iter().any(|p| tool.starts_with(p)) {
             Self::PluginData
@@ -128,6 +134,7 @@ impl Capability {
             Self::FileRead => Some(rules.files_read),
             Self::FileWrite => Some(rules.files_write),
             Self::Shutdown => Some(rules.shutdown),
+            Self::Privileged => Some(rules.admin),
             _ => None,
         }
     }
@@ -141,6 +148,7 @@ impl Capability {
             | Self::External
             | Self::FileWrite
             | Self::Service
+            | Self::Privileged
             | Self::Network => Decision::Ask,
             // Visible-browser form actions are external tools until they are typed.
             Self::Web if !READ_BROWSER.contains(&tool) => Decision::Ask,
@@ -148,20 +156,21 @@ impl Capability {
         }
     }
 
-    /// The least a rule can make this capability: generated commands always ask.
+    /// The least a rule can make this capability: generated commands and admin actions
+    /// always ask.
     pub(crate) fn floor(self) -> Option<Decision> {
         match self {
-            Self::TerminalGenerated => Some(Decision::Ask),
+            Self::TerminalGenerated | Self::Privileged => Some(Decision::Ask),
             Self::Disabled => Some(Decision::Deny),
             _ => None,
         }
     }
 
     /// Whether a spoken "approve" counts. A voice nearby, a video or a web page read aloud
-    /// can say it, so generated commands, shutdown and captures need a key press (HUD, TUI
-    /// or `nixe-assistant approve`). A spoken "deny" always counts.
+    /// can say it, so generated commands, shutdown, captures and admin actions need a key
+    /// press (HUD, TUI or `nixe-assistant approve`). A spoken "deny" always counts.
     pub fn voice_approvable(self) -> bool {
-        !matches!(self, Self::TerminalGenerated | Self::Shutdown | Self::Capture)
+        !matches!(self, Self::TerminalGenerated | Self::Shutdown | Self::Capture | Self::Privileged)
     }
 
     /// Whether one approval may cover the rest of a task. The same tools that need a key

@@ -798,6 +798,7 @@ pub async fn migrate(cfg: &Config, worker: &Path, checkout: &Path) -> Result<()>
         "windows",
         "services",
         "network",
+        "admin",
     ];
     for id in groups {
         let mut tools: Vec<_> = registry
@@ -815,6 +816,7 @@ pub async fn migrate(cfg: &Config, worker: &Path, checkout: &Path) -> Result<()>
                 "windows" => ["windows.", "workspaces.", "monitors."].iter().any(|p| name.starts_with(p)),
                 "services" => name.starts_with("services."),
                 "network" => name.starts_with("network."),
+                "admin" => name.starts_with("admin.") || name.starts_with("packages."),
                 "desktop-controls" => name.starts_with("audio.") || name.as_str() == "system.power_profile",
                 _ => false,
             })

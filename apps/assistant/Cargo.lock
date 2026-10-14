@@ -185,6 +185,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "assistant-privileged"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "toml 0.8.23",
+]
+
+[[package]]
 name = "assistant-tools"
 version = "0.1.0"
 dependencies = [
@@ -192,6 +202,7 @@ dependencies = [
  "assistant-core",
  "assistant-omarchy",
  "assistant-policy",
+ "assistant-privileged",
  "flate2",
  "jsonschema",
  "libc",
@@ -1908,9 +1919,11 @@ dependencies = [
  "assistant-ipc",
  "assistant-omarchy",
  "assistant-policy",
+ "assistant-privileged",
  "assistant-tools",
  "chrono",
  "dirs",
+ "libc",
  "serde",
  "serde_json",
  "tempfile",

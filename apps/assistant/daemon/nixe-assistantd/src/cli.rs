@@ -346,6 +346,43 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
+        "install-helper" => install_helper()?,
+        "admin-log" => {
+            let rest: Vec<_> = args.collect();
+            let limit = rest
+                .iter()
+                .position(|a| a == "--limit")
+                .and_then(|i| rest.get(i + 1))
+                .map(|n| n.parse::<usize>())
+                .transpose()?
+                .unwrap_or(50);
+            let text = match std::fs::read_to_string(assistant_privileged::LOG) {
+                Ok(text) => text,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                    println!("No admin actions yet ({})", assistant_privileged::LOG);
+                    return Ok(());
+                }
+                Err(e) => return Err(e).context(assistant_privileged::LOG),
+            };
+            let lines: Vec<&str> = text.lines().collect();
+            for line in &lines[lines.len().saturating_sub(limit)..] {
+                let Ok(r) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+                let when = chrono::DateTime::from_timestamp_millis(r["at_ms"].as_i64().unwrap_or(0))
+                    .map(|t| t.with_timezone(&chrono::Local).format("%F %T").to_string())
+                    .unwrap_or_default();
+                let args: Vec<&str> =
+                    r["args"].as_array().map(|a| a.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
+                println!(
+                    "{when}  {:<6} {:>7}ms  {}",
+                    if r["ok"] == true { "ok" } else { "failed" },
+                    r["duration_ms"].as_u64().unwrap_or(0),
+                    args.join(" ")
+                );
+                if let Some(e) = r["error"].as_str() {
+                    println!("    {e}");
+                }
+            }
+        }
         "tasks" => {
             let rest: Vec<_> = args.collect();
             let path =
@@ -763,6 +800,36 @@ async fn cancel_esc() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Installs the root helper for the admin tools and its polkit policy, from the binary
+/// next to this one. Run with sudo.
+fn install_helper() -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+    anyhow::ensure!(
+        unsafe { libc::geteuid() } == 0,
+        "run this as root: sudo {} install-helper",
+        std::env::current_exe()?.display()
+    );
+    let source = std::env::current_exe()?.canonicalize()?.with_file_name("nixe-assistant-helper");
+    anyhow::ensure!(source.is_file(), "{} not found next to nixe-assistant", source.display());
+    let helper = Path::new(assistant_privileged::HELPER);
+    let dir = helper.parent().context("no helper directory")?;
+    std::fs::create_dir_all(dir)?;
+    // The directory must be root's too, or its owner could swap the helper out later.
+    std::os::unix::fs::chown(dir, Some(0), Some(0))?;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755))?;
+    let status = std::process::Command::new("install")
+        .args(["-m", "755", "-o", "root", "-g", "root"])
+        .arg(&source)
+        .arg(helper)
+        .status()?;
+    anyhow::ensure!(status.success(), "could not install the helper");
+    std::fs::write(assistant_privileged::POLICY, assistant_privileged::POLICY_XML)?;
+    std::fs::set_permissions(assistant_privileged::POLICY, std::fs::Permissions::from_mode(0o644))?;
+    println!("Installed {} and its polkit policy.", helper.display());
+    Ok(())
+}
+
 fn print_help() {
     eprintln!(
         "nixe-assistant — Local voice assistant client & persona manager\n\n\
@@ -771,6 +838,8 @@ fn print_help() {
            doctor [--json] diagnostics (works offline)\n\
            activity [clear] latest 100 turns\n\
            audit [--limit N] [--json] tool decisions, approvals and calls (works offline)\n\
+           admin-log [--limit N] packages and system services changed through the helper\n\
+           install-helper  (as root) install the polkit helper for admin tools\n\
            preview [voice speed] TTS only, without saving\n\
            calibrate      quiet/speech measurement; suggestions only\n\
            search-provider [show|builtin|duckduckgo]\n\

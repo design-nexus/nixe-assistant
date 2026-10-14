@@ -46,12 +46,12 @@ concurrent load §4.6 asks for. Tests: 62 passed before this work (73 after) (`c
 | §6.1 desktop | **done in Phase 3** | Typed window, workspace and monitor tools over Hyprland's socket; focus, move, close and switch re-read the state to verify. Phrase commands still use `hyprctl eval`. |
 | §6.2 system | **mostly (Phase 3)** | systemd user units (list, status, control with an allowlist), NetworkManager status and Wi-Fi, PipeWire devices and volume, power profiles. Bluetooth beyond toggling and UPower details are not typed; D-Bus is still reached through commands. |
 | §6.3 files | **done in Phase 3** | One guard for every file tool (secret folders off limits, the assistant's own folders read-only); list, search, write, move, trash with backups and `files.undo`. |
-| §6.4 terminal | **mostly (Phase 3)** | Generated commands run in a bubblewrap workspace sandbox and still ask; configured commands run as the user. The privileged environment waits for Phase 4. |
+| §6.4 terminal | **mostly (Phase 3)** | Generated commands run in a bubblewrap workspace sandbox and still ask; configured commands run as the user. Admin work goes through the typed helper (Phase 4), never a root shell. |
 | §6.5 browser | mostly | Playwright worker with takeover. |
 | §6.6–6.7 computer use, vision | missing | Screenshots and OCR exist as desktop actions only. |
 | §7–8 permissions | **done in Phase 1** | See below. |
 | §9 sandboxing | partial | Bubblewrap for generated terminal commands (namespaces, read-only system, hidden home, no runtime sockets). No seccomp or cgroup limits yet, and plugins still run with the user's permissions. |
-| §10 privileged broker | missing | Nothing runs as root. |
+| §10 privileged broker | **done in Phase 4** | `nixe-assistant-helper` behind polkit: install, remove and update repository packages, start, stop or restart system services. Typed and checked twice; no root shell. |
 | §11.1 voice authorization | partial | Wake word and AEC exist. High-impact tools refuse spoken approval; the rest accept it. |
 | §11.2 prompt injection | partial | Tool results are passed as untrusted data, and the planner grammar admits only registered tools. |
 | §11.3 emergency stop | partial | `cancel`, Escape on the HUD, voice "stop" and job cancel exist; there is no global shortcut outside the HUD, and no synthetic input to release. |
@@ -96,16 +96,17 @@ plus `assistant-policy`.
 - [x] Phase 3: typed tools for windows (Hyprland socket), systemd user units, NetworkManager,
       PipeWire and power profiles; guarded file writes with backups and trash; bubblewrap for
       generated commands; first-party manifests refresh on install.
-- [ ] Phase 4: privileged broker with polkit and typed actions.
+- [x] Phase 4: privileged broker: a pkexec helper with one polkit action per verb
+      (packages, system services), checked on both sides, key-press approval plus password,
+      root audit log.
 - [ ] Phase 5: streaming STT and generation IDs; independent states; interruption handling
       with context repair; echo-rejection benchmark under load.
 - [ ] Phase 6: accessibility tree and screenshot grounding; vision model on demand.
 - [ ] Phase 7: "Agent & Permissions" in Nixe Settings; approvals in the HUD for high-impact tools.
 - [ ] Phase 8: security tests (injection, path traversal, approval reuse), latency under load.
 
-**Recommended next milestone:** Phase 4's privileged broker: a separate helper behind
-polkit with typed actions (install a repository package, restart a system service, set a
-power profile), so administrative tasks work without a root shell.
+**Recommended next milestone:** Phase 5: streaming STT and generation IDs, so the assistant
+can listen while it speaks and handle interruptions.
 
 ## Phase 1 as built
 
@@ -132,3 +133,35 @@ power profile), so administrative tasks work without a root shell.
 - Not yet in Phase 1: approval scopes beyond one call (Phase 2 added task scope; there is
   no session scope). The `sandbox` decision still asks: since Phase 3, generated commands
   run in bubblewrap and are approved each time, by Ken's choice.
+
+## Phase 4 as built
+
+- `crates/assistant-privileged`: `Action` (install, remove, update, service) with
+  `parse`/`to_args`, the package and unit rules, protected packages, critical units, and
+  the root-only extra deny lists in `/etc/nixe-assistant/admin.toml` (`deny_packages`,
+  `deny_units`; honoured only when root owns the file and nobody else can write it).
+- `nixe-assistant-helper`, installed root-owned at `/usr/local/lib/nixe-assistant/` by
+  `sudo nixe-assistant install-helper` (the installer offers it when the helper or policy is
+  missing or older). It refuses unless run as root by pkexec (`PKEXEC_UID`) from the plugin
+  worker or daemon of that same user, parses its arguments again, runs pacman or systemctl
+  by absolute path with a cleared environment, and appends one JSON line per request to
+  `/var/log/nixe-assistant/privileged.log` (`nixe-assistant admin-log`).
+- Polkit: one action per verb through `exec.argv1`. Installs and updates ask for the
+  password every time (`auth_admin`); removes and service actions keep it for polkit's few
+  minutes (`auth_admin_keep`).
+- Packages come from the configured repositories only (`-S --needed`, never `-Sy`; no AUR,
+  URLs or files). Removal is `-Rs` and refused when it would take a protected package (the
+  base system, kernel and boot chain, systemd, D-Bus, the desktop) with it. Updates are
+  `-Syu`. Services are `.service` units only, never D-Bus, systemd's own, logins, the
+  display manager, polkit or the assistant's.
+- Tools: `admin.install`, `admin.remove`, `admin.update`, `admin.service` (capability
+  `Privileged`: always asks, needs a key press, no task-wide approval; `permissions.admin`
+  can only make it deny) and the looking tools `packages.search`, `packages.info`,
+  `services.system_status`. Before asking, the daemon runs the unprivileged dry run
+  (`pacman -Sp`/`-Rsp`, `checkupdates`, the unit's state) and shows it with the approval;
+  a missing or protected package fails there, before anyone is asked.
+- Expiry: the assistant's grant (bound to the arguments, 60 s, once) plus polkit's own.
+  Cancelling during the password prompt stops pkexec; once the helper runs as root it
+  finishes, and the reply says to check `admin-log`.
+- Not in Phase 4: "apply approved configuration" (staged `/etc` edits) was left out by
+  Ken's choice; the power profile stays unprivileged (`powerprofilesctl`).

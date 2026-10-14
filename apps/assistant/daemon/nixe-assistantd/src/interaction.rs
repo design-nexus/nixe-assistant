@@ -900,6 +900,14 @@ impl App {
             args["expected_digest"] = preview["structuredContent"]["digest"].clone();
         }
         self.registry.validate(name, &args)?;
+        if name.starts_with("admin.") {
+            // What the action will do (packages with dependencies, the unit's state), shown
+            // with the approval; a package that doesn't exist fails here, before asking.
+            review_args["preview"] = tokio::select! {
+                _ = cancel.cancelled() => anyhow::bail!("cancelled"),
+                r = assistant_tools::admin::preview(name, &args) => r?,
+            };
+        }
         let mut approval_ms = 0;
         let grant = match self.registry.authorize(name, &args, &cfg)? {
             Authorization::Granted(grant) => grant,

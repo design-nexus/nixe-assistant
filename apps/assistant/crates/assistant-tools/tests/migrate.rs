@@ -19,6 +19,9 @@ async fn migration_refreshes_first_party_manifests() {
         ("windows", "windows.focus"),
         ("services", "services.control"),
         ("network", "network.wifi"),
+        ("admin", "admin.install"),
+        ("admin", "packages.search"),
+        ("services", "services.system_status"),
         ("files", "files.write"),
         ("desktop-controls", "audio.devices"),
     ] {

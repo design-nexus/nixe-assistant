@@ -71,6 +71,8 @@ pub struct Rules {
     pub files_read: Decision,
     pub files_write: Decision,
     pub shutdown: Decision,
+    /// `admin.*`: only ask or deny; an allow still asks.
+    pub admin: Decision,
 }
 
 impl Default for Rules {
@@ -81,6 +83,7 @@ impl Default for Rules {
             files_read: Decision::Allow,
             files_write: Decision::Ask,
             shutdown: Decision::Ask,
+            admin: Decision::Ask,
         }
     }
 }
@@ -315,6 +318,26 @@ mod tests {
         }
         for t in ["notes.delete", "calendar.create", "ext.unknown", "routines.run"] {
             assert!(Capability::of(t).voice_approvable(), "{t}");
+        }
+    }
+
+    #[test]
+    fn admin_always_asks_by_key_press() {
+        let mut rules = Rules::default();
+        rules.admin = Decision::Allow;
+        let mut c = cx(&rules);
+        c.resource_approved = true;
+        c.tool_rule = Some(Decision::Allow);
+        for t in ["admin.install", "admin.remove", "admin.update", "admin.service"] {
+            let v = decide(t, &c);
+            assert_eq!((v.capability(), v.decision(), v.rule()), (Capability::Privileged, Decision::Ask, "mandatory"), "{t}");
+            assert!(!v.capability().voice_approvable() && !v.capability().task_approvable(), "{t}");
+        }
+        rules.admin = Decision::Deny;
+        let c = cx(&rules);
+        assert_eq!(decide("admin.install", &c).decision(), Decision::Deny);
+        for t in ["packages.search", "packages.info", "services.system_status"] {
+            assert_eq!(decide(t, &c).decision(), Decision::Allow, "{t} only looks");
         }
     }
 

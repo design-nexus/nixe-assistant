@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Nixe Assistant</vendor>
+  <action id="io.github.design_nexus.nixe.assistant.install">
+    <description>Install packages for Nixe Assistant</description>
+    <message>Nixe Assistant wants to install packages</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/lib/nixe-assistant/nixe-assistant-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">install</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">false</annotate>
+  </action>
+  <action id="io.github.design_nexus.nixe.assistant.update">
+    <description>Update the system for Nixe Assistant</description>
+    <message>Nixe Assistant wants to update all packages</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/lib/nixe-assistant/nixe-assistant-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">update</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">false</annotate>
+  </action>
+  <action id="io.github.design_nexus.nixe.assistant.remove">
+    <description>Remove packages for Nixe Assistant</description>
+    <message>Nixe Assistant wants to remove packages</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/lib/nixe-assistant/nixe-assistant-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">remove</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">false</annotate>
+  </action>
+  <action id="io.github.design_nexus.nixe.assistant.service">
+    <description>Control system services for Nixe Assistant</description>
+    <message>Nixe Assistant wants to start, stop or restart a system service</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/lib/nixe-assistant/nixe-assistant-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">service</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">false</annotate>
+  </action>
+</policyconfig>
