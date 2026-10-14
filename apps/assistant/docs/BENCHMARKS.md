@@ -59,6 +59,41 @@ Targets (not gates):
 | Playback start after first TTS PCM | small tens of ms | TTS begins → audio playback | **0 ms** in the timing log (both stamps set in `speak_phrase` before `play()`) |
 | Playback cancel | < 100 ms | `cancel` while speaking; queue flush | **7 µs** queued + **1 µs** flushed (`playback cancel queued/flushed`, 2026-10-06) |
 
+## Streaming speech (Phase 5, 2026-10-14)
+
+Nemotron streaming 0.6B, 560 ms chunks, int8, through sherpa-onnx 1.13.8
+(`sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25`), Core Ultra 9 285H.
+
+| Check | Result | How |
+|---|---|---|
+| Speed idle | RTF 0.2 (1 thread), 0.1 (4 threads) | sherpa CLI, 6.6 s LibriSpeech clip |
+| Speed under load | RTF 0.2 (1), 0.14 (2), 0.1 (4) | same, while a long `say` turn ran (LLM + Kokoro), load average 10 |
+| CUDA (ORT 1.28.2, CUDA 13) | runs on sm_120, no faster than CPU (≈ RTF 0.12) | int8 ops gain nothing on the GPU; the 2-thread CPU path is used |
+| WER, 20 Kokoro command clips | Nemotron 6.3 % (≈ 4 % without spelling variants), Parakeet 3.1 % | `voxtype transcribe --engine parakeet` for Parakeet |
+| WER, 10 of Ken's recordings | Nemotron 8.3 % (4.2 % without "Rip Grep"), Parakeet 6.2 % | 48 words, echo-cancelled source |
+| Final after speech end | ≈ 140 ms (worker), 144 ms in a live PTT turn | `final … decode_ms` / timing trace |
+| Short words | "stop" needs ~1 s of trailing audio; the worker pads 1 s (and 0.25 s before) | |
+
+Known limit: some very quick single words ("stop" in 200 ms) come back empty from Nemotron
+where Parakeet hears them. Adding Parakeet as a second opinion was offered and declined;
+a missed "stop" lets the reply carry on (say it again, or Escape).
+
+## Duplex (Phase 5, 2026-10-14)
+
+`nixe-assistant bench duplex [--echo-only]`; numbers from the daemon's `interruption` and
+`timing` events.
+
+| Check | Target (§4.6) | Measured |
+|---|---|---|
+| False onsets / interruptions, 3 long replies, nobody talking | 0 | **0 / 0** |
+| Pause or duck after speech onset | < 150 ms | **2–14 µs** after the onset is detected (Silero confirms onset after 2 × 32 ms frames) |
+| Stale audio dropped (cancel generation) | < 100 ms | **2–5 µs** (`generation cancelled` log, 4 live interruptions) |
+| Redirect decided | — | 1.0–1.9 s after onset (waits for three content words or the end of speech) |
+| First audio, text turn incl. routing, under its own LLM + TTS load | < 900 ms | 607 / 980 / 1293 ms (median 980) |
+
+The first-audio figure includes a routing step that took 2.4 s in one earlier long-prompt
+turn; for short replies it is in the 0.3–0.5 s range (demo turns: 906–1180 ms total).
+
 ## Model load (one-shot)
 
 Record at daemon startup from the log lines `GGUF loaded` and `Kokoro ready`.

@@ -219,8 +219,13 @@ impl App {
                 speaking = true;
                 end = Instant::now() + Duration::from_secs(60);
                 pcm.extend(pre.drain(..));
+                if let Err(err) = self.stt.stream_begin().await {
+                    tracing::warn!("streaming speech: {err:#}");
+                }
+                self.stt.tap(&pcm);
             } else if speaking {
                 pcm.extend_from_slice(&frame);
+                self.stt.tap(&frame);
             }
             if speaking && matches!(decision, VadDecision::SpeechEnd) {
                 break;
@@ -341,7 +346,12 @@ impl App {
             if pcm.len() < 3200 || cancel.is_cancelled() {
                 return Ok((false, false));
             }
-            let tr = self.stt.transcribe(&pcm, cancel.clone()).await?;
+            // Streamed while it was heard; Voxtype transcribes the take.
+            let tr = if self.stt.streaming() {
+                self.stt.finish(&pcm, cancel.clone()).await?
+            } else {
+                self.stt.transcribe(&pcm, cancel.clone()).await?
+            };
             match tr
                 .text
                 .trim()

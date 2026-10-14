@@ -1,0 +1,17 @@
+[package]
+name = "assistant-asr"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Streaming speech recognition worker (sherpa-onnx) and its wire protocol"
+
+[[bin]]
+name = "nixe-assistant-asr"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+assistant-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sherpa-onnx = "=1.13.8"

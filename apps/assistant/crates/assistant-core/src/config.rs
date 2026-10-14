@@ -13,6 +13,7 @@ pub struct Config {
     pub vad: VadCfg,
     pub audio: AudioCfg,
     pub barge_in: BargeInCfg,
+    pub duplex: DuplexCfg,
     pub wake_word: WakeWordCfg,
     pub clock: ClockCfg,
     pub ui: UiCfg,
@@ -140,15 +141,32 @@ fn default_assistant_prompt() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SttCfg {
+    /// "streaming" (the Nemotron worker, which hears the echo-cancelled stream and gives
+    /// partial words) or "voxtype" (warm Parakeet, whole utterances). Streaming falls back to
+    /// Voxtype when its model or worker is missing.
     pub provider: String,
     pub voxtype_bin: String,
+    /// The streaming model's directory, or "auto" for the one `models fetch asr` installs.
+    pub model: String,
+    pub threads: u32,
+    /// "cpu" or "cuda". The int8 model is no faster on the GPU here (docs/BENCHMARKS.md).
+    pub device: String,
+}
+
+impl SttCfg {
+    pub fn streaming(&self) -> bool {
+        self.provider == "streaming"
+    }
 }
 
 impl Default for SttCfg {
     fn default() -> Self {
         Self {
-            provider: "voxtype".into(),
+            provider: "streaming".into(),
             voxtype_bin: "voxtype".into(),
+            model: "auto".into(),
+            threads: 2,
+            device: "cpu".into(),
         }
     }
 }
@@ -295,6 +313,49 @@ impl Default for BargeInCfg {
             threshold: 0.08,
             hangover_ms: 160,
             aec: true,
+        }
+    }
+}
+
+/// Listening while speaking: what an interruption does (needs `[stt] provider = "streaming"`
+/// and `[barge_in] aec`; otherwise any speech over a reply stops it, as before).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DuplexCfg {
+    pub enabled: bool,
+    /// What the voice does the moment someone speaks: "pause" (stop mid-word, nothing lost,
+    /// so the words are heard without echo) or "duck" (carry on quieter, at `duck_gain`).
+    /// Short words said over the voice rarely survive echo cancelling, so "pause" is default.
+    pub on_speech: String,
+    /// Playback volume while ducked (0–1).
+    pub duck_gain: f32,
+    /// Said alone, these end the reply and wait.
+    pub stop_phrases: Vec<String>,
+    /// Said alone, these let the reply carry on.
+    pub backchannels: Vec<String>,
+    /// Speech with no words after this long is noise; the voice comes back up.
+    pub noise_ms: u64,
+    /// The quietest echo-cancelled speech (RMS) that counts as someone talking.
+    pub min_rms: f32,
+}
+
+impl Default for DuplexCfg {
+    fn default() -> Self {
+        let list = |s: &[&str]| s.iter().map(|w| w.to_string()).collect();
+        Self {
+            enabled: true,
+            on_speech: "pause".into(),
+            duck_gain: 0.25,
+            stop_phrases: list(&[
+                "stop", "wait", "hold on", "hang on", "never mind", "nevermind", "cancel", "enough", "that's enough",
+                "be quiet", "quiet", "shut up", "stop talking", "pause",
+            ]),
+            backchannels: list(&[
+                "mm hm", "mhm", "mm", "hmm", "uh huh", "yeah", "yep", "yes", "okay", "ok", "right", "sure", "i see",
+                "got it", "alright", "all right", "cool", "nice", "great",
+            ]),
+            noise_ms: 1500,
+            min_rms: 0.003,
         }
     }
 }
@@ -697,6 +758,11 @@ impl Config {
 
     pub fn validate(&self) -> crate::Result<()> {
         let fail = |s: &str| Err(crate::Error::msg(s));
+        if !(0.0..=1.0).contains(&self.duplex.duck_gain) || self.duplex.noise_ms > 10_000 || !(0.0..=0.1).contains(&self.duplex.min_rms)
+            || !["pause", "duck"].contains(&self.duplex.on_speech.as_str())
+        {
+            return fail("duplex.duck_gain must be 0–1 and noise_ms at most 10000");
+        }
         self.location
             .validate()
             .map_err(|e| crate::Error::msg(e.to_string()))?;
@@ -745,7 +811,9 @@ impl Config {
                 return fail(&format!("invalid {name}"));
             }
         }
-        if self.stt.provider != "voxtype"
+        if !["voxtype", "streaming"].contains(&self.stt.provider.as_str())
+            || !["cpu", "cuda"].contains(&self.stt.device.as_str())
+            || !(1..=16).contains(&self.stt.threads)
             || self.llm.backend != "llama.cpp"
             || self.tts.provider != "kokoro"
         {
@@ -1073,7 +1141,7 @@ mod tests {
         assert_eq!(cfg.assistant.name, "Echo");
         assert_eq!(cfg.assistant.mode, "push-to-talk");
         assert!(cfg.assistant.prompt.contains("short spoken sentences"));
-        assert_eq!(cfg.stt.provider, "voxtype");
+        assert!(cfg.stt.streaming() && cfg.stt.model == "auto" && cfg.stt.threads == 2 && cfg.stt.device == "cpu");
         assert_eq!(cfg.llm.backend, "llama.cpp");
         assert_eq!(cfg.tts.provider, "kokoro");
         assert_eq!(cfg.permissions.shell, "deny");

@@ -25,12 +25,12 @@ fi
 if [[ ${SKIP_BUILD:-0} != 1 ]]; then
   feature_args=()
   if command -v nvcc >/dev/null; then feature_args=(--features cuda); fi
-  cargo build --release -p nixe-assistantd -p assistant-tui -p assistant-plugin-worker -p assistant-privileged "${feature_args[@]}"
+  cargo build --release -p nixe-assistantd -p assistant-tui -p assistant-plugin-worker -p assistant-privileged -p assistant-asr "${feature_args[@]}"
 fi
 backup="$HOME/.local/state/nixe-assistant/backups/$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$backup/files" "$cfg_dir" "$unit_dir" "$data_dir" "$bin_dir"
 chmod 0700 "$backup"
-assets=(.local/bin/nixe-assistant-plugin-worker .local/bin/nixe-assistant-helper .local/share/nixe-assistant/abilities .local/share/nixe-assistant/plugin-data .local/bin/nixe-assistant-node .local/share/nixe-assistant/browser .local/bin/nixe-assistantd .local/bin/nixe-assistant .local/bin/nixe-assistant-tui .local/bin/libonnxruntime_providers_cuda.so .local/bin/libonnxruntime_providers_shared.so .config/nixe-assistant .config/systemd/user/nixe-assistantd.service .config/systemd/user/nixe-assistant-hud.service .config/systemd/user/nixe-assistant-stt.service .local/share/nixe-assistant/quickshell .config/hypr/bindings.lua .config/omarchy/plugins .config/omarchy/shell.json)
+assets=(.local/bin/nixe-assistant-plugin-worker .local/bin/nixe-assistant-helper .local/bin/nixe-assistant-asr .local/share/nixe-assistant/abilities .local/share/nixe-assistant/plugin-data .local/bin/nixe-assistant-node .local/share/nixe-assistant/browser .local/bin/nixe-assistantd .local/bin/nixe-assistant .local/bin/nixe-assistant-tui .local/bin/libonnxruntime_providers_cuda.so .local/bin/libonnxruntime_providers_shared.so .config/nixe-assistant .config/systemd/user/nixe-assistantd.service .config/systemd/user/nixe-assistant-hud.service .config/systemd/user/nixe-assistant-stt.service .local/share/nixe-assistant/quickshell .config/hypr/bindings.lua .config/omarchy/plugins .config/omarchy/shell.json)
 for asset in "${assets[@]}"; do
   if [[ -e "$HOME/$asset" ]]; then mkdir -p "$backup/files/$(dirname "$asset")"; cp -a "$HOME/$asset" "$backup/files/$asset"; fi
 done
@@ -43,7 +43,7 @@ rollback() {
   if [[ $(cat "$backup/daemon-state") == active ]]; then systemctl --user restart nixe-assistantd.service nixe-assistant-hud.service || true; fi
 }
 trap rollback ERR
-for binary in nixe-assistantd nixe-assistant nixe-assistant-tui nixe-assistant-plugin-worker nixe-assistant-helper; do
+for binary in nixe-assistantd nixe-assistant nixe-assistant-tui nixe-assistant-plugin-worker nixe-assistant-helper nixe-assistant-asr; do
   install -m 0755 "$root/target/release/$binary" "$bin_dir/$binary.new"
   mv "$bin_dir/$binary.new" "$bin_dir/$binary"
 done
@@ -64,6 +64,10 @@ mkdir -p "$data_dir/quickshell"
 cp -a "$root/quickshell/." "$data_dir/quickshell/"
 for unit in nixe-assistantd nixe-assistant-hud nixe-assistant-stt; do install -m 0644 "$root/systemd/$unit.service" "$unit_dir/$unit.service"; done
 "$root/scripts/install-plugin.sh"
+# The streaming speech model is a separate, explicit download; without it, speech falls back to Voxtype.
+if [[ ! -f "$data_dir/models/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25/encoder.int8.onnx" ]]; then
+  printf 'Streaming speech (listening while it speaks) needs its model: %s models fetch asr\n' "$bin_dir/nixe-assistant"
+fi
 # The admin tools' root helper and polkit policy live outside HOME, so they need sudo once,
 # and again only when this build carries a newer one. Never fails the install.
 helper=/usr/local/lib/nixe-assistant/nixe-assistant-helper

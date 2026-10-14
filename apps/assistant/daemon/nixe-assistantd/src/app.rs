@@ -1,12 +1,14 @@
 #[path = "extensions.rs"]
 mod extensions;
 use extensions::{ActionRecord, PowerSettings};
+#[path = "duplex.rs"]
+mod duplex;
 #[path = "interaction.rs"]
 mod interaction;
 use crate::session::{classify, Mode, RequestKind, Session};
 use anyhow::{Context, Result};
 use assistant_agent::{
-    is_filler, route_with, strip_wake, Intent, KokoroProvider, PhraseChunker, VoxtypeProvider,
+    is_filler, route_with, strip_wake, Intent, KokoroProvider, PhraseChunker,
 };
 use assistant_audio::{
     aec_barge_threshold, f32_24k_to_i16_16k, record_until, AudioEngine, Silero, StreamingVad,
@@ -45,7 +47,7 @@ pub async fn run(cfg: Config) -> Result<()> {
         move || AudioEngine::start(&cfg)
     })
     .await??;
-    let stt = VoxtypeProvider::new(&cfg);
+    let stt = assistant_agent::asr::Stt::new(&cfg).await;
     let power = PowerSettings::load();
     let llm = LlamaCppBackend::spawn_with_battery(&cfg, power.profile == "battery")
         .context("llama.cpp")?;
@@ -109,6 +111,10 @@ pub async fn run(cfg: Config) -> Result<()> {
         _released_rx: release_rx,
         turn_busy: AtomicBool::new(false),
         turn_gen: AtomicU64::new(0),
+        reply: std::sync::Mutex::new(ReplyTrack::default()),
+        reply_seq: AtomicU64::new(0),
+        parts: std::sync::Mutex::new(Default::default()),
+        interrupted: std::sync::Mutex::new(None),
         need_keyup: AtomicBool::new(false),
         last_hold: std::sync::Mutex::new(Instant::now()),
         history: Mutex::new(Vec::new()),
@@ -125,6 +131,22 @@ pub async fn run(cfg: Config) -> Result<()> {
 
     app.emit_state(AssistantState::Idle).await;
     app.emit_health();
+    if let Some(asr) = app.stt.asr() {
+        // Partial words for the HUD and TUI as the recognizer hears them.
+        let mut partials = asr.subscribe();
+        let app_partials = Arc::clone(&app);
+        tokio::spawn(async move {
+            loop {
+                match partials.recv().await {
+                    Ok(assistant_core::asr::Reply::Partial { text, .. }) if !text.is_empty() => {
+                        app_partials.emit(Event::PartialTranscript { text });
+                    }
+                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(_) => break,
+                }
+            }
+        });
+    }
 
     let _http_handle = if app.cfg().http.enabled {
         let app_status = Arc::clone(&app);
@@ -259,7 +281,7 @@ struct App {
     state: Mutex<StateMachine>,
     events: broadcast::Sender<Event>,
     audio: AudioEngine,
-    stt: VoxtypeProvider,
+    stt: assistant_agent::asr::Stt,
     llm: LlamaCppBackend,
     tts: Arc<KokoroProvider>,
     samples: Mutex<tokio::sync::mpsc::Receiver<Vec<i16>>>,
@@ -270,6 +292,13 @@ struct App {
     _released_rx: watch::Receiver<bool>,
     turn_busy: AtomicBool,
     turn_gen: AtomicU64,
+    /// The reply being spoken: its generation and the text of each phrase queued, in order,
+    /// so an interruption can tell what the listener actually heard.
+    reply: std::sync::Mutex<ReplyTrack>,
+    reply_seq: AtomicU64,
+    parts: std::sync::Mutex<assistant_core::state::Activity>,
+    /// What the listener heard of the reply duplex just cut off; the turn records it.
+    interrupted: std::sync::Mutex<Option<String>>,
     need_keyup: AtomicBool,
     last_hold: std::sync::Mutex<Instant>,
     history: Mutex<Vec<(String, String)>>,
@@ -295,6 +324,12 @@ fn load_silero(cfg: &Config) -> Option<Arc<Silero>> {
             None
         }
     }
+}
+
+#[derive(Debug, Default, Clone)]
+pub(super) struct ReplyTrack {
+    pub generation: u64,
+    pub phrases: Vec<String>,
 }
 
 fn now_ms() -> u64 {
@@ -413,6 +448,7 @@ impl App {
             "tool_mode":self.tool_mode.load(Ordering::Relaxed),
             "session":self.session_json(),
             "pending_approvals":*self.pending.lock().unwrap(),
+            "activity":*self.parts.lock().unwrap(),
             "mcp_tools":self.registry.catalog(&self.cfg()),
             "mcp_errors":self.registry.errors,
             "plugins":self.registry.plugins.as_ref().map(|p|p.inspect()),
@@ -785,6 +821,20 @@ impl App {
                 at_ms: now_ms(),
             });
         }
+        self.update_activity(|a| a.follow(next));
+    }
+
+    /// Change the independent states; emits `activity` when something changed.
+    pub(super) fn update_activity(&self, change: impl FnOnce(&mut assistant_core::state::Activity)) {
+        let now = {
+            let mut a = self.parts.lock().unwrap();
+            let before = *a;
+            change(&mut a);
+            (*a != before).then_some(*a)
+        };
+        if let Some(activity) = now {
+            self.emit(Event::Activity { activity, at_ms: now_ms() });
+        }
     }
 
     async fn missed_utterance(&self) {
@@ -1048,7 +1098,7 @@ impl App {
         let _ = armed.send(());
         let (pcm, _by_vad) = {
             let mut samples = self.samples.lock().await;
-            record_until(&mut samples, stop, &mut vad, 60).await?
+            record_until(&mut samples, stop, &mut vad, 60, &|chunk| self.stt.tap(chunk)).await?
         };
         let _ = self.audio.stop_capture();
 
@@ -1274,6 +1324,7 @@ impl App {
             )
             .await?;
 
+        self.begin_reply();
         let mut chunker = PhraseChunker::new();
         let mut first_llm = true;
         let mut spoken = String::new();
@@ -1345,8 +1396,14 @@ impl App {
             return Err(err);
         }
         tracing::info!(reply = %spoken, "spoken reply");
+        let interrupted = self.interrupted.lock().unwrap().take().filter(|_| cancel.is_cancelled());
         if !cancel.is_cancelled() && !spoken.trim().is_empty() {
             self.remember(user_text, &spoken).await;
+        } else if let Some(heard) = interrupted {
+            // Cut off by the listener: keep what they actually heard, marked as interrupted.
+            let note = duplex::interrupted_note(&heard);
+            tracing::info!(heard = %note, "interrupted reply");
+            self.remember(user_text, &note).await;
         }
         self.emit(Event::AssistantText {
             text: spoken,
@@ -1364,6 +1421,7 @@ impl App {
             text: spoken.to_string(),
             done: false,
         });
+        self.begin_reply();
         let tts = Arc::clone(&self.tts);
         let first_audio = AtomicBool::new(true);
         let cancel = self.cancel.lock().await.clone();
@@ -1401,7 +1459,8 @@ impl App {
         {
             return Ok(());
         }
-        let phrase = phrase.to_string();
+        let phrase_text = phrase.to_string();
+        let phrase = phrase_text.clone();
         let tts = Arc::clone(tts);
         let pcm = tokio::task::spawn_blocking(move || tts.speak(&phrase))
             .await
@@ -1426,14 +1485,31 @@ impl App {
                 timing.audio_play = Some(Instant::now());
             }
         }
-        self.audio.play(pcm)?;
+        let (generation, index) = {
+            let mut reply = self.reply.lock().unwrap();
+            reply.phrases.push(phrase_text);
+            (reply.generation, reply.phrases.len() as u32 - 1)
+        };
+        self.audio.play_phrase(generation, index, pcm)?;
         Ok(())
+    }
+
+    /// A new reply generation; its phrases are tagged with it.
+    pub(super) fn begin_reply(&self) -> u64 {
+        let generation = self.reply_seq.fetch_add(1, Ordering::SeqCst) + 1;
+        *self.reply.lock().unwrap() = ReplyTrack { generation, phrases: Vec::new() };
+        generation
     }
 
     fn spawn_barge_in(self: &Arc<Self>, cancel: CancellationToken) -> tokio::task::JoinHandle<()> {
         let app = Arc::clone(self);
+        *self.interrupted.lock().unwrap() = None;
         tokio::spawn(async move {
-            app.watch_barge_in(cancel).await;
+            if app.duplex_ready() {
+                app.watch_duplex(cancel).await;
+            } else {
+                app.watch_barge_in(cancel).await;
+            }
         })
     }
 
@@ -1759,10 +1835,12 @@ impl App {
                     preroll.clear();
                     if self.stt.begin().await.is_ok() {
                         began = true;
+                        self.stt.tap(&pcm);
                     }
                 }
                 VadDecision::Speech | VadDecision::SpeechEnd if in_utt => {
                     pcm.extend_from_slice(&chunk);
+                    self.stt.tap(&chunk);
                     if pcm.len() > max_n
                         || matches!(d, VadDecision::SpeechEnd)
                         || tokio::time::Instant::now() > utt_deadline
@@ -2112,6 +2190,10 @@ ws ::= [ \t\n\r]*
             t.move_to(next)?;
             t.clone()
         };
+        let running = matches!(next, TaskState::Planning | TaskState::Running | TaskState::WaitingForApproval);
+        self.update_activity(|a| {
+            a.agent = if running { assistant_core::state::Busy::Busy } else { assistant_core::state::Busy::Idle }
+        });
         self.task_changed(&snapshot);
         Ok(())
     }

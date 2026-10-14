@@ -39,9 +39,9 @@ concurrent load §4.6 asks for. Tests: 62 passed before this work (73 after) (`c
 
 | Plan | State | Notes |
 |---|---|---|
-| §4 full duplex | partial | Concurrent capture during playback for barge-in exists; STT is not streaming, there are no partial transcripts, and responses are not cancelled by generation ID. The PipeWire AEC module stands in for in-process AEC3. |
-| §4.5 independent states | missing | One sequential state machine. Splitting it touches the HUD protocol (`state` events). |
-| §4.3 models | different | Parakeet, Kokoro and Gemma are in use and measured. Nemotron, Qwen3-TTS, PersonaPlex and Moshi are untested candidates. |
+| §4 full duplex | **done in Phase 5** | Streaming STT (Nemotron worker) with partial words in every listening mode; replies listened to while they play (pause at speech onset, then echo / backchannel / noise / stop / redirect); per-reply generation ids; the context keeps what was heard of a cut-off reply. AEC is PipeWire's webrtc module, which is AEC3. |
+| §4.5 independent states | **done in Phase 5** | `Activity` (mic, recognition, reasoning, synthesis, playback, agent) in an `activity` event and `status --json`; the single `state` event stays for the HUD and TUI until Phase 7. |
+| §4.3 models | partly measured | Nemotron streaming (STT, Phase 5) and Parakeet (fallback) measured; Kokoro and Gemma in use. Qwen3-TTS, PersonaPlex and Moshi untested (Phase 8). |
 | §5 agent engine | **done in Phase 2** (core) | Tasks with IDs, states, budgets, per-step verification and resume after browser takeover. Planning is still one call at a time; there is no up-front plan or checkpoint/rollback. |
 | §6.1 desktop | **done in Phase 3** | Typed window, workspace and monitor tools over Hyprland's socket; focus, move, close and switch re-read the state to verify. Phrase commands still use `hyprctl eval`. |
 | §6.2 system | **mostly (Phase 3)** | systemd user units (list, status, control with an allowlist), NetworkManager status and Wi-Fi, PipeWire devices and volume, power profiles. Bluetooth beyond toggling and UPower details are not typed; D-Bus is still reached through commands. |
@@ -99,14 +99,14 @@ plus `assistant-policy`.
 - [x] Phase 4: privileged broker: a pkexec helper with one polkit action per verb
       (packages, system services), checked on both sides, key-press approval plus password,
       root audit log.
-- [ ] Phase 5: streaming STT and generation IDs; independent states; interruption handling
+- [x] Phase 5: streaming STT and generation IDs; independent states; interruption handling
       with context repair; echo-rejection benchmark under load.
 - [ ] Phase 6: accessibility tree and screenshot grounding; vision model on demand.
 - [ ] Phase 7: "Agent & Permissions" in Nixe Settings; approvals in the HUD for high-impact tools.
 - [ ] Phase 8: security tests (injection, path traversal, approval reuse), latency under load.
 
-**Recommended next milestone:** Phase 5: streaming STT and generation IDs, so the assistant
-can listen while it speaks and handle interruptions.
+**Recommended next milestone:** Phase 6: computer use (accessibility tree and screenshot
+grounding, a vision model on demand).
 
 ## Phase 1 as built
 
@@ -165,3 +165,32 @@ can listen while it speaks and handle interruptions.
   finishes, and the reply says to check `admin-log`.
 - Not in Phase 4: "apply approved configuration" (staged `/etc` edits) was left out by
   Ken's choice; the power profile stays unprivileged (`powerprofilesctl`).
+
+## Phase 5 as built
+
+- `crates/assistant-asr`: `nixe-assistant-asr`, a warm sherpa-onnx recognizer in its own
+  process (its ONNX Runtime never meets the one Kokoro and Silero load). Frames in on stdin,
+  JSON partials and finals out (`assistant_core::asr`). It pads 0.25 s before and 1 s after an
+  utterance. `nixe-assistant models fetch asr` installs the model; without it, speech falls
+  back to Voxtype. `[stt] provider = "streaming" | "voxtype"`, `threads = 2`, `device = "cpu"`.
+- `assistant_agent::asr::Stt` wraps both recognizers with Voxtype's method names plus `tap`:
+  PTT, wake, follow-up and conversation listening feed audio as it is captured, so the final
+  arrives ~140 ms after speech ends, and partial words go out as `partial_transcript`.
+  Listening modes where the assistant is silent use the raw microphone; while it speaks, the
+  echo-cancelled stream.
+- Playback (`assistant-audio/src/playq.rs`): phrases are tagged with a reply generation and
+  index; one reply's audio can be dropped without touching newer audio (and phrases still on
+  the way are dropped on arrival); a ramped gain for ducking, a pause that loses nothing, and
+  a record of how far playback got.
+- Duplex (`daemon/nixe-assistantd/src/duplex.rs`): while a reply plays, Silero on the
+  echo-cancelled stream (gate just above the measured echo residual, `[duplex] min_rms`) pauses
+  the reply at speech onset (`on_speech = "pause"`, or `"duck"`), streams the words, and
+  decides: echo / backchannel / noise carry on from the same spot; a stop phrase ends the reply
+  and opens follow-up listening; anything else ends it and becomes the next request (a short
+  start like "actually…" waits 1.2 s for the rest). Rule-based, no LLM call. The history keeps
+  the reply as heard, cut back to a whole word, with "— [interrupted]". Interruptions never
+  approve anything. Each decision is an `interruption` event.
+- Changes from the plan, with Ken: pause at onset instead of ducking (short words said over the
+  voice didn't survive echo cancelling); a missed quick "stop" is left alone rather than worked
+  around, to keep backchannels smooth; no second recognizer. `nixe-assistant bench duplex`
+  measures false interruptions and live trials (BENCHMARKS.md).

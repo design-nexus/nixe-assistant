@@ -12,6 +12,7 @@ members = [
     "crates/assistant-plugin-worker",
     "crates/assistant-policy",
     "crates/assistant-privileged",
+    "crates/assistant-asr",
     "daemon/nixe-assistantd",
 ]
 

@@ -53,6 +53,22 @@ pub enum Event {
     PartialTranscript {
         text: String,
     },
+    /// Someone spoke over a reply: what was heard and what the assistant did about it
+    /// (`verdict`: echo, backchannel, noise, stop, redirect).
+    Interruption {
+        verdict: String,
+        text: String,
+        /// From speech onset to the decision.
+        decide_ms: u64,
+        /// From onset to the playback being paused or ducked.
+        react_us: u64,
+    },
+    /// The independent parts' states (microphone, recognition, reasoning, synthesis,
+    /// playback, agent); sent when any of them changes.
+    Activity {
+        activity: crate::state::Activity,
+        at_ms: u64,
+    },
     Transcript {
         text: String,
     },

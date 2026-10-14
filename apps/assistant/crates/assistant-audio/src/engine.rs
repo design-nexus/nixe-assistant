@@ -18,7 +18,7 @@ const FRAME: usize = 512;
 enum PwCmd {
     StartCapture,
     StopCapture,
-    QueuePlay { epoch: u64, pcm: Vec<f32> },
+    QueuePlay { epoch: u64, generation: u64, phrase: u32, pcm: Vec<f32> },
     CancelPlay { epoch: u64 },
     Shutdown,
 }
@@ -31,6 +31,7 @@ pub struct AudioEngine {
     aec_samples_rx: Mutex<Option<mpsc::Receiver<Vec<i16>>>>,
     queued: Arc<AtomicUsize>,
     play_epoch: Arc<AtomicU64>,
+    play: Arc<Mutex<PlayState>>,
     echo_module: Option<u32>,
     echo_wire: Option<Arc<AtomicBool>>,
 }
@@ -49,10 +50,17 @@ struct CaptureState {
 }
 
 struct PlayState {
-    queue: Vec<f32>,
+    queue: crate::PlayQueue,
     epoch: u64,
+    /// Replies up to this generation were cancelled: their phrases still on the way through
+    /// the command channel are dropped when they arrive.
+    cancelled_through: u64,
     queued: Arc<AtomicUsize>,
 }
+
+/// The generation of audio that isn't part of a reply (approval prompts, previews). Only a
+/// full `cancel_playback` drops it.
+pub const UNTAGGED: u64 = u64::MAX;
 
 impl AudioEngine {
     pub fn start(cfg: &Config) -> Result<Self> {
@@ -89,8 +97,14 @@ impl AudioEngine {
         };
         let queued = Arc::new(AtomicUsize::new(0));
         let play_epoch = Arc::new(AtomicU64::new(0));
+        let play = Arc::new(Mutex::new(PlayState {
+            queue: crate::PlayQueue::default(),
+            epoch: 0,
+            cancelled_through: 0,
+            queued: queued.clone(),
+        }));
+        let play_thread = play.clone();
         let (ready_tx, ready_rx) = oneshot::channel::<Result<pw::channel::Sender<PwCmd>>>();
-        let queued_thread = queued.clone();
         let audio_cfg = cfg.audio.clone();
 
         std::thread::Builder::new()
@@ -102,7 +116,7 @@ impl AudioEngine {
                     level_tx,
                     aec_level_tx,
                     aec_samples_tx,
-                    queued_thread,
+                    play_thread,
                     ready_tx,
                 ) {
                     tracing::error!(%err, "pipewire thread exited");
@@ -122,6 +136,7 @@ impl AudioEngine {
             aec_samples_rx: Mutex::new(aec_samples_rx),
             queued,
             play_epoch,
+            play,
             echo_module,
             echo_wire,
         })
@@ -155,11 +170,46 @@ impl AudioEngine {
             .map_err(|_| anyhow::anyhow!("pipewire command channel closed"))
     }
 
+    /// Queue audio that isn't part of a reply.
     pub fn play(&self, pcm: Vec<f32>) -> Result<()> {
+        self.play_phrase(UNTAGGED, 0, pcm)
+    }
+
+    /// Queue one phrase of a reply.
+    pub fn play_phrase(&self, generation: u64, phrase: u32, pcm: Vec<f32>) -> Result<()> {
         let epoch = self.play_epoch.load(Ordering::SeqCst);
         self.cmd
-            .send(PwCmd::QueuePlay { epoch, pcm })
+            .send(PwCmd::QueuePlay { epoch, generation, phrase, pcm })
             .map_err(|_| anyhow::anyhow!("pipewire command channel closed"))
+    }
+
+    fn play_state(&self) -> std::sync::MutexGuard<'_, PlayState> {
+        self.play.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Drop the queued audio of `generation` and older replies, now and on arrival.
+    pub fn cancel_generation(&self, generation: u64) {
+        let t0 = Instant::now();
+        let mut st = self.play_state();
+        st.cancelled_through = st.cancelled_through.max(generation);
+        st.queue.cancel_through(generation);
+        st.queued.store(st.queue.queued(), Ordering::Relaxed);
+        tracing::info!(generation, us = t0.elapsed().as_micros(), "generation cancelled");
+    }
+
+    /// Ramp the playback volume (1.0 normal; lower ducks the voice while someone speaks).
+    pub fn set_gain(&self, gain: f32) {
+        self.play_state().queue.set_gain(gain);
+    }
+
+    /// Hold the reply in place (silence, nothing lost) or carry on from where it stopped.
+    pub fn set_paused(&self, paused: bool) {
+        self.play_state().queue.set_paused(paused);
+    }
+
+    /// How far playback got.
+    pub fn played(&self) -> crate::PlayedTo {
+        self.play_state().queue.played()
     }
 
     pub fn cancel_playback(&self) -> Result<()> {
@@ -435,7 +485,7 @@ fn pw_thread(
     level_tx: watch::Sender<f32>,
     aec_level_tx: Option<watch::Sender<f32>>,
     aec_samples_tx: Option<mpsc::Sender<Vec<i16>>>,
-    queued: Arc<AtomicUsize>,
+    play: Arc<Mutex<PlayState>>,
     ready: oneshot::Sender<Result<pw::channel::Sender<PwCmd>>>,
 ) -> Result<()> {
     pw::init();
@@ -449,11 +499,6 @@ fn pw_thread(
         active: false,
         pending: Vec::new(),
         armed: None,
-    }));
-    let play = Arc::new(Mutex::new(PlayState {
-        queue: Vec::new(),
-        epoch: 0,
-        queued: queued.clone(),
     }));
 
     // HUD / PTT PCM: hardware mic. AEC source is a second stream used only
@@ -637,16 +682,11 @@ fn pw_thread(
                 Some(bytes) => bytes.len() / 4,
                 None => return,
             };
-            let take = n.min(st.queue.len());
-            let samples: Vec<f32> = if take > 0 {
-                st.queue.drain(..take).collect()
-            } else {
-                Vec::new()
-            };
-            st.queued.store(st.queue.len(), Ordering::Relaxed);
+            let mut samples = vec![0.0f32; n];
+            st.queue.pull(&mut samples);
+            st.queued.store(st.queue.queued(), Ordering::Relaxed);
             if let Some(bytes) = data.data() {
-                for i in 0..n {
-                    let s = samples.get(i).copied().unwrap_or(0.0);
+                for (i, s) in samples.iter().enumerate() {
                     bytes[i * 4..i * 4 + 4].copy_from_slice(&s.to_le_bytes());
                 }
             }
@@ -715,19 +755,22 @@ fn pw_thread(
         PwCmd::StopCapture => {
             cap_cmd.lock().unwrap_or_else(|e| e.into_inner()).active = false;
         }
-        PwCmd::QueuePlay { epoch, pcm } => {
+        PwCmd::QueuePlay { epoch, generation, phrase, pcm } => {
             let mut st = play_cmd.lock().unwrap_or_else(|e| e.into_inner());
-            if epoch != st.epoch {
+            if epoch != st.epoch || (generation != UNTAGGED && generation <= st.cancelled_through) {
                 return;
             }
-            st.queue.extend(pcm);
-            st.queued.store(st.queue.len(), Ordering::Relaxed);
+            st.queue.push(generation, phrase, pcm);
+            let queued = st.queue.queued();
+            st.queued.store(queued, Ordering::Relaxed);
         }
         PwCmd::CancelPlay { epoch } => {
             let t0 = Instant::now();
             let mut st = play_cmd.lock().unwrap_or_else(|e| e.into_inner());
             st.epoch = epoch;
             st.queue.clear();
+            st.queue.set_gain(1.0);
+            st.queue.set_paused(false);
             st.queued.store(0, Ordering::Relaxed);
             tracing::info!(us = t0.elapsed().as_micros(), "playback cancel flushed");
         }
@@ -765,17 +808,20 @@ fn format_bytes(rate: u32, format: spa::param::audio::AudioFormat) -> Result<Vec
 }
 
 /// Collect PCM until PTT key-up (`stop` becomes true). VAD is updated
-/// for levels/logging but does not end a hold-to-talk take.
+/// for levels/logging but does not end a hold-to-talk take. `tap` sees each chunk as it
+/// arrives (the streaming recognizer decodes while the key is held).
 pub async fn record_until(
     samples: &mut mpsc::Receiver<Vec<i16>>,
     mut stop: tokio::sync::watch::Receiver<bool>,
     vad: &mut impl VadGate,
     max_secs: u64,
+    tap: &(dyn Fn(&[i16]) + Sync),
 ) -> Result<(Vec<i16>, bool)> {
     let mut pcm = Vec::new();
     let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(max_secs.max(1));
     if *stop.borrow() {
         while let Ok(chunk) = samples.try_recv() {
+            tap(&chunk);
             pcm.extend_from_slice(&chunk);
         }
         return Ok((pcm, false));
@@ -792,12 +838,14 @@ pub async fn record_until(
             chunk = samples.recv() => {
                 let Some(chunk) = chunk else { break };
                 let _ = vad.push(&chunk);
+                tap(&chunk);
                 pcm.extend_from_slice(&chunk);
             }
             _ = tokio::time::sleep_until(deadline) => break,
         }
     }
     while let Ok(chunk) = samples.try_recv() {
+        tap(&chunk);
         pcm.extend_from_slice(&chunk);
     }
     Ok((pcm, false))

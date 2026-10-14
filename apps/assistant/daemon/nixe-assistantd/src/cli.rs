@@ -347,6 +347,19 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         "install-helper" => install_helper()?,
+        "bench" if std::env::args().nth(2).as_deref() == Some("duplex") => {
+            let live = !std::env::args().any(|a| a == "--echo-only");
+            bench_duplex(live).await?;
+        }
+        // Bare `models` opens the TUI's model page (below).
+        "models" if std::env::args().nth(2).as_deref() == Some("fetch") => {
+            let rest: Vec<_> = args.collect();
+            anyhow::ensure!(
+                rest.iter().map(String::as_str).eq(["fetch", "asr"]),
+                "usage: nixe-assistant models fetch asr"
+            );
+            fetch_asr_model()?;
+        }
         "admin-log" => {
             let rest: Vec<_> = args.collect();
             let limit = rest
@@ -830,6 +843,102 @@ fn install_helper() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// One long reply, with the interruption events and first-audio time it produced.
+async fn bench_turn(prompt: &str) -> anyhow::Result<(Vec<(String, String, u64, u64)>, Option<u64>)> {
+    use assistant_core::event::Event;
+    let events = send_until_done(Command::Say { text: prompt.into() }, 240_000).await?;
+    let mut seen = Vec::new();
+    let mut first_audio = None;
+    for ev in events {
+        match ev {
+            Event::Interruption { verdict, text, decide_ms, react_us } => seen.push((verdict, text, decide_ms, react_us)),
+            Event::Timing { total_ms, .. } => first_audio = first_audio.or(Some(total_ms)),
+            _ => {}
+        }
+    }
+    Ok((seen, first_audio))
+}
+
+/// `bench duplex`: false interruptions with nobody talking, then prompted live trials.
+/// Every number comes from the daemon's events; nothing is estimated.
+async fn bench_duplex(live: bool) -> anyhow::Result<()> {
+    const STORY: &str = "Tell me a long story about a lighthouse keeper, at least ten sentences.";
+    let notify = |text: &str| {
+        let _ = std::process::Command::new("notify-send").args(["-u", "critical", "-t", "6000", "Duplex bench", text]).status();
+    };
+    println!("## Echo: three long replies, nobody talking\n");
+    let (mut onsets, mut cut, mut audio) = (0, 0, Vec::new());
+    for i in 1..=3 {
+        notify("Stay quiet while she talks.");
+        let (seen, first) = bench_turn(STORY).await?;
+        onsets += seen.len();
+        cut += seen.iter().filter(|s| s.0 == "stop" || s.0 == "redirect").count();
+        audio.extend(first);
+        println!("reply {i}: {} onsets, verdicts {:?}, first audio {}", seen.len(), seen.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(), first.map(|f| format!("{f} ms")).unwrap_or("not measured".into()));
+    }
+    println!("\nFalse onsets: {onsets}; false interruptions: {cut} (target 0)\n");
+    if !live {
+        return Ok(());
+    }
+    anyhow::ensure!(io::stdin().is_terminal(), "live trials need a terminal (or pass --echo-only)");
+    println!("## Live: say the phrase shown, a few seconds after she starts\n");
+    println!("| Said | Verdicts | Pause/duck after onset | Decided after onset |\n|---|---|---|---|");
+    for (said, expect) in [("mm-hm", "backchannel"), ("stop", "stop"), ("actually, what's the weather in Paris?", "redirect")] {
+        eprint!("Next: say \"{said}\" (expect {expect}). Press Enter to start… ");
+        io::stderr().flush()?;
+        let mut line = String::new();
+        io::stdin().read_line(&mut line)?;
+        notify(&format!("When she starts speaking, say: {said}"));
+        let (seen, _) = bench_turn(STORY).await?;
+        if seen.is_empty() {
+            println!("| {said} | (no onset heard) | not measured | not measured |");
+        }
+        for (verdict, text, decide_ms, react_us) in seen {
+            println!("| {said} | {verdict} “{text}” | {:.2} ms | {decide_ms} ms |", react_us as f64 / 1000.0);
+        }
+        // Let a redirected or stopped reply settle before the next trial.
+        tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+        let _ = send_command(&Command::Cancel).await;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    if !audio.is_empty() {
+        audio.sort();
+        println!("\nFirst audio for the story prompt (text turn, routing included): median {} ms of {}", audio[audio.len() / 2], audio.len());
+    }
+    Ok(())
+}
+
+/// Downloads the streaming speech model into the models folder (about 650 MB), through a
+/// temporary folder so an interrupted download never looks installed.
+fn fetch_asr_model() -> anyhow::Result<()> {
+    use assistant_core::asr::{ENCODER, MODEL_NAME, MODEL_URL};
+    let dir = assistant_core::paths::models_dir();
+    let target = dir.join(MODEL_NAME);
+    if target.join(ENCODER).is_file() {
+        println!("Already installed: {}", target.display());
+        return Ok(());
+    }
+    std::fs::create_dir_all(&dir)?;
+    let tmp = tempfile::tempdir_in(&dir)?;
+    println!("Downloading {MODEL_NAME} (about 650 MB; NVIDIA Open Model License)…");
+    let archive = tmp.path().join("model.tar.bz2");
+    let ok = std::process::Command::new("curl")
+        .args(["-fL", "--progress-bar", "-o"])
+        .arg(&archive)
+        .arg(MODEL_URL)
+        .status()?
+        .success();
+    anyhow::ensure!(ok, "the download failed");
+    let ok = std::process::Command::new("tar").arg("xjf").arg(&archive).arg("-C").arg(tmp.path()).status()?.success();
+    anyhow::ensure!(ok, "the archive could not be unpacked");
+    let unpacked = tmp.path().join(MODEL_NAME);
+    anyhow::ensure!(unpacked.join(ENCODER).is_file(), "the archive doesn't hold {MODEL_NAME}");
+    let _ = std::fs::remove_dir_all(unpacked.join("test_wavs"));
+    std::fs::rename(&unpacked, &target)?;
+    println!("Installed {}. Restart the assistant to use it.", target.display());
+    Ok(())
+}
+
 fn print_help() {
     eprintln!(
         "nixe-assistant — Local voice assistant client & persona manager\n\n\
@@ -840,6 +949,8 @@ fn print_help() {
            audit [--limit N] [--json] tool decisions, approvals and calls (works offline)\n\
            admin-log [--limit N] packages and system services changed through the helper\n\
            install-helper  (as root) install the polkit helper for admin tools\n\
+           models fetch asr  download the streaming speech model (about 650 MB)\n\
+           bench duplex [--echo-only]  false interruptions and live interruption trials\n\
            preview [voice speed] TTS only, without saving\n\
            calibrate      quiet/speech measurement; suggestions only\n\
            search-provider [show|builtin|duckduckgo]\n\

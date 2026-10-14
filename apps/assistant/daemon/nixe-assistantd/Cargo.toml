@@ -29,6 +29,7 @@ assistant-policy.workspace = true
 assistant-privileged.workspace = true
 dirs.workspace = true
 serde_json.workspace = true
+hound.workspace = true
 libc = "0.2"
 tokio.workspace = true
 tokio-util.workspace = true

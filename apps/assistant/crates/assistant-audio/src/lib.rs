@@ -1,8 +1,10 @@
 mod engine;
+mod playq;
 mod silero;
 mod vad;
 
-pub use engine::{aec_barge_threshold, record_until, record_until_vad, AudioEngine};
+pub use engine::{aec_barge_threshold, record_until, record_until_vad, AudioEngine, UNTAGGED};
+pub use playq::{PlayQueue, PlayedTo};
 pub use silero::{Silero, SileroState};
 pub use vad::{EnergyVad, StreamingVad, VadDecision, VadGate};
 

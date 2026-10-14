@@ -1,5 +1,6 @@
 //! Shared types for the voice assistant: config, state machine, events, timing.
 
+pub mod asr;
 pub mod apps;
 pub mod commands;
 pub mod config;

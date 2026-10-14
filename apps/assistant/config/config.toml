@@ -4,7 +4,12 @@ mode = "push-to-talk"
 prompt = "You are {name}, a fast local voice assistant on Omarchy/Hyprland. Answer questions out loud in short spoken sentences. No markdown, no bullet lists, no code fences. Never claim you changed the computer."
 
 [stt]
-provider = "voxtype"
+# "streaming": Nemotron streaming 0.6B on the echo-cancelled microphone, with partial words
+# and listening while the assistant speaks (`nixe-assistant models fetch asr` installs it).
+# "voxtype": warm Parakeet, whole utterances. Streaming falls back to Voxtype without its model.
+provider = "streaming"
+threads = 2
+device = "cpu"
 
 [llm]
 backend = "llama.cpp"
@@ -50,6 +55,17 @@ grace_ms = 500
 threshold = 0.08
 hangover_ms = 160
 aec = true
+
+# Listening while it speaks (streaming speech and AEC): when you speak over a reply it
+# pauses ("pause") or lowers its voice ("duck"); then a backchannel ("mm-hm", "yeah") lets
+# it carry on from the same spot, a stop phrase ends it, and anything else ends it and
+# becomes your next request.
+[duplex]
+enabled = true
+on_speech = "pause"
+duck_gain = 0.25
+noise_ms = 1500
+min_rms = 0.003       # quietest speech (after echo cancelling) that counts; raise if it ducks for noise
 
 [wake_word]
 enabled = true
