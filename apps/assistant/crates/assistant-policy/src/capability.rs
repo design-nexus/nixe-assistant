@@ -138,6 +138,13 @@ impl Capability {
         }
     }
 
+    /// Whether a spoken "approve" counts. A voice nearby, a video or a web page read aloud
+    /// can say it, so generated commands, shutdown and captures need a key press (HUD, TUI
+    /// or `nixe-assistant approve`). A spoken "deny" always counts.
+    pub fn voice_approvable(self) -> bool {
+        !matches!(self, Self::TerminalGenerated | Self::Shutdown | Self::Capture)
+    }
+
     pub(crate) fn low_risk(self) -> bool {
         matches!(self, Self::Desktop | Self::Audio | Self::AppLaunch)
     }

@@ -241,6 +241,16 @@ mod tests {
     }
 
     #[test]
+    fn high_impact_needs_a_key_press() {
+        for t in ["terminal.shell", "terminal.run", "system.shutdown", "capture.screen", "capture.clipboard"] {
+            assert!(!Capability::of(t).voice_approvable(), "{t}");
+        }
+        for t in ["notes.delete", "calendar.create", "ext.unknown", "routines.run"] {
+            assert!(Capability::of(t).voice_approvable(), "{t}");
+        }
+    }
+
+    #[test]
     fn untrusted_and_unavailable() {
         let rules = Rules::default();
         let mut c = cx(&rules);

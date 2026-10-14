@@ -52,7 +52,7 @@ concurrent load §4.6 asks for. Tests: 62 passed before this work (73 after) (`c
 | §7–8 permissions | **done in Phase 1** | See below. |
 | §9 sandboxing | missing | No bubblewrap, seccomp or cgroup limits. Plugins run with the user's permissions (the CLI already says so). |
 | §10 privileged broker | missing | Nothing runs as root. |
-| §11.1 voice authorization | partial | Wake word and AEC exist; approvals can be spoken, so a voice nearby can approve. |
+| §11.1 voice authorization | partial | Wake word and AEC exist. High-impact tools refuse spoken approval; the rest accept it. |
 | §11.2 prompt injection | partial | Tool results are passed as untrusted data, and the planner grammar admits only registered tools. |
 | §11.3 emergency stop | partial | `cancel`, Escape on the HUD, voice "stop" and job cancel exist; there is no global shortcut outside the HUD, and no synthetic input to release. |
 | §12 audit and recovery | **audit done in Phase 1**; recovery missing | Abilities keep their own undo (`history.undo`, `*.undo`). |
@@ -69,8 +69,9 @@ plus `assistant-policy`.
 
 ## Risks
 
-- **Voice approvals.** A spoken "approve" from a video or another person counts. For
-  high-impact tools, approval should need a keyboard or HUD action (§11.1).
+- **Voice approvals.** A spoken "approve" from a video or another person counted. Since
+  Phase 1, generated commands, shutdown and captures need a key press; other tools still
+  take a spoken approval (§11.1).
 - **Plugin trust.** Plugins share the daemon's uid. The worker's grant check (Phase 1) stops
   accidental unchecked calls from the host, not a hostile process with the same uid; that
   needs the sandbox (§9).

@@ -310,10 +310,16 @@ impl App {
         cancel: &CancellationToken,
     ) -> Result<bool> {
         self.emit_session_mode("approval");
+        let by_voice = assistant_policy::Capability::of(tool).voice_approvable();
         let spoken = format!(
-            "Approval needed for {}. {}. Say approve or deny.",
+            "Approval needed for {}. {}. {}",
             tool,
-            arguments.to_string().chars().take(240).collect::<String>()
+            arguments.to_string().chars().take(240).collect::<String>(),
+            if by_voice {
+                "Say approve or deny."
+            } else {
+                "Approve it on screen, or say deny."
+            }
         );
         let tts = self.tts.clone();
         let pcm = tokio::task::spawn_blocking(move || tts.speak(&spoken)).await??;
@@ -339,7 +345,7 @@ impl App {
                 .to_lowercase()
                 .as_str()
             {
-                "approve" | "yes approve" | "yes" | "allow once" => return Ok(true),
+                "approve" | "yes approve" | "yes" | "allow once" if by_voice => return Ok(true),
                 "deny" | "no" | "cancel" => return Ok(false),
                 _ => {}
             }
