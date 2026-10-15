@@ -115,6 +115,7 @@ pub async fn run(cfg: Config) -> Result<()> {
         reply_seq: AtomicU64::new(0),
         parts: std::sync::Mutex::new(Default::default()),
         interrupted: std::sync::Mutex::new(None),
+        last_timing: std::sync::Mutex::new(None),
         need_keyup: AtomicBool::new(false),
         last_hold: std::sync::Mutex::new(Instant::now()),
         history: Mutex::new(Vec::new()),
@@ -310,6 +311,8 @@ struct App {
     parts: std::sync::Mutex<assistant_core::state::Activity>,
     /// What the listener heard of the reply duplex just cut off; the turn records it.
     interrupted: std::sync::Mutex<Option<String>>,
+    /// The last turn's timing stages, for the Performance page.
+    last_timing: std::sync::Mutex<Option<Value>>,
     need_keyup: AtomicBool,
     last_hold: std::sync::Mutex<Instant>,
     history: Mutex<Vec<(String, String)>>,
@@ -357,6 +360,9 @@ impl App {
             .unwrap_or_else(|_| self.turn_gen.load(Ordering::SeqCst))
     }
     fn emit(&self, ev: Event) {
+        if matches!(ev, Event::Timing { .. }) {
+            *self.last_timing.lock().unwrap() = serde_json::to_value(&ev).ok();
+        }
         if matches!(
             ev,
             Event::Transcript { .. }
@@ -639,6 +645,17 @@ impl App {
                 Ok(data)
             }
             Control::Activity => Ok(json!({"turns":*self.activity.lock().unwrap()})),
+            Control::Perf => {
+                let cfg = self.cfg();
+                Ok(json!({
+                    "last_turn": *self.last_timing.lock().unwrap(),
+                    "llm": {"model": self.llm.model_path().display().to_string(), "loaded": self.llm.is_loaded(), "battery": self.llm.is_battery(), "ctx": cfg.llm.ctx},
+                    "vision": {"projector": self.llm.vision_model().map(|p| p.display().to_string()), "loaded": self.llm.vision_loaded()},
+                    "stt": {"streaming": self.stt.streaming(), "load_ms": self.stt.asr().map(|a| a.load_ms.load(Ordering::Relaxed))},
+                    "tts": {"device": self.tts.device(), "variant": self.tts.variant()},
+                    "pid": std::process::id(),
+                }))
+            }
             Control::ClearActivity => {
                 self.activity.lock().unwrap().clear();
                 Ok(json!({"cleared":true}))

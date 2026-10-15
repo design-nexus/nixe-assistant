@@ -14,6 +14,7 @@ members = [
     "crates/assistant-privileged",
     "crates/assistant-asr",
     "crates/assistant-desktop",
+    "crates/assistant-models",
     "daemon/nixe-assistantd",
 ]
 
@@ -35,6 +36,7 @@ assistant-omarchy = { path = "crates/assistant-omarchy" }
 assistant-policy = { path = "crates/assistant-policy" }
 assistant-privileged = { path = "crates/assistant-privileged" }
 assistant-desktop = { path = "crates/assistant-desktop" }
+assistant-models = { path = "crates/assistant-models" }
 assistant-tools = { path = "crates/assistant-tools" }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 crossterm = { version = "0.28", features = ["event-stream"] }

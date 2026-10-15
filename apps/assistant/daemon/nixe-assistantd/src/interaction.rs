@@ -312,16 +312,15 @@ impl App {
         &self,
         id: &str,
         tool: &str,
-        arguments: &Value,
+        summary: &str,
         task_scope: bool,
         cancel: &CancellationToken,
     ) -> Result<(bool, bool)> {
         self.emit_session_mode("approval");
         let by_voice = assistant_policy::Capability::of(tool).voice_approvable();
         let spoken = format!(
-            "Approval needed for {}. {}. {}",
-            tool,
-            arguments.to_string().chars().take(240).collect::<String>(),
+            "May I {}? {}",
+            lowercase_first(summary),
             if by_voice && task_scope {
                 "Say approve, approve for this task, or deny."
             } else if by_voice {
@@ -393,9 +392,11 @@ impl App {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.approvals.lock().await.insert(id.clone(), tx);
         let expires = now_ms() + 60_000;
+        let summary = assistant_policy::summary::describe(tool, args);
+        let voice_allowed = assistant_policy::Capability::of(tool).voice_approvable();
         self.pending.lock().unwrap().insert(
             id.clone(),
-            json!({"tool":tool,"arguments":args,"expires_at_ms":expires,"task_id":task_id,"task_scope_allowed":task_scope}),
+            json!({"tool":tool,"arguments":args,"expires_at_ms":expires,"task_id":task_id,"task_scope_allowed":task_scope,"summary":summary,"voice_allowed":voice_allowed}),
         );
         self.emit(Event::ToolApproval {
             approval_id: id.clone(),
@@ -405,6 +406,8 @@ impl App {
             expires_at_ms: expires,
             task_id,
             task_scope_allowed: task_scope,
+            summary: summary.clone(),
+            voice_allowed,
         });
         let plugin_cancel = self
             .registry
@@ -412,7 +415,7 @@ impl App {
             .as_ref()
             .map(|p| p.token(tool))
             .unwrap_or_default();
-        let (approved, for_task) = tokio::select! {_=plugin_cancel.cancelled()=>(false,false),_=cancel.cancelled()=>(false,false),r=tokio::time::timeout(Duration::from_secs(60),rx)=>r.ok().and_then(|r|r.ok()).unwrap_or((false,false)),r=async {match self.voice_approval(&id,tool,args,task_scope,cancel).await {Ok(v)=>v,Err(err)=>{tracing::warn!(%err,"voice approval unavailable; keyboard approval remains available");std::future::pending::<(bool,bool)>().await}}}=>r};
+        let (approved, for_task) = tokio::select! {_=plugin_cancel.cancelled()=>(false,false),_=cancel.cancelled()=>(false,false),r=tokio::time::timeout(Duration::from_secs(60),rx)=>r.ok().and_then(|r|r.ok()).unwrap_or((false,false)),r=async {match self.voice_approval(&id,tool,&summary,task_scope,cancel).await {Ok(v)=>v,Err(err)=>{tracing::warn!(%err,"voice approval unavailable; keyboard approval remains available");std::future::pending::<(bool,bool)>().await}}}=>r};
         let _ = self.audio.stop_capture();
         let _ = self.audio.cancel_playback();
         self.approvals.lock().await.remove(&id);
@@ -1075,4 +1078,10 @@ impl App {
             }
         }
     }
+}
+
+/// "Type “hi” into Write" → "type “hi” into Write", for "May I …?".
+fn lowercase_first(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map(|f| f.to_lowercase().collect::<String>() + c.as_str()).unwrap_or_default()
 }

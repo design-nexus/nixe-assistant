@@ -36,6 +36,12 @@ pub enum Event {
         /// Whether "approve for this task" is offered for this tool.
         #[serde(default)]
         task_scope_allowed: bool,
+        /// What it asks, in one plain sentence.
+        #[serde(default)]
+        summary: String,
+        /// Whether saying "approve" counts; otherwise a click or key press is needed.
+        #[serde(default)]
+        voice_allowed: bool,
     },
     /// A task changed state or finished a step.
     Task {

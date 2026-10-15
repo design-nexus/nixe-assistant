@@ -520,9 +520,11 @@ impl App {
                     tool,
                     arguments,
                     task_scope_allowed,
+                    summary,
                     ..
                 } => self.set_toast(format!(
-                    "Approval needed: {tool} {arguments} — y allow{} / n deny",
+                    "Approval needed: {} — y allow{} / n deny",
+                    if summary.is_empty() { format!("{tool} {arguments}") } else { summary },
                     if task_scope_allowed { " / t allow for this task" } else { "" }
                 )),
                 assistant_core::Event::Turn { event, .. } if event["type"] == "calibration" => {

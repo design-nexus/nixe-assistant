@@ -46,6 +46,8 @@ pub struct AsrWorker {
     running: Mutex<Option<Running>>,
     replies: broadcast::Sender<Reply>,
     next: AtomicU32,
+    /// How long the model took to load, the last time the worker started.
+    pub load_ms: std::sync::atomic::AtomicU64,
 }
 
 impl AsrWorker {
@@ -71,6 +73,7 @@ impl AsrWorker {
             running: Mutex::new(None),
             replies,
             next: AtomicU32::new(1),
+            load_ms: std::sync::atomic::AtomicU64::new(0),
         };
         w.spawn().await?;
         Ok(w)
@@ -95,7 +98,10 @@ impl AsrWorker {
             .context("the speech recognizer took too long to load")??
             .context("the speech recognizer exited while loading")?;
         match serde_json::from_str::<Reply>(&first)? {
-            Reply::Ready { load_ms } => tracing::info!(load_ms, "streaming recognizer ready"),
+            Reply::Ready { load_ms } => {
+                self.load_ms.store(load_ms, Ordering::Relaxed);
+                tracing::info!(load_ms, "streaming recognizer ready")
+            }
             Reply::Error { message } => bail!("speech recognizer: {message}"),
             other => bail!("unexpected first reply from the speech recognizer: {other:?}"),
         }

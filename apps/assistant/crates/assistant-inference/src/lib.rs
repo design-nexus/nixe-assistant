@@ -26,6 +26,7 @@ pub struct LlamaCppBackend {
     battery: Arc<AtomicBool>,
     mmproj: Option<PathBuf>,
     vision_idle_secs: u64,
+    vision_loaded: Arc<AtomicBool>,
 }
 
 enum Job {
@@ -99,6 +100,8 @@ impl LlamaCppBackend {
         let mmproj_w = mmproj.clone();
         let last_look = Arc::new(AtomicU64::new(0));
         let last_look_w = last_look.clone();
+        let vision_loaded = Arc::new(AtomicBool::new(false));
+        let vision_loaded_w = vision_loaded.clone();
 
         thread::Builder::new()
             .name("assistant-llama".into())
@@ -111,6 +114,7 @@ impl LlamaCppBackend {
                     battery_w,
                     mmproj_w,
                     last_look_w,
+                    vision_loaded_w,
                     &mut jobs_rx,
                 ) {
                     tracing::error!(%err, "llama worker died");
@@ -125,7 +129,13 @@ impl LlamaCppBackend {
             battery,
             mmproj,
             vision_idle_secs: cfg.vision.idle_secs.max(10),
+            vision_loaded,
         })
+    }
+
+    /// Whether the image projector is in memory now.
+    pub fn vision_loaded(&self) -> bool {
+        self.vision_loaded.load(Ordering::Relaxed)
     }
 
     /// The image projector looks will use, if one was found.
@@ -255,6 +265,7 @@ fn worker(
     battery: Arc<AtomicBool>,
     mmproj: Option<PathBuf>,
     last_look: Arc<AtomicU64>,
+    vision_loaded: Arc<AtomicBool>,
     jobs: &mut mpsc::Receiver<Job>,
 ) -> Result<()> {
     send_logs_to_tracing(LogOptions::default().with_logs_enabled(false));
@@ -336,6 +347,7 @@ fn worker(
                                     .map_err(|e| anyhow::anyhow!("image projector: {e}"))?,
                             );
                             tracing::info!(ms = t.elapsed().as_millis(), path = %proj.display(), "image projector loaded");
+                            vision_loaded.store(true, Ordering::Relaxed);
                         }
                         look_one(&model, &mut ctx, vision.as_mut().unwrap(), &image, &prompt, n_predict, w_cfg.n_batch)
                     })();
@@ -348,6 +360,7 @@ fn worker(
                 Job::DropVision { since } => {
                     if vision.is_some() && last_look.load(Ordering::Relaxed) <= since {
                         vision = None;
+                        vision_loaded.store(false, Ordering::Relaxed);
                         tracing::info!("image projector unloaded (idle)");
                     }
                 }
@@ -410,6 +423,7 @@ fn worker(
             }
         }
         drop(vision);
+        vision_loaded.store(false, Ordering::Relaxed);
         drop(ctx);
         drop(model);
         loaded.store(false, Ordering::Relaxed);

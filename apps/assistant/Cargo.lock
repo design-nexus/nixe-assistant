@@ -195,6 +195,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "assistant-models"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assistant-core",
+ "futures-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "assistant-omarchy"
 version = "0.1.0"
 dependencies = [
@@ -277,6 +291,7 @@ dependencies = [
  "assistant-agent",
  "assistant-core",
  "assistant-ipc",
+ "assistant-models",
  "assistant-policy",
  "assistant-tools",
  "chrono",
@@ -2404,6 +2419,7 @@ dependencies = [
  "assistant-desktop",
  "assistant-inference",
  "assistant-ipc",
+ "assistant-models",
  "assistant-omarchy",
  "assistant-policy",
  "assistant-privileged",
@@ -2418,6 +2434,8 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "toml 0.8.23",
+ "toml_edit 0.22.27",
  "tracing",
  "tracing-subscriber",
 ]

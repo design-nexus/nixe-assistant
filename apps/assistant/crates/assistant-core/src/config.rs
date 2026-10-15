@@ -225,13 +225,23 @@ impl VisionCfg {
             let p = PathBuf::from(&self.mmproj);
             return p.is_file().then_some(p);
         }
-        let mut found: Vec<PathBuf> = std::fs::read_dir(model.parent()?)
+        let found: Vec<PathBuf> = std::fs::read_dir(model.parent()?)
             .ok()?
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("mmproj") && n.ends_with(".gguf")))
             .collect();
-        found.sort();
-        found.into_iter().next()
+        // Several models may share a folder: the projector named most like the model.
+        let stem = model.file_name()?.to_str()?.to_lowercase();
+        let common = |p: &PathBuf| {
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
+            let name = name.trim_start_matches("mmproj-").to_string();
+            stem.chars().zip(name.chars()).take_while(|(a, b)| a == b).count()
+        };
+        match found.len() {
+            0 => None,
+            1 => found.into_iter().next(),
+            _ => found.into_iter().filter(|p| common(p) >= 6).max_by_key(common),
+        }
     }
 }
 
@@ -765,7 +775,81 @@ impl Default for HttpCfg {
     }
 }
 
+/// A config key split into its path: `duplex.on_speech` is two steps; in
+/// `mcp.permissions.files.write` everything after `mcp.permissions` is one key (tool names
+/// contain dots).
+fn key_path(key: &str) -> Vec<String> {
+    let key = key.trim();
+    if let Some(tool) = key.strip_prefix("mcp.permissions.") {
+        return vec!["mcp".into(), "permissions".into(), tool.into()];
+    }
+    key.split('.').filter(|s| !s.is_empty()).map(str::to_string).collect()
+}
+
+/// A value as typed on a command line: TOML (`true`, `0.25`, `["a", "b"]`, `"x"`), or else
+/// the bare text as a string (`pause`).
+pub fn parse_value(text: &str) -> serde_json::Value {
+    match toml::from_str::<toml::Table>(&format!("v = {text}")) {
+        Ok(mut t) => t.remove("v").and_then(|v| serde_json::to_value(v).ok()).unwrap_or(serde_json::Value::Null),
+        Err(_) => serde_json::Value::String(text.to_string()),
+    }
+}
+
+/// Floats in their single-precision shortest form (0.4, not 0.4000000059604645).
+fn tidy_json(v: &mut serde_json::Value) {
+    match v {
+        serde_json::Value::Number(n) if n.is_f64() => {
+            if let Some(short) = n.as_f64().and_then(|f| (f as f32).to_string().parse::<f64>().ok()) {
+                if let Some(num) = serde_json::Number::from_f64(short) {
+                    *n = num;
+                }
+            }
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(tidy_json),
+        serde_json::Value::Object(map) => map.values_mut().for_each(tidy_json),
+        _ => {}
+    }
+}
+
 impl Config {
+    /// The whole config as JSON, floats tidied.
+    pub fn to_json(&self) -> serde_json::Value {
+        let mut v = serde_json::to_value(self).unwrap_or_default();
+        tidy_json(&mut v);
+        v
+    }
+
+    /// One setting as JSON, by dotted key; `None` if there is no such key.
+    pub fn get_key(&self, key: &str) -> Option<serde_json::Value> {
+        let mut v = self.to_json();
+        for step in key_path(key) {
+            v = v.get(&step)?.clone();
+        }
+        Some(v)
+    }
+
+    /// A copy with one setting changed, checked: an unknown key, a wrong type or an invalid
+    /// value is refused with the reason.
+    pub fn with_key(&self, key: &str, value: serde_json::Value) -> crate::Result<Self> {
+        let path = key_path(key);
+        let (last, parents) = path.split_last().ok_or_else(|| crate::Error::msg("no key given"))?;
+        let mut root = serde_json::to_value(self).map_err(|e| crate::Error::msg(e.to_string()))?;
+        let mut node = &mut root;
+        for step in parents {
+            node = node.get_mut(step).ok_or_else(|| crate::Error::msg(format!("no setting “{key}”")))?;
+        }
+        let map = node.as_object_mut().ok_or_else(|| crate::Error::msg(format!("no setting “{key}”")))?;
+        // A new key only where the section is a free-form map (per-tool rules).
+        let free_form = path.len() == 3 && path[0] == "mcp" && path[1] == "permissions";
+        if !free_form && !map.contains_key(last) {
+            return Err(crate::Error::msg(format!("no setting “{key}”")));
+        }
+        map.insert(last.clone(), value);
+        let next: Config = serde_json::from_value(root).map_err(|e| crate::Error::msg(format!("{key}: {e}")))?;
+        next.validate()?;
+        Ok(next)
+    }
+
     pub fn load() -> crate::Result<Self> {
         Self::load_from(&paths::config_path())
     }
@@ -802,9 +886,10 @@ impl Config {
         } else {
             toml_edit::DocumentMut::new()
         };
-        let updated = toml::to_string_pretty(self)?
+        let mut updated = toml::to_string_pretty(self)?
             .parse::<toml_edit::DocumentMut>()
             .map_err(|e| crate::Error::msg(e.to_string()))?;
+        tidy_floats(updated.as_table_mut());
         merge_table(existing.as_table_mut(), updated.as_table());
         if let Some(table) = existing
             .get_mut("location")
@@ -822,10 +907,17 @@ impl Config {
 
     pub fn validate(&self) -> crate::Result<()> {
         let fail = |s: &str| Err(crate::Error::msg(s));
-        if !(0.0..=1.0).contains(&self.duplex.duck_gain) || self.duplex.noise_ms > 10_000 || !(0.0..=0.1).contains(&self.duplex.min_rms)
-            || !["pause", "duck"].contains(&self.duplex.on_speech.as_str())
-        {
-            return fail("duplex.duck_gain must be 0–1 and noise_ms at most 10000");
+        if !(0.0..=1.0).contains(&self.duplex.duck_gain) {
+            return fail("duplex.duck_gain must be between 0 and 1");
+        }
+        if self.duplex.noise_ms > 10_000 {
+            return fail("duplex.noise_ms must be at most 10000");
+        }
+        if !(0.0..=0.1).contains(&self.duplex.min_rms) {
+            return fail("duplex.min_rms must be between 0 and 0.1");
+        }
+        if !["pause", "duck"].contains(&self.duplex.on_speech.as_str()) {
+            return fail("duplex.on_speech must be pause or duck");
         }
         self.location
             .validate()
@@ -983,6 +1075,10 @@ impl Config {
         deferred!(tts, force_cuda);
         deferred!(stt, provider);
         deferred!(stt, voxtype_bin);
+        deferred!(stt, model);
+        deferred!(stt, threads);
+        deferred!(stt, device);
+        deferred!(vision, mmproj);
         deferred!(audio, source);
         deferred!(audio, sink);
         deferred!(audio, capture_rate);
@@ -1123,6 +1219,20 @@ pub fn default_toml() -> &'static str {
     ))
 }
 
+/// Settings are single precision: 0.4 serializes as 0.4000000059604645. Written back in
+/// their shortest form so the file says what was meant.
+fn tidy_floats(table: &mut toml_edit::Table) {
+    for (_, item) in table.iter_mut() {
+        if let Some(t) = item.as_table_mut() {
+            tidy_floats(t);
+        } else if let Some(f) = item.as_float() {
+            if let Ok(short) = (f as f32).to_string().parse::<f64>() {
+                *item = toml_edit::value(short);
+            }
+        }
+    }
+}
+
 pub fn merge_table(dst: &mut toml_edit::Table, src: &toml_edit::Table) {
     for (key, value) in src.iter() {
         if let (Some(a), Some(b)) = (
@@ -1197,6 +1307,42 @@ mod tests {
         cfg.agent.max_calls = 4;
         cfg.agent.max_active_secs = 5;
         assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn projector_matches_its_model() {
+        let dir = tempfile::tempdir().unwrap();
+        for f in ["gemma-4-E4B-it-Q4_K_M.gguf", "Qwen3.5-9B-Q4_K_M.gguf", "mmproj-gemma-4-E4B-it-BF16.gguf", "mmproj-Qwen3.5-9B-BF16.gguf"] {
+            std::fs::write(dir.path().join(f), b"x").unwrap();
+        }
+        let v = VisionCfg::default();
+        let pick = |m: &str| v.resolve(&dir.path().join(m)).and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()));
+        assert_eq!(pick("Qwen3.5-9B-Q4_K_M.gguf").as_deref(), Some("mmproj-Qwen3.5-9B-BF16.gguf"));
+        assert_eq!(pick("gemma-4-E4B-it-Q4_K_M.gguf").as_deref(), Some("mmproj-gemma-4-E4B-it-BF16.gguf"));
+    }
+
+    #[test]
+    fn keys_read_and_change_settings() {
+        let cfg = Config::default();
+        assert_eq!(cfg.get_key("duplex.on_speech"), Some(serde_json::json!("pause")));
+        let next = cfg.with_key("duplex.on_speech", parse_value("duck")).unwrap();
+        assert_eq!(next.duplex.on_speech, "duck");
+        let next = next.with_key("duplex.duck_gain", parse_value("0.4")).unwrap();
+        assert!((next.duplex.duck_gain - 0.4).abs() < 1e-6);
+        let next = next.with_key("wake_word.enabled", parse_value("false")).unwrap();
+        assert!(!next.wake_word.enabled);
+        let next = next.with_key("computer.deny_classes", parse_value(r#"["obsidian"]"#)).unwrap();
+        assert_eq!(next.computer.deny_classes, vec!["obsidian".to_string()]);
+        // Per-tool rules: tool names contain dots, and new ones may be added.
+        let next = next.with_key("mcp.permissions.files.write", parse_value("deny")).unwrap();
+        assert_eq!(next.mcp.permissions.get("files.write").map(String::as_str), Some("deny"));
+        assert_eq!(next.get_key("mcp.permissions.files.write"), Some(serde_json::json!("deny")));
+        // Refused: unknown keys, wrong types, values the validator rejects.
+        assert!(cfg.with_key("duplex.nonsense", parse_value("1")).is_err());
+        assert!(cfg.with_key("duplex.duck_gain", parse_value("loud")).is_err());
+        assert!(cfg.with_key("duplex.on_speech", parse_value("shout")).is_err());
+        assert!(cfg.with_key("permissions.admin", parse_value("maybe")).is_err());
+        assert!(cfg.get_key("nope.nothing").is_none());
     }
 
     #[test]

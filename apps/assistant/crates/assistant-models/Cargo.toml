@@ -1,0 +1,16 @@
+[package]
+name = "assistant-models"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The LLM catalogue: curated models, Hugging Face search and the GGUF downloader"
+
+[dependencies]
+anyhow.workspace = true
+assistant-core.workspace = true
+futures-util.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tempfile.workspace = true

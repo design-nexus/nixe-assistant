@@ -24,6 +24,9 @@ assistant-core.workspace = true
 assistant-inference.workspace = true
 assistant-desktop.workspace = true
 image = { version = "0.25", default-features = false, features = ["png"] }
+toml.workspace = true
+toml_edit = "0.22"
+assistant-models.workspace = true
 assistant-ipc.workspace = true
 assistant-omarchy.workspace = true
 assistant-tools.workspace = true

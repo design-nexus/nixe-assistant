@@ -350,6 +350,19 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         "install-helper" => install_helper()?,
+        "perf" => {
+            let mut v = request(Control::Perf, 3000).await?;
+            v["gpu"] = gpu_usage(v["pid"].as_u64());
+            if std::env::args().any(|a| a == "--json") {
+                println!("{v}");
+            } else {
+                println!("{}", serde_json::to_string_pretty(&v)?);
+            }
+        }
+        "config" => {
+            let rest: Vec<String> = args.collect();
+            config_command(&rest).await?;
+        }
         "bench" if std::env::args().nth(2).as_deref() == Some("computer") => {
             bench::computer(std::env::args().nth(3)).await?;
         }
@@ -364,6 +377,10 @@ async fn main() -> anyhow::Result<()> {
         "bench" if std::env::args().nth(2).as_deref() == Some("duplex") => {
             let live = !std::env::args().any(|a| a == "--echo-only");
             bench_duplex(live).await?;
+        }
+        "models" if matches!(std::env::args().nth(2).as_deref(), Some("list" | "search" | "files" | "download" | "use")) => {
+            let rest: Vec<String> = args.collect();
+            models_command(&rest).await?;
         }
         // Bare `models` opens the TUI's model page (below).
         "models" if std::env::args().nth(2).as_deref() == Some("fetch") => {
@@ -827,6 +844,170 @@ async fn cancel_esc() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `config get [KEY] [--json]`, `config set KEY VALUE`, `config unset mcp.permissions.TOOL`.
+/// Writes keep the file's comments, are validated first, and reload a running daemon.
+async fn config_command(rest: &[String]) -> anyhow::Result<()> {
+    let words: Vec<&str> = rest.iter().map(String::as_str).filter(|a| *a != "--json").collect();
+    let json = rest.iter().any(|a| a == "--json");
+    let path = assistant_core::paths::config_path();
+    let cfg = assistant_core::Config::load()?;
+    match words.as_slice() {
+        ["get"] => println!("{}", if json { serde_json::to_string(&cfg.to_json())? } else { serde_json::to_string_pretty(&cfg.to_json())? }),
+        ["get", key] => {
+            let v = cfg.get_key(key).with_context(|| format!("no setting “{key}”"))?;
+            println!("{}", if json || !v.is_string() { v.to_string() } else { v.as_str().unwrap_or("").to_string() });
+        }
+        ["set", key, value @ ..] if !value.is_empty() => {
+            let next = cfg.with_key(key, assistant_core::config::parse_value(&value.join(" ")))?;
+            next.save_to(&path)?;
+            apply_change(&[key]).await;
+            println!("{key} = {}", next.get_key(key).unwrap_or_default());
+        }
+        ["unset", key] => {
+            let tool = key.strip_prefix("mcp.permissions.").context("only per-tool rules (mcp.permissions.TOOL) can be removed")?;
+            let text = std::fs::read_to_string(&path)?;
+            let mut doc: toml_edit::DocumentMut = text.parse()?;
+            let removed = doc
+                .get_mut("mcp")
+                .and_then(|m| m.get_mut("permissions"))
+                .and_then(|p| p.as_table_like_mut())
+                .and_then(|t| t.remove(tool))
+                .is_some();
+            anyhow::ensure!(removed, "there is no rule for {tool}");
+            let _: assistant_core::Config = toml::from_str(&doc.to_string())?;
+            assistant_core::config::atomic_write(&path, doc.to_string().as_bytes())?;
+            reload_if_running().await;
+            println!("removed the rule for {tool}");
+        }
+        _ => anyhow::bail!("usage: nixe-assistant config get [KEY] [--json] | set KEY VALUE | unset mcp.permissions.TOOL"),
+    }
+    Ok(())
+}
+
+/// VRAM in use on the GPU, and by the assistant's process, from nvidia-smi.
+fn gpu_usage(pid: Option<u64>) -> serde_json::Value {
+    let run = |args: &[&str]| {
+        std::process::Command::new("nvidia-smi").args(args).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+    };
+    let Some(total) = run(&["--query-gpu=name,memory.used,memory.total", "--format=csv,noheader,nounits"]) else {
+        return serde_json::Value::Null;
+    };
+    let f: Vec<&str> = total.lines().next().unwrap_or("").split(", ").collect();
+    let mine = pid.and_then(|pid| {
+        run(&["--query-compute-apps=pid,used_memory", "--format=csv,noheader,nounits"])?
+            .lines()
+            .filter_map(|l| l.split_once(", "))
+            .find(|(p, _)| p.trim().parse::<u64>().ok() == Some(pid))
+            .and_then(|(_, m)| m.trim().parse::<u64>().ok())
+    });
+    serde_json::json!({
+        "name": f.first().unwrap_or(&""),
+        "used_mib": f.get(1).and_then(|v| v.trim().parse::<u64>().ok()),
+        "total_mib": f.get(2).and_then(|v| v.trim().parse::<u64>().ok()),
+        "assistant_mib": mine,
+    })
+}
+
+async fn reload_if_running() {
+    if let Err(e) = request(Control::Reload, 30_000).await {
+        eprintln!("saved; the assistant isn't running ({e})");
+    }
+}
+
+/// Reload a running daemon; settings it can only pick up at start (the model, devices, the
+/// speech recognizer) restart it.
+async fn apply_change(keys: &[&str]) {
+    match request(Control::Reload, 30_000).await {
+        Ok(reply) => {
+            let pending: Vec<String> = reply["restart_required"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
+            if keys.iter().any(|k| pending.iter().any(|p| k.starts_with(p.as_str()))) {
+                let ok = std::process::Command::new("systemctl").args(["--user", "restart", "nixe-assistantd.service"]).status().is_ok_and(|s| s.success());
+                eprintln!("{}", if ok { "restarted the assistant to apply it" } else { "saved; restart the assistant to apply it" });
+            }
+        }
+        Err(e) => eprintln!("saved; the assistant isn't running ({e})"),
+    }
+}
+
+/// `models list|search|files|download|use`, JSON for Nixe Settings.
+async fn models_command(rest: &[String]) -> anyhow::Result<()> {
+    use assistant_models as models;
+    let words: Vec<&str> = rest.iter().map(String::as_str).filter(|a| !a.starts_with("--")).collect();
+    match words.as_slice() {
+        ["list"] => {
+            let cfg = assistant_core::Config::load()?;
+            let current = cfg.resolve_model_path();
+            let installed = assistant_core::Config::scan_local_models();
+            let file_size = |p: &std::path::Path| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+            let local: Vec<serde_json::Value> = installed
+                .iter()
+                .map(|p| {
+                    let projector = cfg.vision.resolve(p);
+                    serde_json::json!({
+                        "path": p, "name": p.file_name().map(|n| n.to_string_lossy().to_string()),
+                        "bytes": file_size(p), "vision": projector.is_some(), "projector": projector,
+                        "current": *p == current,
+                    })
+                })
+                .collect();
+            let curated: Vec<serde_json::Value> = models::CURATED_MODELS
+                .iter()
+                .map(|m| {
+                    let mut v = serde_json::to_value(m).unwrap_or_default();
+                    v["installed"] = serde_json::json!(models::is_curated_installed(m, &installed));
+                    v["mmproj_url"] = serde_json::json!(m.mmproj_url());
+                    v
+                })
+                .collect();
+            let asr = assistant_core::paths::models_dir().join(assistant_core::asr::MODEL_NAME);
+            let asr = serde_json::json!({"name": assistant_core::asr::MODEL_NAME, "installed": asr.join(assistant_core::asr::ENCODER).is_file()});
+            println!("{}", serde_json::json!({"current": current, "projector": cfg.vision.resolve(&current), "installed": local, "curated": curated, "asr": asr, "models_dir": assistant_core::paths::models_dir()}));
+        }
+        ["search", query @ ..] if !query.is_empty() => {
+            let found = models::search_huggingface(&query.join(" ")).await?;
+            println!("{}", serde_json::to_string(&found)?);
+        }
+        ["files", repo] => {
+            let files = models::hf_files_sized(repo).await?;
+            println!("{}", serde_json::to_string(&files)?);
+        }
+        ["download", url] => {
+            let (url, target) = models::download_target(url)?;
+            let (tx, mut rx) = tokio::sync::watch::channel(models::DownloadStatus::default());
+            let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let dest = target.clone();
+            let job = tokio::spawn(async move { models::download_file(&url, dest, tx, cancel).await });
+            // One JSON line per progress change, for a progress bar.
+            while rx.changed().await.is_ok() {
+                let s = rx.borrow().clone();
+                println!("{}", serde_json::json!({"state": format!("{:?}", s.state).to_lowercase(), "bytes": s.downloaded_bytes, "total": s.total_bytes, "speed": s.speed_bytes_sec, "error": s.error}));
+                if matches!(s.state, models::DownloadState::Installed | models::DownloadState::Failed | models::DownloadState::Cancelled) {
+                    break;
+                }
+            }
+            job.await??;
+            println!("{}", serde_json::json!({"state": "done", "path": target}));
+        }
+        ["use", path] => {
+            let p = std::path::PathBuf::from(path);
+            anyhow::ensure!(p.is_file(), "{} isn't a file", p.display());
+            let mut head = [0u8; 24];
+            use std::io::Read;
+            std::fs::File::open(&p)?.read_exact(&mut head)?;
+            models::validate_header(&head)?;
+            let cfg = assistant_core::Config::load()?;
+            let next = cfg
+                .with_key("llm.model", serde_json::json!(p.display().to_string()))?
+                .with_key("vision.mmproj", serde_json::json!("auto"))?;
+            next.save_to(&assistant_core::paths::config_path())?;
+            apply_change(&["llm.model"]).await;
+            println!("{}", serde_json::json!({"model": p, "projector": next.vision.resolve(&p)}));
+        }
+        _ => anyhow::bail!("usage: nixe-assistant models list | search QUERY | files REPO | download URL | use PATH | fetch asr"),
+    }
+    Ok(())
+}
+
 /// Installs the root helper for the admin tools and its polkit policy, from the binary
 /// next to this one. Run with sudo.
 fn install_helper() -> anyhow::Result<()> {
@@ -966,7 +1147,10 @@ fn print_help() {
            audit [--limit N] [--json] tool decisions, approvals and calls (works offline)\n\
            admin-log [--limit N] packages and system services changed through the helper\n\
            install-helper  (as root) install the polkit helper for admin tools\n\
+           config get [KEY] [--json] | set KEY VALUE | unset mcp.permissions.TOOL\n\
+           perf [--json]   last turn's timings, what is loaded, VRAM\n\
            models fetch asr  download the streaming speech model (about 650 MB)\n\
+           models list | search Q | files REPO | download URL | use PATH  (JSON)\n\
            bench duplex [--echo-only]  false interruptions and live interruption trials\n\
            bench computer [TASK]  computer-use tasks in real apps, each checked\n\
            bench vision     which vision model picks the right mark (Gemma vs GLM)\n\

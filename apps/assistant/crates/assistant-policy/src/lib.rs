@@ -8,6 +8,7 @@
 pub mod capability;
 pub mod grant;
 pub mod store;
+pub mod summary;
 pub mod task;
 
 pub use capability::Capability;

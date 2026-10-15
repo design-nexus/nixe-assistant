@@ -29,6 +29,11 @@ ShellRoot {
     property string approvalText: ""
     property double approvalExpires: 0
     property bool approvalTaskScope: false
+    property string approvalDetail: ""
+    property bool approvalVoice: false
+    property bool approvalDetailsOpen: false
+    // "Type a note in Write · step 2 of 4", while a task runs.
+    property string taskLine: ""
     property bool connected: false
     property bool holdVisible: false
     property var theme: ({})
@@ -151,10 +156,19 @@ ShellRoot {
             root.approvalId = obj.approval_id;
             root.approvalExpires = obj.expires_at_ms;
             root.approvalTaskScope = obj.task_scope_allowed === true;
-            root.approvalText = obj.tool + "\n" + JSON.stringify(obj.arguments, null, 2) + "\nY: allow once" + (root.approvalTaskScope ? " · T: allow for this task" : "") + " · N: deny · 60s expiry";
+            root.approvalVoice = obj.voice_allowed === true;
+            root.approvalText = obj.summary || obj.tool;
+            root.approvalDetail = obj.tool + "\n" + JSON.stringify(obj.arguments, null, 2);
+            root.approvalDetailsOpen = false;
             break;
         case "turn":
             if (obj.event && obj.event.type === "tool") { root.toolProgress = obj.event.tool + " · " + obj.event.status + " · " + JSON.stringify(obj.event.arguments || {}); }
+            if (obj.event && obj.event.type === "task" && obj.event.task) {
+                const t = obj.event.task;
+                const running = ["queued", "planning", "running", "waiting_for_approval", "paused"].indexOf(t.state) >= 0;
+                const request = t.request.length > 60 ? t.request.substring(0, 60) + "…" : t.request;
+                root.taskLine = running ? request + " · step " + Math.min(t.calls + 1, t.max_calls) + " of " + t.max_calls + (t.state === "waiting_for_approval" ? " · waiting for you" : "") : "";
+            }
             if (obj.event && obj.event.type === "calibration") {
                 root.errorText = "Calibration: " + obj.event.phase + " for five seconds";
                 hideTimer.restart();
@@ -176,6 +190,7 @@ ShellRoot {
                 root.approvalId = ""; root.approvalText = "";
             }
             if (obj.state === "listening") {
+                root.taskLine = "";
                 root.toolProgress = "";
                 root.transcript = "";
                 root.assistant = "";
@@ -281,6 +296,13 @@ ShellRoot {
         onTriggered: if (Date.now() >= root.approvalExpires) {root.approvalId = ""; root.approvalText = "";}
     }
     Process { id: approvalProc }
+    // Answer the pending approval: "approve" or "deny", once or for the rest of the task.
+    function decide(verb, forTask) {
+        approvalProc.command = ["nixe-assistant", verb, root.approvalId].concat(forTask ? ["--task"] : []);
+        approvalProc.running = true;
+        root.approvalId = "";
+        root.approvalText = "";
+    }
     Process {
         id: cancelProc
         command: [(Quickshell.env("HOME") || "") + "/.local/bin/nixe-assistant", "cancel"]
@@ -344,15 +366,15 @@ ShellRoot {
 
         Shortcut {
             sequence: "Y"; enabled: root.approvalId.length > 0 && root.hudEnabled && root.connected
-            onActivated: {approvalProc.command = ["nixe-assistant", "approve", root.approvalId]; approvalProc.running = true; root.approvalId = ""; root.approvalText = "";}
+            onActivated: root.decide("approve", false)
         }
         Shortcut {
             sequence: "T"; enabled: root.approvalId.length > 0 && root.approvalTaskScope && root.hudEnabled && root.connected
-            onActivated: {approvalProc.command = ["nixe-assistant", "approve", root.approvalId, "--task"]; approvalProc.running = true; root.approvalId = ""; root.approvalText = "";}
+            onActivated: root.decide("approve", true)
         }
         Shortcut {
             sequence: "N"; enabled: root.approvalId.length > 0 && root.hudEnabled && root.connected
-            onActivated: {approvalProc.command = ["nixe-assistant", "deny", root.approvalId]; approvalProc.running = true; root.approvalId = ""; root.approvalText = "";}
+            onActivated: root.decide("deny", false)
         }
         Shortcut {
             sequences: ["Escape"]
@@ -361,13 +383,9 @@ ShellRoot {
         }
         exclusionMode: ExclusionMode.Ignore
 
-        mask: Region {
-            intersection: Intersection.Subtract
-            x: 0
-            y: 0
-            width: panel.width
-            height: panel.height
-        }
+        // Clicks pass through, except on the card while it asks for an approval.
+        mask: Region { item: root.approvalId.length > 0 ? card : noInput }
+        Item { id: noInput; width: 0; height: 0 }
 
         Rectangle {
             id: card
@@ -424,11 +442,48 @@ ShellRoot {
 
                 Text { visible: root.toolProgress.length > 0 && root.daemonState !== "idle"; width: body.width; text: root.toolProgress; color: root.cMuted; font.family: root.hudFont; wrapMode: Text.WrapAnywhere }
                 Text { visible: root.dictationDraft.length > 0; width: body.width; text: "Draft for " + root.dictationTarget + ": " + root.dictationDraft; color: root.cFg; font.family: root.hudFont; wrapMode: Text.WrapAnywhere }
-                Flickable {
+                Text { visible: root.taskLine.length > 0 && root.daemonState !== "idle"; width: body.width; text: root.taskLine; color: root.cMuted; font.family: root.hudFont; wrapMode: Text.Wrap }
+                Column {
                     visible: root.approvalId.length > 0
-                    width: parent.width; height: Math.min(180, approvalLabel.implicitHeight)
-                    contentHeight: approvalLabel.implicitHeight; clip: true
-                    Text {id: approvalLabel; width: parent.width; text: root.approvalText; color: root.cFg; font.family: root.hudFont; wrapMode: Text.WrapAnywhere}
+                    width: body.width
+                    spacing: 8
+                    Text { width: parent.width; text: root.approvalText; color: root.cFg; font.family: root.hudFont; font.pixelSize: root.fontReply; font.bold: true; wrapMode: Text.Wrap }
+                    Text {
+                        text: (root.approvalDetailsOpen ? "▾ " : "▸ ") + "Details"
+                        color: root.cMuted; font.family: root.hudFont
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.approvalDetailsOpen = !root.approvalDetailsOpen }
+                    }
+                    Flickable {
+                        visible: root.approvalDetailsOpen
+                        width: parent.width; height: Math.min(160, detailLabel.implicitHeight)
+                        contentHeight: detailLabel.implicitHeight; clip: true
+                        Text { id: detailLabel; width: parent.width; text: root.approvalDetail; color: root.cMuted; font.family: root.hudFont; wrapMode: Text.WrapAnywhere }
+                    }
+                    Row {
+                        spacing: 8
+                        Repeater {
+                            model: [
+                                {label: "Allow  Y", verb: "approve", task: false, shown: true, main: true},
+                                {label: "Allow for task  T", verb: "approve", task: true, shown: root.approvalTaskScope, main: false},
+                                {label: "Deny  N", verb: "deny", task: false, shown: true, main: false}
+                            ]
+                            Rectangle {
+                                required property var modelData
+                                visible: modelData.shown
+                                width: buttonLabel.implicitWidth + 24; height: buttonLabel.implicitHeight + 12
+                                radius: 6
+                                color: modelData.main ? root.cAccent : (buttonMouse.containsMouse ? root.cCard : "transparent")
+                                border.width: 1; border.color: modelData.main ? root.cAccent : root.cMuted
+                                Text { id: buttonLabel; anchors.centerIn: parent; text: parent.modelData.label; color: parent.modelData.main ? root.cBg : root.cFg; font.family: root.hudFont; font.bold: parent.modelData.main }
+                                MouseArea { id: buttonMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.decide(parent.modelData.verb, parent.modelData.task) }
+                            }
+                        }
+                    }
+                    Text {
+                        width: parent.width
+                        text: root.approvalVoice ? "Or say “approve” or “deny”." : "Click or press a key to allow this; saying it doesn't count."
+                        color: root.cMuted; font.family: root.hudFont; wrapMode: Text.Wrap
+                    }
                 }
                 Text {
                     visible: root.transcript.length > 0

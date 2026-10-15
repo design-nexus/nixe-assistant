@@ -52,11 +52,11 @@ concurrent load §4.6 asks for. Tests: 62 passed before this work (73 after) (`c
 | §7–8 permissions | **done in Phase 1** | See below. |
 | §9 sandboxing | partial | Bubblewrap for generated terminal commands (namespaces, read-only system, hidden home, no runtime sockets). No seccomp or cgroup limits yet, and plugins still run with the user's permissions. |
 | §10 privileged broker | **done in Phase 4** | `nixe-assistant-helper` behind polkit: install, remove and update repository packages, start, stop or restart system services. Typed and checked twice; no root shell. |
-| §11.1 voice authorization | partial | Wake word and AEC exist. High-impact tools refuse spoken approval; the rest accept it. |
+| §11.1 voice authorization | partial | Wake word and AEC exist. High-impact tools refuse spoken approval; the rest accept it. Approvals are spoken and shown as one plain sentence, and the HUD card has clickable buttons (Phase 7). |
 | §11.2 prompt injection | partial | Tool results are passed as untrusted data, and the planner grammar admits only registered tools. |
 | §11.3 emergency stop | partial | `cancel`, Escape on the HUD, voice "stop" and job cancel exist; there is no global shortcut outside the HUD, and no synthetic input to release. |
 | §12 audit and recovery | **audit done in Phase 1**; recovery missing | Abilities keep their own undo (`history.undo`, `*.undo`). |
-| §13 GTK settings | different | Settings live in the TUI. Nixe Settings (GTK) is the natural home for an "Agent & Permissions" page; it reads the same `config.toml`. |
+| §13 GTK settings | **done in Phase 7** | An Assistant group in Nixe Settings (General, Voice, Permissions, Activity, Performance, Models), through `nixe-assistant config/perf/models` so the assistant still checks every value. The TUI stays for personas. |
 | §14 hardware profiles | missing | One configuration. |
 
 ## Reusable as is
@@ -103,7 +103,8 @@ plus `assistant-policy`.
       with context repair; echo-rejection benchmark under load.
 - [x] Phase 6: accessibility tree, marks, keyboard and pointer, evidence-checked actions, vision
       on demand (see "Phase 6 as built" for what does and doesn't work yet).
-- [ ] Phase 7: "Agent & Permissions" in Nixe Settings; approvals in the HUD for high-impact tools.
+- [ ] Phase 7: the Assistant group in Nixe Settings; readable, clickable approvals in the HUD
+      (built; see "Phase 7 as built". Waiting on the live check).
 - [ ] Phase 8: security tests (injection, path traversal, approval reuse), latency under load.
 
 **Recommended next milestone:** Phase 7: "Agent & Permissions" in Nixe Settings and approvals
@@ -242,3 +243,42 @@ in the HUD; then Phase 8, where the planner model and vision grounding get a pro
   - Qwen 3.5 9B was tried and wasn't better (see BENCHMARKS.md).
   - Vision grounding is weak.
   - `bench computer` still needs work. Its Spotify task only runs if Spotify is already open.
+
+## Phase 7 as built
+
+- CLI for Settings (`daemon/nixe-assistantd/src/cli.rs`), JSON out:
+  - `config get [KEY] --json`, `config set KEY VALUE` (TOML value, checked by
+    `Config::validate`, saved with comments kept, then the daemon reloads, or restarts for keys
+    that need it), `config unset mcp.permissions.TOOL`.
+  - `perf --json`: the last turn's timing stages, the model and projector and whether they're
+    loaded, the speech worker's load time, and graphics memory from `nvidia-smi`
+    (`Control::Perf`).
+  - `models list|search|files|download|use`: the catalogue moved from the TUI into
+    `crates/assistant-models`. The curated list is Gemma 4 E4B and E2B, Qwen 3.5 9B, Gemma 4
+    12B QAT and GLM-4.6V-Flash, each with its projector. `download` prints one JSON line per
+    progress change. `use` sets `llm.model` with `vision.mmproj = "auto"` and restarts. `list`
+    also says whether the streaming speech model is installed.
+- Nixe Settings, `apps/settings/src/sections/assistant/`, shown when `nixe-assistant` is
+  installed:
+  - General: running state with Start, Stop and Restart; wake word, conversation, overlay;
+    autonomy mode and the task budget.
+  - Voice: speech recognition provider and device, the speech model (Download), microphone and
+    speaker, duplex and barge-in, voice and speed with Preview.
+  - Permissions: each capability as allowed, asks first or never (software changes can't be
+    allowed); per-tool rules (add and remove); computer-use blocked apps and confirm words; the
+    admin helper's state.
+  - Activity (redrawn while open): approvals waiting, with Allow, Allow for this task and Deny;
+    the last ten tasks with their steps' evidence and Stop; the last 30 audit records with a
+    filter.
+  - Performance (redrawn after each answer): the last answer's stages as a bar, what's loaded,
+    graphics memory.
+  - Models: the model in use, installed models with Use, the recommended list with Download (a
+    progress bar, then the projector), and a Hugging Face search that lists a repository's files.
+- Approvals: `assistant_policy::summary::describe` turns a tool call into one sentence ("Type
+  “hello” into Write", "Install sl (and 2 dependencies)", "Restart cups.service (now active)").
+  It goes in the `tool_approval` event (`summary`, plus `voice_allowed`), in `status`'s pending
+  approvals, in the spoken prompt ("May I …?") and in the TUI.
+- HUD: the approval card shows the sentence, details folded away, and Allow / Allow for task /
+  Deny buttons (Y, T and N still work). Only the card takes clicks, and only while it asks. It
+  says when saying "approve" doesn't count. A task line shows the request and its step while a
+  task runs.

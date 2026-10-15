@@ -77,6 +77,8 @@ pub enum Control {
         job_id: String,
     },
     Reload,
+    /// Last turn's timings and what is loaded, for the Performance page.
+    Perf,
     Diagnostics,
     Activity,
     ClearActivity,
