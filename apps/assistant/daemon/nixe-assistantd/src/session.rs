@@ -76,11 +76,53 @@ pub enum RequestKind {
     Browse,
     Terminal,
     Tools,
+    /// Operating an app window (computer use).
+    Computer,
 }
+
+/// "In Notepad, type …", "click Save in the Settings window": a place in an app plus an
+/// action someone would do with the mouse or keyboard.
+fn computer_request(s: &str) -> bool {
+    const ACTS: &[&str] = &[
+        "click", "press", "type ", "tap ", "select", "toggle", "turn on", "turn off", "switch on", "switch off", "new tab",
+        "close the tab", "save", "scroll", "fill in", "enter ", "check the", "uncheck", "open the menu", "go to the end",
+        "search", "write ", "find ", "open ", "close ", "play", "pause", "add ", "go to ", "delete ", "rename ", "choose ",
+    ];
+    let place = s.contains(" window") || s.starts_with("in ") || s.contains(" in the app") || s.starts_with("on the screen");
+    place && ACTS.iter().any(|a| s.contains(a))
+}
+/// The app window a request names: "In Write, …", "In the Notepad window, …",
+/// "… in VS Code". Used when the planner leaves out the window.
+pub fn window_in_request(text: &str) -> Option<String> {
+    let s = text.trim();
+    let lower = s.to_lowercase();
+    let rest = if lower.starts_with("in the ") {
+        &s[7..]
+    } else if lower.starts_with("in ") {
+        &s[3..]
+    } else {
+        let i = lower.rfind(" in the ").map(|i| i + 8).or_else(|| lower.rfind(" in ").map(|i| i + 4))?;
+        &s[i..]
+    };
+    let end = rest.find([',', '.', ':', ';']).unwrap_or(rest.len());
+    let mut name = rest[..end].trim();
+    for cut in [" titled ", " window", " app"] {
+        if let Some(i) = name.to_lowercase().find(cut) {
+            // "the Firefox window titled Bench search": the title is the more exact name.
+            name = if cut == " titled " { &name[i + cut.len()..] } else { &name[..i] };
+        }
+    }
+    let name = name.trim();
+    (!name.is_empty() && name.split_whitespace().count() <= 5).then(|| name.to_string())
+}
+
 pub fn classify(text: &str) -> RequestKind {
     let s = text.to_lowercase();
     if s.starts_with("use tools to ") {
         return RequestKind::Tools;
+    }
+    if computer_request(&s) {
+        return RequestKind::Computer;
     }
     if ["open ", "go to ", "navigate to "]
         .iter()
@@ -198,6 +240,35 @@ pub fn punctuation(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_named_in_requests() {
+        assert_eq!(window_in_request("In Write, type hello").as_deref(), Some("Write"));
+        assert_eq!(window_in_request("In the Notepad window, open a new tab.").as_deref(), Some("Notepad"));
+        assert_eq!(window_in_request("In VS Code, go to the end").as_deref(), Some("VS Code"));
+        assert_eq!(window_in_request("In the Firefox window titled Bench search, type nixe").as_deref(), Some("Bench search"));
+        assert_eq!(window_in_request("press play in Spotify").as_deref(), Some("Spotify"));
+        assert_eq!(window_in_request("tell me a joke"), None);
+    }
+
+    #[test]
+    fn computer_requests() {
+        for t in [
+            "In the Notepad window, open a new tab.",
+            "In Notepad, type hello and save the file.",
+            "In VS Code, go to the end of the file and type Line two.",
+            "In the Firefox window titled Bench search, type nixe into the search box and press the Search button.",
+            "In the Spotify window, press the play/pause button.",
+            "Click Save in the Settings window",
+            "In the Firefox window titled Bench search, search the page for nixe.",
+            "In Spotify, play the next song",
+        ] {
+            assert_eq!(classify(t), RequestKind::Computer, "{t}");
+        }
+        for t in ["what's the weather", "in the morning remind me", "click the first result", "tell me a story"] {
+            assert_ne!(classify(t), RequestKind::Computer, "{t}");
+        }
+    }
     #[test]
     fn session_expiry_and_controls() {
         let mut s = Session::default();

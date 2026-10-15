@@ -40,6 +40,9 @@ pub enum Capability {
     /// Administrative actions run as root by the polkit helper: packages and system
     /// services. Always asks, needs a key press each time, and polkit asks for a password.
     Privileged,
+    /// Reading and operating app windows (`ui.*`, `screen.*`, `input.*`). Asks with a key
+    /// press; one approval may cover the rest of a task.
+    ComputerUse,
     /// Never runs.
     Disabled,
     /// External MCP and third-party tools nothing else describes.
@@ -111,6 +114,8 @@ impl Capability {
         }
         if tool.starts_with("admin.") {
             Self::Privileged
+        } else if ["ui.", "screen.", "input."].iter().any(|p| tool.starts_with(p)) {
+            Self::ComputerUse
         } else if tool.ends_with(".undo") || PLUGIN_EDITS.contains(&tool) {
             Self::PluginEdit
         } else if PLUGIN_PREFIXES.iter().any(|p| tool.starts_with(p)) {
@@ -149,6 +154,7 @@ impl Capability {
             | Self::FileWrite
             | Self::Service
             | Self::Privileged
+            | Self::ComputerUse
             | Self::Network => Decision::Ask,
             // Visible-browser form actions are external tools until they are typed.
             Self::Web if !READ_BROWSER.contains(&tool) => Decision::Ask,
@@ -160,7 +166,7 @@ impl Capability {
     /// always ask.
     pub(crate) fn floor(self) -> Option<Decision> {
         match self {
-            Self::TerminalGenerated | Self::Privileged => Some(Decision::Ask),
+            Self::TerminalGenerated | Self::Privileged | Self::ComputerUse => Some(Decision::Ask),
             Self::Disabled => Some(Decision::Deny),
             _ => None,
         }
@@ -170,13 +176,13 @@ impl Capability {
     /// can say it, so generated commands, shutdown, captures and admin actions need a key
     /// press (HUD, TUI or `nixe-assistant approve`). A spoken "deny" always counts.
     pub fn voice_approvable(self) -> bool {
-        !matches!(self, Self::TerminalGenerated | Self::Shutdown | Self::Capture | Self::Privileged)
+        !matches!(self, Self::TerminalGenerated | Self::Shutdown | Self::Capture | Self::Privileged | Self::ComputerUse)
     }
 
     /// Whether one approval may cover the rest of a task. The same tools that need a key
     /// press each time are approved one call at a time.
     pub fn task_approvable(self) -> bool {
-        self.voice_approvable() && self != Self::Disabled
+        (self.voice_approvable() || self == Self::ComputerUse) && self != Self::Disabled
     }
 
     pub(crate) fn low_risk(self) -> bool {

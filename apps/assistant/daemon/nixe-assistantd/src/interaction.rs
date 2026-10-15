@@ -927,7 +927,9 @@ impl App {
                 let mut record = self.registry.record("approval", &verdict, &review_args);
                 record.turn = Some(self.turn_id().to_string());
                 record.approval_id = Some(id.clone());
-                let covered = task.is_some_and(|t| t.lock().unwrap().approved_for_task(name));
+                // A confirmed send/buy/delete is approved on its own, whatever the task allowed.
+                let confirmed = args["confirmed"].as_bool().unwrap_or(false);
+                let covered = !confirmed && task.is_some_and(|t| t.lock().unwrap().approved_for_task(name));
                 if covered {
                     record.outcome = "approved".into();
                     record.detail = Some("covered by a task-wide approval".into());
@@ -974,10 +976,18 @@ impl App {
             self.registry.policy(name, &self.cfg()) == policy,
             "tool permissions changed during review; retry"
         );
-        let result = self
-            .registry
-            .call(name, args.clone(), &self.cfg(), cancel, &grant)
-            .await?;
+        // Keyboard and pointer actions go to another app: the HUD gives up the keyboard for
+        // them (it grabs it while the assistant works, for Escape and approvals).
+        let drives_input = name.starts_with("input.") || name == "ui.act";
+        if drives_input {
+            self.emit(Event::ComputerInput { active: true });
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        }
+        let result = self.registry.call(name, args.clone(), &self.cfg(), cancel, &grant).await;
+        if drives_input {
+            self.emit(Event::ComputerInput { active: false });
+        }
+        let result = result?;
         let mut result = self
             .host_extensions(name, result, cancel, depth, budget)
             .await?;

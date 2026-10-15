@@ -342,6 +342,21 @@ mod tests {
     }
 
     #[test]
+    fn computer_use_asks_once_per_task_by_key_press() {
+        let rules = Rules::default();
+        let mut c = cx(&rules);
+        c.tool_rule = Some(Decision::Allow);
+        for t in ["ui.tree", "ui.act", "screen.marks", "screen.look", "input.click", "input.type", "input.key", "input.scroll"] {
+            let v = decide(t, &c);
+            assert_eq!((v.capability(), v.decision()), (Capability::ComputerUse, Decision::Ask), "{t}");
+            assert!(!v.capability().voice_approvable(), "{t}: a spoken approve doesn't count");
+            assert!(v.capability().task_approvable(), "{t}: one approval covers the task");
+        }
+        c.tool_rule = Some(Decision::Deny);
+        assert_eq!(decide("input.click", &c).decision(), Decision::Deny);
+    }
+
+    #[test]
     fn untrusted_and_unavailable() {
         let rules = Rules::default();
         let mut c = cx(&rules);

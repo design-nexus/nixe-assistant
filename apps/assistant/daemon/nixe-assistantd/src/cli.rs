@@ -1,3 +1,6 @@
+#[path = "bench.rs"]
+mod bench;
+
 use anyhow::Context;
 use assistant_ipc::{
     request, send_and_listen, send_command, send_until_done, stream_events, Command, Control,
@@ -347,6 +350,17 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         "install-helper" => install_helper()?,
+        "bench" if std::env::args().nth(2).as_deref() == Some("computer") => {
+            bench::computer(std::env::args().nth(3)).await?;
+        }
+        "bench" if std::env::args().nth(2).as_deref() == Some("vision") => {
+            match (std::env::args().nth(3).as_deref(), std::env::args().nth(4)) {
+                (Some("--one"), Some(model)) => {
+                    bench::vision_one(std::path::Path::new(&model), &std::env::args().nth(5).unwrap_or("tags".into())).await?
+                }
+                _ => bench::vision().await?,
+            }
+        }
         "bench" if std::env::args().nth(2).as_deref() == Some("duplex") => {
             let live = !std::env::args().any(|a| a == "--echo-only");
             bench_duplex(live).await?;
@@ -954,6 +968,8 @@ fn print_help() {
            install-helper  (as root) install the polkit helper for admin tools\n\
            models fetch asr  download the streaming speech model (about 650 MB)\n\
            bench duplex [--echo-only]  false interruptions and live interruption trials\n\
+           bench computer [TASK]  computer-use tasks in real apps, each checked\n\
+           bench vision     which vision model picks the right mark (Gemma vs GLM)\n\
            preview [voice speed] TTS only, without saving\n\
            calibrate      quiet/speech measurement; suggestions only\n\
            search-provider [show|builtin|duckduckgo]\n\

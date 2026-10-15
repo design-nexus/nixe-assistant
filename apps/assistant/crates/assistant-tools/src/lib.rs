@@ -3,6 +3,7 @@
 
 pub mod admin;
 pub mod agent;
+pub mod computer;
 pub mod fs;
 pub mod jobs;
 pub mod mcp;

@@ -11,6 +11,8 @@ assistant-core.workspace = true
 assistant-omarchy.workspace = true
 assistant-policy.workspace = true
 assistant-privileged.workspace = true
+assistant-desktop.workspace = true
+image = { version = "0.25", default-features = false, features = ["png"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

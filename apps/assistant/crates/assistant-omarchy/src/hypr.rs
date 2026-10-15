@@ -30,6 +30,11 @@ pub struct Client {
     pub focus_history_id: i64,
     #[serde(default)]
     pub floating: bool,
+    /// Top-left corner in layout (logical) coordinates.
+    #[serde(default)]
+    pub at: [i64; 2],
+    #[serde(default)]
+    pub size: [i64; 2],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -134,8 +139,38 @@ pub fn workspace_selector(input: &str) -> Result<String> {
 }
 
 /// Windows matching `query`: an exact address, else an exact class (any case), else a title
-/// containing the words (any case). The caller decides what to do with none or several.
+/// containing the words (any case), else the name's own words ("VS Code" finds class `code`
+/// and "… - Visual Studio Code"). The caller decides what to do with none or several.
 pub fn match_windows<'a>(clients: &'a [Client], query: &str) -> Vec<&'a Client> {
+    let found = match_exact(clients, query);
+    if !found.is_empty() {
+        return found;
+    }
+    // Words people add that name no window.
+    const FILLER: &[&str] = &["the", "window", "app", "application", "titled", "called", "named", "open"];
+    let words: Vec<String> = query
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.len() >= 3 && !FILLER.contains(w))
+        .map(str::to_string)
+        .collect();
+    if words.is_empty() {
+        return Vec::new();
+    }
+    let score = |c: &Client| {
+        let class = c.class.to_lowercase();
+        let last = class.rsplit('.').next().unwrap_or(&class).to_string();
+        let title = c.title.to_lowercase();
+        words.iter().filter(|w| **w == class || **w == last || title.split(|ch: char| !ch.is_alphanumeric()).any(|t| t == w.as_str())).count()
+    };
+    let best = clients.iter().map(score).max().unwrap_or(0);
+    if best == 0 {
+        return Vec::new();
+    }
+    clients.iter().filter(|c| score(c) == best).collect()
+}
+
+fn match_exact<'a>(clients: &'a [Client], query: &str) -> Vec<&'a Client> {
     let q = query.trim();
     if valid_address(q) {
         return clients.iter().filter(|c| c.address == q).collect();
@@ -171,6 +206,11 @@ pub async fn close_window(address: &str) -> Result<()> {
     dispatch(format!(r#"hl.dsp.window.close({{ window = "address:{address}" }})"#)).await
 }
 
+/// Put the cursor at a layout (logical) position.
+pub async fn move_cursor(x: i32, y: i32) -> Result<()> {
+    dispatch(format!("hl.dsp.cursor.move({{ x = {x}, y = {y} }})")).await
+}
+
 pub async fn focus_workspace(workspace: &str) -> Result<()> {
     let ws = workspace_selector(workspace)?;
     dispatch(format!(r#"hl.dsp.focus({{ workspace = "{ws}" }})"#)).await
@@ -179,6 +219,25 @@ pub async fn focus_workspace(workspace: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn matches_by_name_words() {
+        let c = |class: &str, title: &str| -> Client {
+            serde_json::from_value(serde_json::json!({"address":"0x1","class":class,"title":title,"workspace":{"id":1,"name":"1"}})).unwrap()
+        };
+        let all = vec![
+            c("code", "bench.md - Visual Studio Code"),
+            c("io.github.design_nexus.nixe.Notepad", "notes.txt — Notepad"),
+            c("firefox", "Bench search — Mozilla Firefox"),
+        ];
+        let first = |q: &str| match_windows(&all, q).first().map(|w| w.class.clone());
+        assert_eq!(first("VS Code").as_deref(), Some("code"));
+        assert_eq!(first("Visual Studio Code").as_deref(), Some("code"));
+        assert_eq!(first("the Notepad window").as_deref(), Some("io.github.design_nexus.nixe.Notepad"));
+        assert_eq!(first("notepad").as_deref(), Some("io.github.design_nexus.nixe.Notepad"));
+        assert_eq!(first("Firefox window titled Bench search").as_deref(), Some("firefox"));
+        assert!(match_windows(&all, "Spotify").is_empty());
+    }
 
     fn fixture() -> Vec<Client> {
         serde_json::from_str(

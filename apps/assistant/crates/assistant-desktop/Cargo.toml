@@ -1,0 +1,19 @@
+[package]
+name = "assistant-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Computer use: accessibility tree, screenshots, OCR, marks, input and verification"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+assistant-omarchy.workspace = true
+atspi = { version = "0.30", default-features = false, features = ["connection", "proxies", "wrappers", "tokio"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+zbus = { version = "5", default-features = false, features = ["tokio"] }

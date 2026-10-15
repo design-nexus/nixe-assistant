@@ -9,7 +9,7 @@ description = "Local GGUF inference for voice assistant (llama.cpp CUDA)"
 anyhow.workspace = true
 assistant-core.workspace = true
 encoding_rs = "0.8"
-llama-cpp-2 = { version = "0.1.158", default-features = true }
+llama-cpp-2 = { version = "0.1.158", default-features = true, features = ["mtmd"] }
 llama-cpp-sys-2 = "0.1.158"
 thiserror.workspace = true
 tokio.workspace = true

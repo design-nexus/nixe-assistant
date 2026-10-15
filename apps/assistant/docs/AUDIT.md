@@ -48,7 +48,7 @@ concurrent load §4.6 asks for. Tests: 62 passed before this work (73 after) (`c
 | §6.3 files | **done in Phase 3** | One guard for every file tool (secret folders off limits, the assistant's own folders read-only); list, search, write, move, trash with backups and `files.undo`. |
 | §6.4 terminal | **mostly (Phase 3)** | Generated commands run in a bubblewrap workspace sandbox and still ask; configured commands run as the user. Admin work goes through the typed helper (Phase 4), never a root shell. |
 | §6.5 browser | mostly | Playwright worker with takeover. |
-| §6.6–6.7 computer use, vision | missing | Screenshots and OCR exist as desktop actions only. |
+| §6.6–6.7 computer use, vision | **mostly (Phase 6)** | Accessibility tree, numbered marks (tree + OCR), keyboard and pointer without root, evidence-checked actions, vision on demand through the LLM's image projector. The small planner model is the weak link; vision grounding is weak (Gemma 0/5, GLM-4.6V-Flash 3/5 when pointing). |
 | §7–8 permissions | **done in Phase 1** | See below. |
 | §9 sandboxing | partial | Bubblewrap for generated terminal commands (namespaces, read-only system, hidden home, no runtime sockets). No seccomp or cgroup limits yet, and plugins still run with the user's permissions. |
 | §10 privileged broker | **done in Phase 4** | `nixe-assistant-helper` behind polkit: install, remove and update repository packages, start, stop or restart system services. Typed and checked twice; no root shell. |
@@ -101,12 +101,13 @@ plus `assistant-policy`.
       root audit log.
 - [x] Phase 5: streaming STT and generation IDs; independent states; interruption handling
       with context repair; echo-rejection benchmark under load.
-- [ ] Phase 6: accessibility tree and screenshot grounding; vision model on demand.
+- [x] Phase 6: accessibility tree, marks, keyboard and pointer, evidence-checked actions, vision
+      on demand (see "Phase 6 as built" for what does and doesn't work yet).
 - [ ] Phase 7: "Agent & Permissions" in Nixe Settings; approvals in the HUD for high-impact tools.
 - [ ] Phase 8: security tests (injection, path traversal, approval reuse), latency under load.
 
-**Recommended next milestone:** Phase 6: computer use (accessibility tree and screenshot
-grounding, a vision model on demand).
+**Recommended next milestone:** Phase 7: "Agent & Permissions" in Nixe Settings and approvals
+in the HUD; then Phase 8, where the planner model and vision grounding get a proper benchmark.
 
 ## Phase 1 as built
 
@@ -194,3 +195,50 @@ grounding, a vision model on demand).
   voice didn't survive echo cancelling); a missed quick "stop" is left alone rather than worked
   around, to keep backchannels smooth; no second recognizer. `nixe-assistant bench duplex`
   measures false interruptions and live trials (BENCHMARKS.md).
+
+## Phase 6 as built
+
+- `crates/assistant-desktop`:
+  - `a11y`: AT-SPI over the `atspi` crate. A window's tree is found by the window's pid; ids are
+    e1…; elements can be pressed, focused or have their text set directly. Whether an element
+    can be operated comes from its role, because GTK labels expose clipboard actions too.
+    `enable()` turns on the session's accessibility switch, so Firefox, Chromium and Electron
+    expose their trees.
+  - `screen`: window captures with grim, mapping image pixels to layout coordinates (the monitor
+    is at 1.6).
+  - `ocr`: tesseract TSV, grouped into lines.
+  - `marks`: one numbered list from the tree and OCR, drawn on the screenshot for vision.
+  - `input`: Hyprland's `hl.dsp.cursor.move` positions the cursor, a Wayland virtual pointer
+    clicks and scrolls, and `wtype` types. No root is needed.
+  - `guard`: password managers, terminals, polkit and lock screens are never touched.
+  - `verify`: success needs evidence. For typing, the field's text or OCR of the window. For a
+    press, click or key, a changed title, a changed set of elements or element states, or a new
+    or closed window. Screen-pixel differences don't count.
+- Tools: `ui.tree`, `ui.find`, `ui.act` (by id, or by name with window), `screen.marks`,
+  `screen.look`, `input.click`, `input.type` (finds the window's text field, avoids a browser's
+  address bar, types into apps that draw their own editor and confirms by OCR), `input.key` and
+  `input.scroll`. They run in the daemon (shared ids, the model), as daemon-local registry
+  tools.
+- Policy: `Capability::ComputerUse` asks by default; approval needs a key press, and one approval
+  may cover a task. A click on anything labelled with `[computer] confirm_words` (send, delete,
+  buy…) returns `needs_confirmation`, and `confirmed: true` is always asked separately.
+- Planner support (small models need it):
+  - a `Computer` request kind ("in X, type/press/open…")
+  - worked examples in the planner prompt
+  - the window filled in from the request when omitted
+  - no "finish" before a confirmed action
+  - actions never fall back to the focused window
+- The HUD lets go of the keyboard while the assistant types or clicks (`computer_input` event).
+  Before that, its own keystrokes landed in the HUD.
+- Vision: `LlamaCppBackend::look` loads the mmproj next to the model on first use and unloads it
+  after `[vision] idle_secs`; `<think>` blocks are stripped.
+- Confirmed live through the planner, each checked against the app:
+  - Write: typing into a new document
+  - Notepad: a new tab
+  - a Firefox page: search box and Enter
+- Not yet confirmed: VS Code, Spotify.
+- Known limits:
+  - The planner (Gemma 4 E4B) sometimes stops early or picks the wrong key.
+  - Qwen 3.5 9B was tried and wasn't better (see BENCHMARKS.md).
+  - Vision grounding is weak.
+  - `bench computer` still needs work. Its Spotify task only runs if Spotify is already open.

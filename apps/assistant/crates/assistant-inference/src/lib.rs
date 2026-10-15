@@ -8,12 +8,13 @@ use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{LlamaChatMessage, LlamaModel};
+use llama_cpp_2::mtmd::{mtmd_default_marker, MtmdBitmap, MtmdContext, MtmdContextParams, MtmdInputText};
 use llama_cpp_2::sampling::LlamaSampler;
 use llama_cpp_2::send_logs_to_tracing;
 use llama_cpp_2::LogOptions;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use tokio::sync::{mpsc, oneshot};
@@ -23,9 +24,22 @@ pub struct LlamaCppBackend {
     loaded: Arc<AtomicBool>,
     model_path: PathBuf,
     battery: Arc<AtomicBool>,
+    mmproj: Option<PathBuf>,
+    vision_idle_secs: u64,
 }
 
 enum Job {
+    /// Answer about an image, loading the projector if needed.
+    Look {
+        image: Vec<u8>,
+        prompt: String,
+        n_predict: i32,
+        done: oneshot::Sender<Result<String>>,
+    },
+    /// Unload the projector if no look happened since `since` (seconds since the epoch).
+    DropVision {
+        since: u64,
+    },
     Unload {
         done: oneshot::Sender<()>,
     },
@@ -81,6 +95,10 @@ impl LlamaCppBackend {
         let battery_w = battery.clone();
         let (jobs_tx, mut jobs_rx) = mpsc::channel::<Job>(4);
         let path = model_path.clone();
+        let mmproj = cfg.vision.resolve(&model_path);
+        let mmproj_w = mmproj.clone();
+        let last_look = Arc::new(AtomicU64::new(0));
+        let last_look_w = last_look.clone();
 
         thread::Builder::new()
             .name("assistant-llama".into())
@@ -91,6 +109,8 @@ impl LlamaCppBackend {
                     configured_gpu_layers,
                     loaded_w,
                     battery_w,
+                    mmproj_w,
+                    last_look_w,
                     &mut jobs_rx,
                 ) {
                     tracing::error!(%err, "llama worker died");
@@ -103,7 +123,34 @@ impl LlamaCppBackend {
             loaded,
             model_path,
             battery,
+            mmproj,
+            vision_idle_secs: cfg.vision.idle_secs.max(10),
         })
+    }
+
+    /// The image projector looks will use, if one was found.
+    pub fn vision_model(&self) -> Option<&std::path::Path> {
+        self.mmproj.as_deref()
+    }
+
+    /// Answer `prompt` about a PNG. The projector loads on the first look and unloads
+    /// after `[vision] idle_secs` without one.
+    pub async fn look(&self, image: Vec<u8>, prompt: &str, n_predict: i32) -> Result<String> {
+        anyhow::ensure!(self.mmproj.is_some(), "no image projector (mmproj) next to the model; set [vision] mmproj");
+        let (done, answer) = oneshot::channel();
+        self.jobs
+            .send(Job::Look { image, prompt: prompt.into(), n_predict, done })
+            .await
+            .context("llama worker gone")?;
+        let text = answer.await.context("look failed")??;
+        let since = epoch_secs();
+        let jobs = self.jobs.clone();
+        let idle = self.vision_idle_secs;
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(idle)).await;
+            let _ = jobs.send(Job::DropVision { since }).await;
+        });
+        Ok(text)
     }
 
     pub fn model_path(&self) -> &std::path::Path {
@@ -195,12 +242,19 @@ struct WorkerConfig {
     n_ubatch: u32,
 }
 
+fn epoch_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn worker(
     path: PathBuf,
     mut w_cfg: WorkerConfig,
     configured_gpu_layers: u32,
     loaded: Arc<AtomicBool>,
     battery: Arc<AtomicBool>,
+    mmproj: Option<PathBuf>,
+    last_look: Arc<AtomicU64>,
     jobs: &mut mpsc::Receiver<Job>,
 ) -> Result<()> {
     send_logs_to_tracing(LogOptions::default().with_logs_enabled(false));
@@ -214,6 +268,7 @@ fn worker(
                     Some(Job::Unload { done }) => {
                         let _ = done.send(());
                     }
+                    Some(Job::DropVision { .. }) => {}
                     Some(Job::Power {
                         battery: value,
                         done,
@@ -264,10 +319,38 @@ fn worker(
         loaded.store(true, Ordering::Relaxed);
 
         let mut cached_tokens: Vec<llama_cpp_2::token::LlamaToken> = Vec::new();
+        // The image projector, loaded on the first look; dropped before the model.
+        let mut vision: Option<MtmdContext> = None;
 
         let mut unload_ack = None;
         while let Some(job) = next_job.take().or_else(|| jobs.blocking_recv()) {
             match job {
+                Job::Look { image, prompt, n_predict, done } => {
+                    let r = (|| -> Result<String> {
+                        if vision.is_none() {
+                            let proj = mmproj.as_ref().context("no image projector")?;
+                            let t = std::time::Instant::now();
+                            let params = MtmdContextParams { use_gpu: w_cfg.n_gpu_layers > 0, print_timings: false, ..Default::default() };
+                            vision = Some(
+                                MtmdContext::init_from_file(&proj.to_string_lossy(), &model, &params)
+                                    .map_err(|e| anyhow::anyhow!("image projector: {e}"))?,
+                            );
+                            tracing::info!(ms = t.elapsed().as_millis(), path = %proj.display(), "image projector loaded");
+                        }
+                        look_one(&model, &mut ctx, vision.as_mut().unwrap(), &image, &prompt, n_predict, w_cfg.n_batch)
+                    })();
+                    // The KV cache now holds the image, not the chat prefix.
+                    cached_tokens.clear();
+                    ctx.clear_kv_cache();
+                    last_look.store(epoch_secs(), Ordering::Relaxed);
+                    let _ = done.send(r);
+                }
+                Job::DropVision { since } => {
+                    if vision.is_some() && last_look.load(Ordering::Relaxed) <= since {
+                        vision = None;
+                        tracing::info!("image projector unloaded (idle)");
+                    }
+                }
                 Job::Unload { done } => {
                     unload_ack = Some(done);
                     break;
@@ -326,6 +409,7 @@ fn worker(
                 }
             }
         }
+        drop(vision);
         drop(ctx);
         drop(model);
         loaded.store(false, Ordering::Relaxed);
@@ -363,7 +447,7 @@ fn generate_one(
         anyhow::bail!("empty tokenized prompt");
     }
 
-    let common_len = if prefix_cache_enabled {
+    let mut common_len = if prefix_cache_enabled {
         let matching = tokens_list
             .iter()
             .zip(cached_tokens.iter())
@@ -379,11 +463,13 @@ fn generate_one(
         0
     };
 
-    if common_len == 0 {
+    // Hybrid and recurrent models (Qwen 3.5) can't drop just the end of their memory; then
+    // the whole prompt is processed again rather than decoding onto a stale state.
+    let trimmed = common_len > 0
+        && ctx.clear_kv_cache_seq(None, Some(common_len as u32), None).unwrap_or(false);
+    if !trimmed {
         ctx.clear_kv_cache();
-    } else {
-        ctx.clear_kv_cache_seq(None, Some(common_len as u32), None)
-            .context("clear cached suffix")?;
+        common_len = 0;
     }
     cached_tokens.truncate(common_len);
     let capacity = (n_batch as usize).min(ctx_size as usize).max(1);
@@ -446,6 +532,59 @@ fn generate_one(
     Ok(())
 }
 
+/// One answer about an image: the image and question go through the projector into the
+/// context, then a short greedy answer is sampled.
+fn look_one(
+    model: &LlamaModel,
+    ctx: &mut llama_cpp_2::context::LlamaContext<'_>,
+    vision: &mut MtmdContext,
+    image: &[u8],
+    prompt: &str,
+    n_predict: i32,
+    n_batch: u32,
+) -> Result<String> {
+    ctx.clear_kv_cache();
+    let bitmap = MtmdBitmap::from_buffer(vision, image, false).map_err(|e| anyhow::anyhow!("image: {e}"))?;
+    let system = "You look at screenshots of a computer desktop and answer briefly and exactly.";
+    let text = chat_prompt(model, system, &[], &format!("{}\n{prompt}", mtmd_default_marker()))?;
+    let chunks = vision
+        .tokenize(MtmdInputText { text, add_special: true, parse_special: true }, &[&bitmap])
+        .map_err(|e| anyhow::anyhow!("tokenize image prompt: {e}"))?;
+    let mut n_cur = chunks
+        .eval_chunks(vision, ctx, 0, 0, n_batch.max(1) as i32, true)
+        .map_err(|e| anyhow::anyhow!("evaluate image: {e}"))?;
+    let mut sampler = LlamaSampler::greedy();
+    let mut batch = LlamaBatch::new(1, 1);
+    let mut decoder = UTF_8.new_decoder();
+    let mut out = String::new();
+    let mut idx = -1;
+    for _ in 0..n_predict.max(1) {
+        let token = sampler.sample(ctx, idx);
+        if model.vocab().is_eog(token) {
+            break;
+        }
+        let piece = model.vocab().token_to_piece(token, true, None);
+        // decode_to_string only fills spare capacity.
+        out.reserve(decoder.max_utf8_buffer_length(piece.len()).unwrap_or(piece.len()));
+        let _ = decoder.decode_to_string(&piece, &mut out, false);
+        batch.clear();
+        batch.add(token, n_cur, &[0], true)?;
+        ctx.decode(&mut batch).context("decode token")?;
+        n_cur += 1;
+        idx = 0;
+    }
+    Ok(strip_thinking(&out).to_string())
+}
+
+/// Reasoning models put their thoughts in <think>…</think>; only the answer is wanted.
+fn strip_thinking(text: &str) -> &str {
+    match text.rfind("</think>") {
+        Some(i) => text[i + "</think>".len()..].trim(),
+        None if text.trim_start().starts_with("<think>") => "",
+        None => text.trim(),
+    }
+}
+
 fn chat_prompt(
     model: &LlamaModel,
     system: &str,
@@ -482,7 +621,12 @@ fn chat_prompt(
             LlamaChatMessage::new("user".into(), user.into())
                 .map_err(|e| anyhow::anyhow!("{e}"))?,
         );
-        if let Ok(formatted) = model.apply_chat_template(&tmpl, &msgs, true) {
+        if let Ok(mut formatted) = model.apply_chat_template(&tmpl, &msgs, true) {
+            // Models that reason in <think> blocks (Qwen 3) would speak their reasoning and
+            // take seconds to start: an empty block opens the answer directly.
+            if tmpl.to_str().is_ok_and(|t| t.contains("<think>")) && !formatted.trim_end().ends_with("</think>") {
+                formatted.push_str("<think>\n\n</think>\n\n");
+            }
             return Ok(formatted);
         }
         tracing::warn!("llama.cpp could not apply the GGUF chat template");
@@ -531,6 +675,14 @@ fn budget_prompt<T>(
 #[cfg(test)]
 mod tests {
     use super::gemma4_prompt;
+
+    #[test]
+    fn thinking_is_stripped() {
+        use crate::strip_thinking;
+        assert_eq!(strip_thinking("<think>hmm, m3 or m4</think>\nm4"), "m4");
+        assert_eq!(strip_thinking("  m2 "), "m2");
+        assert_eq!(strip_thinking("<think>cut off before the end"), "");
+    }
 
     #[test]
     fn gemma4_prompt_opens_model_turn() {

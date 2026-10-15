@@ -53,6 +53,11 @@ pub enum Event {
     PartialTranscript {
         text: String,
     },
+    /// The assistant is typing or clicking in another app: the HUD lets go of the keyboard
+    /// while `active`, or the keystrokes would land in the HUD.
+    ComputerInput {
+        active: bool,
+    },
     /// Someone spoke over a reply: what was heard and what the assistant did about it
     /// (`verdict`: echo, backchannel, noise, stop, redirect).
     Interruption {

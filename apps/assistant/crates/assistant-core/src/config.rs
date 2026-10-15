@@ -9,6 +9,8 @@ pub struct Config {
     pub assistant: AssistantCfg,
     pub stt: SttCfg,
     pub llm: LlmCfg,
+    pub vision: VisionCfg,
+    pub computer: ComputerCfg,
     pub tts: TtsCfg,
     pub vad: VadCfg,
     pub audio: AudioCfg,
@@ -168,6 +170,68 @@ impl Default for SttCfg {
             threads: 2,
             device: "cpu".into(),
         }
+    }
+}
+
+/// Computer use: operating app windows through their accessibility tree, the pointer and
+/// the keyboard.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ComputerCfg {
+    /// Window classes never touched, on top of the built-in list (password managers,
+    /// terminals, authentication prompts, lock screens, the assistant's own windows).
+    pub deny_classes: Vec<String>,
+    /// A click on something labelled with one of these always asks, even inside an approved task.
+    pub confirm_words: Vec<String>,
+}
+
+impl Default for ComputerCfg {
+    fn default() -> Self {
+        Self {
+            deny_classes: Vec::new(),
+            confirm_words: [
+                "send", "submit", "buy", "pay", "purchase", "order", "checkout", "delete", "remove", "erase", "post",
+                "publish", "confirm", "transfer", "unsubscribe", "uninstall", "format", "wipe",
+            ]
+            .iter()
+            .map(|w| w.to_string())
+            .collect(),
+        }
+    }
+}
+
+/// Looking at the screen with the LLM's image projector, loaded only while in use.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VisionCfg {
+    /// The projector (mmproj) GGUF, or "auto" for one next to the model file.
+    pub mmproj: String,
+    /// Unloaded after this long without a look, to give the VRAM back.
+    pub idle_secs: u64,
+    /// Screenshots are scaled down to this width before the model sees them.
+    pub max_width: u32,
+}
+
+impl Default for VisionCfg {
+    fn default() -> Self {
+        Self { mmproj: "auto".into(), idle_secs: 120, max_width: 1280 }
+    }
+}
+
+impl VisionCfg {
+    /// The projector to use with `model`, if there is one.
+    pub fn resolve(&self, model: &std::path::Path) -> Option<PathBuf> {
+        if self.mmproj != "auto" && !self.mmproj.is_empty() {
+            let p = PathBuf::from(&self.mmproj);
+            return p.is_file().then_some(p);
+        }
+        let mut found: Vec<PathBuf> = std::fs::read_dir(model.parent()?)
+            .ok()?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("mmproj") && n.ends_with(".gguf")))
+            .collect();
+        found.sort();
+        found.into_iter().next()
     }
 }
 

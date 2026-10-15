@@ -39,7 +39,9 @@ ShellRoot {
             || (daemonState !== "idle" && daemonState !== "")
             || errorText.length > 0)
 
-    readonly property bool grabKeys: hudEnabled && connected && (approvalId.length > 0 || (sessionMode === "wake" && daemonState === "listening")
+    // False while the assistant types or clicks in another app (its keys must reach that app).
+    property bool computerInput: false
+    readonly property bool grabKeys: hudEnabled && connected && !computerInput && (approvalId.length > 0 || (sessionMode === "wake" && daemonState === "listening")
         || (sessionMode === "wake" && daemonState === "transcribing")
         || daemonState === "thinking"
         || daemonState === "executing"
@@ -141,6 +143,9 @@ ShellRoot {
             break;
         case "settings":
             root.hudEnabled = obj.hud_enabled !== false;
+            break;
+        case "computer_input":
+            root.computerInput = obj.active === true;
             break;
         case "tool_approval":
             root.approvalId = obj.approval_id;

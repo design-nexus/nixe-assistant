@@ -22,6 +22,8 @@ assistant-agent.workspace = true
 assistant-audio.workspace = true
 assistant-core.workspace = true
 assistant-inference.workspace = true
+assistant-desktop.workspace = true
+image = { version = "0.25", default-features = false, features = ["png"] }
 assistant-ipc.workspace = true
 assistant-omarchy.workspace = true
 assistant-tools.workspace = true

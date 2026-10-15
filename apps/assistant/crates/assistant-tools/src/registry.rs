@@ -24,6 +24,8 @@ pub struct Registry {
     pub jobs: std::sync::Arc<crate::jobs::Jobs>,
     pub location: std::sync::Arc<assistant_core::location::LocationService>,
     pub errors: Vec<String>,
+    /// The daemon's vision model, for `screen.look`.
+    looker: std::sync::RwLock<Option<crate::computer::Looker>>,
 }
 impl Registry {
     pub async fn load_worker(cfg: &Config) -> Self {
@@ -36,6 +38,7 @@ impl Registry {
             jobs: Default::default(),
             location: Default::default(),
             errors: Vec::new(),
+            looker: Default::default(),
         };
         for (name, description, schema) in [
             (
@@ -206,7 +209,7 @@ impl Registry {
     pub async fn load(cfg: &Config) -> Self {
         let plugins = std::sync::Arc::new(crate::plugins::PluginManager::new());
         let errors = plugins.load(cfg).await;
-        Self {
+        let mut registry = Self {
             audit: std::sync::Arc::new(AuditLog::disabled()),
             plugins: Some(plugins),
             tools: BTreeMap::new(),
@@ -215,7 +218,24 @@ impl Registry {
             jobs: Default::default(),
             location: Default::default(),
             errors,
+            looker: Default::default(),
+        };
+        // Computer use runs in the daemon itself (shared element and mark numbers, the model).
+        for (name, description, schema) in crate::computer::TOOLS {
+            let input_schema = serde_json::from_str(schema).expect("computer tool schema");
+            registry.tools.insert((*name).into(), McpTool { name: (*name).into(), description: Some((*description).into()), input_schema, output_schema: None, execution: Value::Null });
         }
+        registry
+    }
+
+    /// Give `screen.look` the daemon's vision model.
+    pub fn set_looker(&self, looker: crate::computer::Looker) {
+        *self.looker.write().unwrap() = Some(looker);
+    }
+
+    /// A tool the daemon runs itself rather than a plugin (computer use).
+    fn local(&self, name: &str) -> bool {
+        self.plugins.is_some() && self.tools.contains_key(name) && crate::computer::TOOLS.iter().any(|(t, ..)| *t == name)
     }
     /// Journal decisions and calls to `log` (the daemon passes `agent.db`).
     pub fn with_audit(mut self, log: AuditLog) -> Self {
@@ -246,8 +266,8 @@ impl Registry {
         assistant_policy::decide(
             name,
             &assistant_policy::Context {
-                available: plugins.is_none_or(|p| p.available(name)),
-                trusted: plugins.is_none_or(|p| p.trusted_tool(name)),
+                available: self.local(name) || plugins.is_none_or(|p| p.available(name)),
+                trusted: self.local(name) || plugins.is_none_or(|p| p.trusted_tool(name)),
                 tool_rule: cfg.mcp.permissions.get(name).and_then(|s| Decision::parse(s)),
                 rules: &rules,
                 mode: cfg.agent.mode,
@@ -304,6 +324,9 @@ impl Registry {
         self.audit.record(record);
     }
     fn input_schema(&self, name: &str) -> Option<Value> {
+        if self.local(name) {
+            return self.tools.get(name).map(|t| t.input_schema.clone());
+        }
         match &self.plugins {
             Some(plugins) => plugins
                 .tools()
@@ -322,7 +345,7 @@ impl Registry {
         }
     }
     pub fn validate(&self, name: &str, args: &Value) -> Result<()> {
-        if let Some(plugins) = &self.plugins {
+        if let Some(plugins) = self.plugins.as_ref().filter(|_| !self.local(name)) {
             return plugins.validate(name, args);
         }
         let tool = self.tools.get(name).context("unregistered tool")?;
@@ -377,6 +400,14 @@ impl Registry {
         cancel: &CancellationToken,
         grant: &Grant,
     ) -> Result<Value> {
+        if self.local(name) {
+            let looker = self.looker.read().unwrap().clone();
+            let value = tokio::select! {
+                _ = cancel.cancelled() => anyhow::bail!("cancelled"),
+                r = crate::computer::call(name, &args, cfg, looker.as_ref()) => r.context("unknown computer tool")??,
+            };
+            return Ok(json!({"content":[{"type":"text","text":value.to_string()}],"structuredContent":value,"isError":false}));
+        }
         if let Some(plugins) = &self.plugins {
             return tokio::time::timeout(
                 crate::admin::deadline(name),
@@ -521,7 +552,8 @@ impl Registry {
     }
     pub fn catalog(&self, cfg: &Config) -> Value {
         if let Some(plugins) = &self.plugins {
-            return Value::Array(plugins.tools().iter().map(|tool| json!({"name":tool.name,"description":tool.description,"inputSchema":tool.input_schema,"permission":self.policy(&tool.name,cfg)})).collect());
+            let local = self.tools.values().filter(|t| self.local(&t.name)).cloned();
+            return Value::Array(plugins.tools().into_iter().chain(local).map(|tool| json!({"name":tool.name,"description":tool.description,"inputSchema":tool.input_schema,"permission":self.policy(&tool.name,cfg)})).collect());
         }
         Value::Array(self.tools.iter().map(|(name,tool)| json!({"name":name,"description":tool.description,"inputSchema":tool.input_schema,"permission":self.policy(name,cfg)})).collect())
     }

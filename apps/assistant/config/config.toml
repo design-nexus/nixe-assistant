@@ -67,6 +67,18 @@ duck_gain = 0.25
 noise_ms = 1500
 min_rms = 0.003       # quietest speech (after echo cancelling) that counts; raise if it ducks for noise
 
+# Computer use (ui.*, screen.*, input.*): one key-press approval covers a task; clicks on
+# anything labelled below ask again on their own. Terminals, password managers, polkit and
+# lock screens are never touched; add more window classes to deny_classes.
+[computer]
+deny_classes = []
+confirm_words = ["send", "submit", "buy", "pay", "purchase", "order", "checkout", "delete", "remove", "erase", "post", "publish", "confirm", "transfer", "unsubscribe", "uninstall", "format", "wipe"]
+
+[vision]
+mmproj = "auto"     # the image projector next to the model file
+idle_secs = 120     # unloaded after this long without a look (frees VRAM)
+max_width = 1280
+
 [wake_word]
 enabled = true
 threshold = 0.003

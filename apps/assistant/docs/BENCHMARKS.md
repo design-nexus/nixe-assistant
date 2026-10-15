@@ -107,6 +107,32 @@ Alt+Space or a longer request still stop or redirect her.
 The first-audio figure includes a routing step that took 2.4 s in one earlier long-prompt
 turn; for short replies it is in the 0.3–0.5 s range (demo turns: 906–1180 ms total).
 
+## Computer use (Phase 6, 2026-10-14)
+
+Vision grounding (`bench vision`): 5 labelled questions on Notepad and a Firefox test page; the
+model answers with a mark on a screenshot with numbered tags.
+
+| How | Right | Median look | First look | VRAM added |
+|---|---|---|---|---|
+| Gemma 4 E4B + mmproj, reading tags | 0/5 | 418 ms | 2416 ms | 5757 MiB |
+| GLM-4.6V-Flash + mmproj, reading tags | 1/5 | 1463 ms | 7936 ms | 8959 MiB |
+| GLM-4.6V-Flash + mmproj, pointing (box) | 3/5 | 2093 ms | 4559 ms | 8957 MiB |
+
+Planner comparison (`assistant-inference` example `gen`): five planning steps from computer-use
+requests, each scored on whether the next call is sensible.
+
+| Planner | Sensible | Per step |
+|---|---|---|
+| Gemma 4 E4B, JSON grammar | 4/5 | ~1 s |
+| Qwen 3.5 9B, thinking off, grammar | 2/5 (finished early three times) | 0.3–1 s |
+| Qwen 3.5 9B, thinking on | 3/5 (one malformed, one wrong key) | 3.5–7 s |
+
+Live, through the planner and checked against the app:
+- "In Write, type …": text in the document (OCR, plus a screenshot)
+- "In the Notepad window, open a new tab": tabs went from 1 to 2 (the title changed)
+- "In the Firefox window titled Bench search, search the page for nixe": the title became
+  "searched: nixe"
+
 ## Model load (one-shot)
 
 Record at daemon startup from the log lines `GGUF loaded` and `Kokoro ready`.
