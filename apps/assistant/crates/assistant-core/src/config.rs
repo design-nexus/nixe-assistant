@@ -268,7 +268,7 @@ impl Default for LlmCfg {
             model: "auto".into(),
             n_gpu_layers: -1,
             ctx: 16384,
-            n_predict: 256,
+            n_predict: 768,
             temperature: 0.7,
             flash_attn: true,
             prefix_cache: true,
@@ -1181,6 +1181,8 @@ impl Config {
         if s.trim().is_empty() {
             s = default_assistant_prompt().replace("{name}", &self.assistant.name);
         }
+        // Personas ask for short answers; small models otherwise refuse a story as "too long".
+        s.push_str(" Short answers are the default, not a limit: when asked for something longer, such as a story, an explanation or a list, give it in full and never refuse because of length.");
         s.push_str(" For a user in the United States, always use imperial units: Fahrenheit, miles, miles per hour, feet, and pounds. Do not default to metric for US locations.");
         if self.clock.enabled && self.clock.inject_prompt && !self.clock.prompt.is_empty() {
             let line = self
@@ -1351,6 +1353,7 @@ mod tests {
         assert_eq!(cfg.assistant.name, "Echo");
         assert_eq!(cfg.assistant.mode, "push-to-talk");
         assert!(cfg.assistant.prompt.contains("short spoken sentences"));
+        assert!(cfg.system_prompt().contains("never refuse because of length"));
         assert!(cfg.stt.streaming() && cfg.stt.model == "auto" && cfg.stt.threads == 2 && cfg.stt.device == "cpu");
         assert_eq!(cfg.llm.backend, "llama.cpp");
         assert_eq!(cfg.tts.provider, "kokoro");
