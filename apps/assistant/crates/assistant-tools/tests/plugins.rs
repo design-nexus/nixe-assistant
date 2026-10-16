@@ -19,6 +19,7 @@ fn checked(tool: &str, args: &Value) -> Grant {
             rules: &rules,
             mode: AutonomyMode::Autonomous,
             resource_approved: false,
+            runs_code: false,
         },
     );
     let grant = Grant::allowed(&verdict, args).unwrap();

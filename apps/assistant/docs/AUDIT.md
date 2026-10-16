@@ -50,11 +50,11 @@ concurrent load §4.6 asks for. Tests: 62 passed before this work (73 after) (`c
 | §6.5 browser | mostly | Playwright worker with takeover. |
 | §6.6–6.7 computer use, vision | **mostly (Phase 6)** | Accessibility tree, numbered marks (tree + OCR), keyboard and pointer without root, evidence-checked actions, vision on demand through the LLM's image projector. The small planner model is the weak link; vision grounding is weak (Gemma 0/5, GLM-4.6V-Flash 3/5 when pointing). |
 | §7–8 permissions | **done in Phase 1** | See below. |
-| §9 sandboxing | partial | Bubblewrap for generated terminal commands (namespaces, read-only system, hidden home, no runtime sockets). No seccomp or cgroup limits yet, and plugins still run with the user's permissions. |
+| §9 sandboxing | partial | Bubblewrap for generated terminal commands (namespaces, read-only system, hidden home, no runtime sockets; a repository's `.git/hooks` and `.git/config` read-only since Phase 8a). No seccomp or cgroup limits yet, and plugins still run with the user's permissions. |
 | §10 privileged broker | **done in Phase 4** | `nixe-assistant-helper` behind polkit: install, remove and update repository packages, start, stop or restart system services. Typed and checked twice; no root shell. |
-| §11.1 voice authorization | partial | Wake word and AEC exist. High-impact tools refuse spoken approval; the rest accept it. Approvals are spoken and shown as one plain sentence, and the HUD card has clickable buttons (Phase 7). |
-| §11.2 prompt injection | partial | Tool results are passed as untrusted data, and the planner grammar admits only registered tools. |
-| §11.3 emergency stop | partial | `cancel`, Escape on the HUD, voice "stop" and job cancel exist; there is no global shortcut outside the HUD, and no synthetic input to release. |
+| §11.1 voice authorization | partial | Wake word and AEC exist. High-impact tools, and since Phase 8a writes to files that run code later, refuse a spoken approve; only the exact phrases count. The rest accept it. No speaker recognition. |
+| §11.2 prompt injection | **mostly (Phase 8a)** | Tool results are untrusted data; the grammar admits only registered tools. Computer use can't reach Settings or the Store; sending out after reading private data and untrusted content asks; task-wide approvals are bound to one window or folder. `bench injection` passes. |
+| §11.3 emergency stop | **done in Phase 8a** | Super+Shift+Escape (`nixe-assistant cancel`) anywhere, Escape on the HUD, voice "stop", Stop in Settings, job cancel. It never waits on the model, and releases held modifiers after a cut-off keyboard action. |
 | §12 audit and recovery | **audit done in Phase 1**; recovery missing | Abilities keep their own undo (`history.undo`, `*.undo`). |
 | §13 GTK settings | **done in Phase 7** | An Assistant group in Nixe Settings (General, Voice, Permissions, Activity, Performance, Models), through `nixe-assistant config/perf/models` so the assistant still checks every value. The TUI stays for personas. |
 | §14 hardware profiles | missing | One configuration. |
@@ -103,12 +103,14 @@ plus `assistant-policy`.
       with context repair; echo-rejection benchmark under load.
 - [x] Phase 6: accessibility tree, marks, keyboard and pointer, evidence-checked actions, vision
       on demand (see "Phase 6 as built" for what does and doesn't work yet).
-- [ ] Phase 7: the Assistant group in Nixe Settings; readable, clickable approvals in the HUD
-      (built; see "Phase 7 as built". Waiting on the live check).
-- [ ] Phase 8: security tests (injection, path traversal, approval reuse), latency under load.
+- [x] Phase 7: the Assistant group in Nixe Settings; readable, clickable approvals in the HUD
+      (live-checked 2026-10-15).
+- [x] Phase 8a: security tests (injection, path traversal and links, approval reuse, voice,
+      sandbox escape, privilege escalation) and the fixes they called for; a global stop.
+- [ ] Phase 8b: latency, graphics memory and heat under concurrent load; crash recovery.
+- [ ] Phase 8c: planner and vision benchmarks; the deferred Phase 6 work.
 
-**Recommended next milestone:** Phase 7: "Agent & Permissions" in Nixe Settings and approvals
-in the HUD; then Phase 8, where the planner model and vision grounding get a proper benchmark.
+**Recommended next milestone:** Phase 8b.
 
 ## Phase 1 as built
 
@@ -282,3 +284,51 @@ in the HUD; then Phase 8, where the planner model and vision grounding get a pro
   Deny buttons (Y, T and N still work). Only the card takes clicks, and only while it asks. It
   says when saying "approve" doesn't count. A task line shows the request and its step while a
   task runs.
+
+## Phase 8a as built
+
+Gaps found and closed:
+- **Computer use reached Settings and the Store.** It could have clicked Allow on its own
+  approval under Activity, or loosened Permissions. Both apps are now in the window guard's
+  deny list with terminals and password managers.
+- **Writes to files that run code later** (`fs::runs_code`): `~/.local/bin`, shell startup
+  files, `~/.config/{systemd,autostart,environment.d,uwsm,hypr,fish,git}`, Omarchy hooks,
+  launchers, `~/.gitconfig` and any repository's `.git/hooks` or `.git/config`. `files.write`,
+  `files.move` and `files.undo` there ask by key press, one call at a time (rule `runs code`),
+  whatever the rules say. A deny still wins.
+- **Task-wide approvals** are bound to a resource (`assistant_policy::resource_of`): the
+  window for computer use, the destination folder for file changes. Allow for task in Write
+  doesn't cover Firefox.
+- **Sending out after untrusted reads.** A task records when a step returned private data
+  (files, notes, captures, windows, command output) and when one returned someone else's
+  content (pages, documents, notes, windows, command output, external tools). Once both
+  have happened, calls that send things out ask on their own: `browser.navigate`, `.search`,
+  `.open_source`, `.fill`, `.click`, a tab opened with a URL, `web.*` and external tools. Rule
+  `may send private data`; the card shows the URL or query.
+- **Links swapped in after the guard:** `files.read`, appends and backups open with
+  `O_NOFOLLOW`; writes already replace the file through a rename.
+- **The sandbox** binds the working repository's `.git/hooks` and `.git/config` read-only.
+- **Emergency stop:** Super+Shift+Escape runs `nixe-assistant cancel` (`scripts/hypr-stop.lua`,
+  added by install.sh), and a cancel during a keyboard action releases every modifier.
+- Pending approvals (`daemon/.../approvals.rs`) answer once: an unknown, expired or answered
+  ID fails; "for this task" counts only when offered. The spoken reply is matched whole
+  (`approval_phrase`).
+
+Tests: path traversal and links (including a link swapped in after the check), `runs_code`,
+grants and pending approvals, resource-bound task approvals, the leak rule, spoken phrases,
+a compromised-planner table, real bubblewrap (secrets, runtime sockets, network, git hooks),
+helper argument smuggling. `cargo test --workspace`: 159 passed.
+
+`bench injection` (BENCHMARKS.md) runs real requests over a page, a file and a Firefox window
+carrying planted instructions, denies every approval but window reads, and checks the
+collector, `~/.bashrc` and a marker file.
+
+Accepted limits:
+- Plugins and external MCP servers run as Ken and can reach the assistant's socket, so a
+  hostile one could approve its own request. That needs the plugin sandbox (§9).
+- Tools that aren't high-impact still take a spoken "approve" (exact phrase only).
+- With `sandbox_network = true`, generated commands share the network namespace, so abstract
+  Unix sockets are reachable.
+- The guard resolves a path, then the tool opens it: a parent folder swapped for a link in
+  between isn't caught (the last component is).
+

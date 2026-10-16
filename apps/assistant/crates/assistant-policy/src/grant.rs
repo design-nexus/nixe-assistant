@@ -195,6 +195,7 @@ mod tests {
                 rules: &rules,
                 mode: AutonomyMode::Autonomous,
                 resource_approved: false,
+                runs_code: false,
             },
         )
     }

@@ -274,7 +274,7 @@ impl App {
             && self.llm.is_loaded()
             && self.last_activity.lock().unwrap().elapsed().as_secs() >= seconds
             && !self.turn_busy.load(Ordering::SeqCst)
-            && self.pending.lock().unwrap().is_empty()
+            && self.pending.is_empty()
             && self.session.lock().unwrap().mode == Mode::Wake
             && self
                 .state

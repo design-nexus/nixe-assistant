@@ -152,6 +152,22 @@ async fn wtype(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// `wtype` arguments that release every modifier a combo can press: a `wtype` killed
+/// between `-M` and `-m` can leave one held.
+pub fn release_args() -> Vec<String> {
+    let mut names: Vec<&str> = MODIFIERS.iter().map(|(_, name)| *name).collect();
+    names.sort_unstable();
+    names.dedup();
+    names.into_iter().flat_map(|m| ["-m".to_string(), m.to_string()]).collect()
+}
+
+/// After an emergency stop: let go of any modifier still held. Pointer buttons need nothing
+/// here: each click's press and release run together on a blocking thread that finishes
+/// even when the call is cancelled, and a dropped pointer releases what it held.
+pub async fn release_all() -> Result<()> {
+    wtype(&release_args()).await
+}
+
 /// Type text into the focused window.
 pub async fn type_text(text: &str) -> Result<()> {
     ensure!(!text.is_empty() && text.chars().count() <= 2000, "type 1–2000 characters");
@@ -250,6 +266,22 @@ mod tests {
         for c in ["ctrl+alt+delete", "super+shift+q", "shift+pagedown"] {
             let a = combo_args(c).unwrap();
             assert_eq!(a.iter().filter(|x| *x == "-M").count(), a.iter().filter(|x| *x == "-m").count(), "{c}");
+        }
+    }
+
+    #[test]
+    fn release_lets_go_of_every_modifier() {
+        let a = release_args();
+        assert!(!a.contains(&"-M".to_string()), "never presses");
+        for m in ["shift", "ctrl", "alt", "logo"] {
+            assert!(a.windows(2).any(|w| w[0] == "-m" && w[1] == m), "{m}");
+        }
+        // Every modifier a combo can press is one the stop releases.
+        for combo in ["ctrl+shift+alt+super+x", "Ctrl+Alt+Delete"] {
+            let pressed: Vec<_> = combo_args(combo).unwrap().windows(2).filter(|w| w[0] == "-M").map(|w| w[1].clone()).collect();
+            for m in pressed {
+                assert!(a.contains(&m), "{combo}: {m}");
+            }
         }
     }
 }

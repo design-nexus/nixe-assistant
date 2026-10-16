@@ -227,6 +227,7 @@ fn commands(f: &mut Frame, app: &App, area: Rect) {
             rules: &rules,
             mode: cfg.agent.mode,
             resource_approved: false,
+            runs_code: false,
         },
     )
     .decision()

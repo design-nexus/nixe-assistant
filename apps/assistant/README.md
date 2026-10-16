@@ -26,7 +26,7 @@ cargo build --release -p nixe-assistantd
 ./scripts/install.sh
 ```
 
-Hold **Alt+Space**, talk, release.
+Hold **Alt+Space**, talk, release. **Super+Shift+Escape** stops everything the assistant is doing.
 
 Voice-launched apps live in `~/.config/nixe-assistant/apps.toml` (template: `config/apps.toml`). Desktop command phrases live in `commands.toml`. Edit those files, then `nixe-assistant reload` (or SIGHUP). No rebuild.
 

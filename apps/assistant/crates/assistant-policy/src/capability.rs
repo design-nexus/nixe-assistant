@@ -189,6 +189,46 @@ impl Capability {
         matches!(self, Self::Desktop | Self::Audio | Self::AppLaunch)
     }
 
+    /// The call's result carries content someone else wrote (pages, documents, notes, command
+    /// output, other apps' windows), which may hold instructions.
+    pub fn brings_in_untrusted(tool: &str) -> bool {
+        let c = Self::of(tool);
+        match c {
+            Self::Web | Self::External | Self::FileRead => true,
+            Self::PluginData | Self::ComputerUse | Self::Terminal => c.passive(tool) || COMPUTER_READS.contains(&tool),
+            _ => false,
+        }
+    }
+
+    /// The call's result carries the user's own data: files, notes, captures, what's on screen,
+    /// command output.
+    pub fn reads_private(tool: &str) -> bool {
+        let c = Self::of(tool);
+        match c {
+            Self::FileRead | Self::Capture => true,
+            Self::PluginData | Self::ComputerUse | Self::Terminal => c.passive(tool) || COMPUTER_READS.contains(&tool),
+            _ => false,
+        }
+    }
+
+    /// The call sends something it was given to another machine: a URL, a search query, a
+    /// form field, or anything an external tool does with its arguments.
+    pub fn sends_out(tool: &str, args: &serde_json::Value) -> bool {
+        let opens_url = tool == "browser.tabs" && args["url"].as_str().is_some_and(|u| !u.trim().is_empty());
+        opens_url
+            || matches!(Self::of(tool), Self::External)
+            || matches!(
+                tool,
+                "browser.navigate"
+                    | "browser.search"
+                    | "browser.open_source"
+                    | "browser.fill"
+                    | "browser.click"
+                    | "web.search"
+                    | "web.read"
+            )
+    }
+
     pub fn passive(self, tool: &str) -> bool {
         match self {
             Self::Inspect | Self::FileRead => true,
@@ -200,6 +240,9 @@ impl Capability {
         }
     }
 }
+
+/// Computer-use tools that only read a window.
+const COMPUTER_READS: &[&str] = &["ui.tree", "ui.find", "screen.marks", "screen.look"];
 
 /// Browser and web tools that only read or move around; the rest ask by default.
 const READ_BROWSER: &[&str] = &[

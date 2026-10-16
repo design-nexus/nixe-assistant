@@ -24,6 +24,32 @@ const SECRET: &[&str] = &[
 ];
 /// Read-only to tools: the assistant's own configuration, journal and data.
 const SELF: &[&str] = &[".config/nixe-assistant", ".local/state/nixe-assistant", ".local/share/nixe-assistant"];
+/// Run as the user later, outside any sandbox: shell startup, `~/.local/bin`, session and
+/// autostart services, launchers, Hyprland and Omarchy hooks, git configuration. Writing
+/// them needs a key press each time.
+const RUNS_CODE: &[&str] = &[
+    ".local/bin",
+    ".bashrc",
+    ".bash_profile",
+    ".bash_login",
+    ".bash_logout",
+    ".profile",
+    ".zshrc",
+    ".zshenv",
+    ".zprofile",
+    ".zlogin",
+    ".xprofile",
+    ".config/fish",
+    ".config/systemd",
+    ".config/autostart",
+    ".config/environment.d",
+    ".config/uwsm",
+    ".config/hypr",
+    ".config/omarchy/hooks",
+    ".local/share/applications",
+    ".gitconfig",
+    ".config/git",
+];
 pub const MAX_WRITE: usize = 1024 * 1024;
 const MAX_LIST: usize = 200;
 
@@ -75,6 +101,46 @@ pub fn guard(home: &Path, input: &str, access: Access) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// Whether writing `path` (already through `guard`) changes something that runs as the user
+/// later, outside the sandbox. Includes any repository's hooks and config.
+pub fn runs_code(home: &Path, path: &Path) -> bool {
+    if under(path, home, RUNS_CODE) {
+        return true;
+    }
+    let parts: Vec<_> = path.components().collect();
+    parts.windows(2).any(|w| {
+        w[0].as_os_str() == ".git" && (w[1].as_os_str() == "hooks" || w[1].as_os_str() == "config")
+    })
+}
+
+/// The files a `files.undo` would write, for the same check.
+pub fn undo_targets(home: &Path, id: &str) -> Vec<PathBuf> {
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Vec::new();
+    }
+    let Ok(bytes) = std::fs::read(backups(home).join(id).join("backup.json")) else { return Vec::new() };
+    let manifest: Value = serde_json::from_slice(&bytes).unwrap_or_default();
+    manifest["entries"].as_array().into_iter().flatten().filter_map(|e| e["original"].as_str()).map(PathBuf::from).collect()
+}
+
+/// Open a file without following a symlink at its last component: one swapped in after
+/// `guard` checked the path fails here instead of being read through.
+pub fn open_nofollow(path: &Path) -> Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .with_context(|| format!("can't open {} (a link?)", path.display()))
+}
+
+fn read_nofollow(path: &Path) -> Result<Vec<u8>> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    open_nofollow(path)?.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
 /// The assistant's folders where XDG variables put them, besides the defaults in `SELF`.
 fn in_own_dirs(path: &Path) -> bool {
     use assistant_core::paths;
@@ -109,7 +175,7 @@ fn back_up(home: &Path, paths: &[&Path]) -> Result<String> {
     for (i, path) in paths.iter().enumerate() {
         let existed = path.is_file();
         if existed {
-            std::fs::copy(path, dir.join(i.to_string()))?;
+            std::fs::write(dir.join(i.to_string()), read_nofollow(path)?)?;
         }
         entries.push(json!({"original": path, "stored": i.to_string(), "existed": existed}));
     }
@@ -202,7 +268,7 @@ pub fn write(home: &Path, input: &str, content: &str, mode: &str) -> Result<Valu
     }
     let backup = back_up(home, &[&path])?;
     let bytes = if mode == "append" && exists {
-        let mut old = std::fs::read(&path)?;
+        let mut old = read_nofollow(&path)?;
         old.extend_from_slice(content.as_bytes());
         old
     } else {
@@ -355,5 +421,80 @@ mod tests {
         assert_eq!(f["matches"].as_array().unwrap().len(), 1);
         let f = find_names(&h, "~", "id_ed").unwrap();
         assert!(f["matches"].as_array().unwrap().is_empty(), "hidden secrets are skipped");
+    }
+
+    #[test]
+    fn traversal_and_link_escapes() {
+        let (_d, h) = home();
+        let outside = tempfile::tempdir().unwrap();
+        let out = outside.path().canonicalize().unwrap();
+        std::fs::write(out.join("x"), "x").unwrap();
+        for input in ["~/../x", "../x", "~/work/../../x", "/etc/passwd", "/proc/self/environ", "work/\0x", ""] {
+            assert!(guard(&h, input, Access::Read).is_err(), "{input}");
+        }
+        assert!(guard(&h, &format!("~/work/{}", "../".repeat(20)), Access::Read).is_err());
+        // Links out of HOME, into secrets and into the assistant's own files.
+        std::os::unix::fs::symlink(&out, h.join("work/out")).unwrap();
+        assert!(guard(&h, "~/work/out/x", Access::Read).is_err());
+        assert!(guard(&h, "~/work/out/new", Access::Write).is_err(), "new file under a linked folder");
+        std::os::unix::fs::symlink(h.join(".ssh/id_ed25519"), h.join("work/key")).unwrap();
+        assert!(guard(&h, "~/work/key", Access::Read).is_err());
+        assert!(write(&h, "~/work/key", "x", "overwrite").is_err());
+        std::os::unix::fs::symlink(h.join(".config/nixe-assistant"), h.join("work/cfg")).unwrap();
+        assert!(guard(&h, "~/work/cfg/config.toml", Access::Write).is_err(), "own config through a link");
+        // A dangling link as the target of a write resolves through its parent: it must not
+        // create the file where the link points.
+        std::os::unix::fs::symlink(out.join("made"), h.join("work/dangling")).unwrap();
+        let _ = write(&h, "~/work/dangling", "x", "create");
+        assert!(!out.join("made").exists(), "wrote through a dangling link");
+        assert_eq!(std::fs::read_to_string(h.join(".ssh/id_ed25519")).unwrap(), "KEY");
+    }
+
+    #[test]
+    fn links_swapped_in_after_the_check_are_not_followed() {
+        let (_d, h) = home();
+        let target = guard(&h, "~/work/a.txt", Access::Write).unwrap();
+        // Something swaps the checked file for a link to a secret before the write runs.
+        std::fs::remove_file(&target).unwrap();
+        std::os::unix::fs::symlink(h.join(".ssh/id_ed25519"), &target).unwrap();
+        assert!(read_nofollow(&target).is_err(), "append and backups read through the link");
+        assert!(open_nofollow(&target).is_err(), "files.read opens through the link");
+        // The atomic write replaces the link itself; the secret is untouched.
+        atomic_write(&target, b"new").unwrap();
+        assert!(!std::fs::symlink_metadata(&target).unwrap().is_symlink());
+        assert_eq!(std::fs::read_to_string(h.join(".ssh/id_ed25519")).unwrap(), "KEY");
+    }
+
+    #[test]
+    fn writes_that_run_code() {
+        let (_d, h) = home();
+        for d in [".local/bin", ".config/hypr", ".config/systemd/user", "repo/.git/hooks"] {
+            std::fs::create_dir_all(h.join(d)).unwrap();
+        }
+        let runs = |input: &str| runs_code(&h, &guard(&h, input, Access::Write).unwrap());
+        for input in [
+            "~/.bashrc",
+            "~/.profile",
+            "~/.zshrc",
+            "~/.local/bin/nixe-assistant",
+            "~/.config/hypr/bindings.lua",
+            "~/.config/systemd/user/x.service",
+            "~/repo/.git/hooks/pre-commit",
+            "~/repo/.git/config",
+            "~/.gitconfig",
+        ] {
+            assert!(runs(input), "{input}");
+        }
+        for input in ["~/work/a.txt", "~/repo/README.md", "~/work/bashrc", "~/.bashrc.txt"] {
+            assert!(!runs(input), "{input}");
+        }
+        // Through a link: the resolved path decides.
+        std::os::unix::fs::symlink(h.join(".local/bin"), h.join("work/bin")).unwrap();
+        assert!(runs("~/work/bin/tool"));
+        // An undo that would put back a startup file.
+        let r = write(&h, "~/.bashrc", "echo hi", "create").unwrap();
+        let targets = undo_targets(&h, r["backup"].as_str().unwrap());
+        assert!(targets.iter().any(|p| runs_code(&h, p)));
+        assert!(undo_targets(&h, "../../etc").is_empty());
     }
 }

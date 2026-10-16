@@ -311,13 +311,12 @@ impl App {
     pub(super) async fn voice_approval(
         &self,
         id: &str,
-        tool: &str,
+        by_voice: bool,
         summary: &str,
         task_scope: bool,
         cancel: &CancellationToken,
     ) -> Result<(bool, bool)> {
         self.emit_session_mode("approval");
-        let by_voice = assistant_policy::Capability::of(tool).voice_approvable();
         let spoken = format!(
             "May I {}? {}",
             lowercase_first(summary),
@@ -338,7 +337,7 @@ impl App {
         tokio::select! {_=cancel.cancelled()=>return Ok((false, false)),_=self.audio.wait_playback()=>{}}
         let deadline = Instant::now() + Duration::from_secs(55);
         loop {
-            if !self.pending.lock().unwrap().contains_key(id) || Instant::now() >= deadline {
+            if !self.pending.contains(id) || Instant::now() >= deadline {
                 return Ok((false, false));
             }
             let pcm = self.listen_pcm(deadline, None, cancel).await?;
@@ -351,19 +350,8 @@ impl App {
             } else {
                 self.stt.transcribe(&pcm, cancel.clone()).await?
             };
-            match tr
-                .text
-                .trim()
-                .trim_end_matches(['.', '!', '?'])
-                .to_lowercase()
-                .as_str()
-            {
-                "approve for this task" | "allow for this task" if by_voice && task_scope => {
-                    return Ok((true, true))
-                }
-                "approve" | "yes approve" | "yes" | "allow once" if by_voice => return Ok((true, false)),
-                "deny" | "no" | "cancel" => return Ok((false, false)),
-                _ => {}
+            if let Some(answer) = approval_phrase(&tr.text, by_voice, task_scope) {
+                return Ok(answer);
             }
         }
     }
@@ -382,21 +370,19 @@ impl App {
     pub(super) async fn request_approval(
         &self,
         id: String,
-        tool: &str,
+        verdict: &assistant_policy::Verdict,
         args: &Value,
         task_id: Option<String>,
         cancel: &CancellationToken,
     ) -> Result<(bool, bool)> {
-        let task_scope =
-            task_id.is_some() && assistant_policy::Capability::of(tool).task_approvable();
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        self.approvals.lock().await.insert(id.clone(), tx);
+        let tool = verdict.tool();
+        let task_scope = task_id.is_some() && verdict.task_approvable();
         let expires = now_ms() + 60_000;
         let summary = assistant_policy::summary::describe(tool, args);
-        let voice_allowed = assistant_policy::Capability::of(tool).voice_approvable();
-        self.pending.lock().unwrap().insert(
-            id.clone(),
-            json!({"tool":tool,"arguments":args,"expires_at_ms":expires,"task_id":task_id,"task_scope_allowed":task_scope,"summary":summary,"voice_allowed":voice_allowed}),
+        let voice_allowed = !verdict.key_press();
+        let rx = self.pending.ask(
+            &id,
+            json!({"tool":tool,"arguments":args,"expires_at_ms":expires,"task_id":task_id,"task_scope_allowed":task_scope,"summary":summary,"voice_allowed":voice_allowed,"rule":verdict.rule()}),
         );
         self.emit(Event::ToolApproval {
             approval_id: id.clone(),
@@ -415,11 +401,10 @@ impl App {
             .as_ref()
             .map(|p| p.token(tool))
             .unwrap_or_default();
-        let (approved, for_task) = tokio::select! {_=plugin_cancel.cancelled()=>(false,false),_=cancel.cancelled()=>(false,false),r=tokio::time::timeout(Duration::from_secs(60),rx)=>r.ok().and_then(|r|r.ok()).unwrap_or((false,false)),r=async {match self.voice_approval(&id,tool,&summary,task_scope,cancel).await {Ok(v)=>v,Err(err)=>{tracing::warn!(%err,"voice approval unavailable; keyboard approval remains available");std::future::pending::<(bool,bool)>().await}}}=>r};
+        let (approved, for_task) = tokio::select! {_=plugin_cancel.cancelled()=>(false,false),_=cancel.cancelled()=>(false,false),r=tokio::time::timeout(Duration::from_secs(60),rx)=>r.ok().and_then(|r|r.ok()).unwrap_or((false,false)),r=async {match self.voice_approval(&id,voice_allowed,&summary,task_scope,cancel).await {Ok(v)=>v,Err(err)=>{tracing::warn!(%err,"voice approval unavailable; keyboard approval remains available");std::future::pending::<(bool,bool)>().await}}}=>r};
         let _ = self.audio.stop_capture();
         let _ = self.audio.cancel_playback();
-        self.approvals.lock().await.remove(&id);
-        self.pending.lock().unwrap().remove(&id);
+        self.pending.remove(&id);
         self.emit_session();
         let approved = approved && !cancel.is_cancelled() && now_ms() < expires;
         Ok((approved, approved && for_task && task_scope))
@@ -922,7 +907,20 @@ impl App {
             };
         }
         let mut approval_ms = 0;
-        let grant = match self.registry.authorize(name, &args, &cfg)? {
+        let resource = assistant_policy::resource_of(name, &args);
+        // After the task read private data and untrusted content, a call that sends things
+        // out asks first, on its own (an injected page could ask to send the data away).
+        let leak = task.is_some_and(|t| t.lock().unwrap().may_leak(name, &args));
+        let authorization = match self.registry.authorize(name, &args, &cfg)? {
+            Authorization::Granted(_) if leak => Authorization::NeedsApproval(
+                self.registry.verdict_for(name, Some(&args), &cfg).ask_before_sending(),
+            ),
+            Authorization::NeedsApproval(verdict) if leak => {
+                Authorization::NeedsApproval(verdict.ask_before_sending())
+            }
+            other => other,
+        };
+        let grant = match authorization {
             Authorization::Granted(grant) => grant,
             Authorization::NeedsApproval(verdict) => {
                 let approval_start = Instant::now();
@@ -932,7 +930,10 @@ impl App {
                 record.approval_id = Some(id.clone());
                 // A confirmed send/buy/delete is approved on its own, whatever the task allowed.
                 let confirmed = args["confirmed"].as_bool().unwrap_or(false);
-                let covered = !confirmed && task.is_some_and(|t| t.lock().unwrap().approved_for_task(name));
+                let covered = !confirmed
+                    && task.is_some_and(|t| {
+                        t.lock().unwrap().approved_for_task(&verdict, resource.as_deref())
+                    });
                 if covered {
                     record.outcome = "approved".into();
                     record.detail = Some("covered by a task-wide approval".into());
@@ -943,7 +944,7 @@ impl App {
                         self.task_move(t, TaskState::WaitingForApproval)?;
                     }
                     let (approved, for_task) = self
-                        .request_approval(id.clone(), name, &review_args, task_id, cancel)
+                        .request_approval(id.clone(), &verdict, &review_args, task_id, cancel)
                         .await?;
                     record.outcome = if approved { "approved" } else { "denied" }.into();
                     if for_task {
@@ -952,7 +953,9 @@ impl App {
                     self.registry.journal(record);
                     if let Some(t) = task {
                         if for_task {
-                            t.lock().unwrap().approve_for_task(name);
+                            t.lock()
+                                .unwrap()
+                                .approve_for_task(&verdict, resource.as_deref());
                         }
                         if !cancel.is_cancelled() {
                             self.task_move(t, TaskState::Running)?;
@@ -983,14 +986,21 @@ impl App {
         // them (it grabs it while the assistant works, for Escape and approvals).
         let drives_input = name.starts_with("input.") || name == "ui.act";
         if drives_input {
+            INPUT_ACTIVE.store(true, std::sync::atomic::Ordering::SeqCst);
             self.emit(Event::ComputerInput { active: true });
             tokio::time::sleep(Duration::from_millis(150)).await;
         }
         let result = self.registry.call(name, args.clone(), &self.cfg(), cancel, &grant).await;
         if drives_input {
+            INPUT_ACTIVE.store(false, std::sync::atomic::Ordering::SeqCst);
             self.emit(Event::ComputerInput { active: false });
         }
         let result = result?;
+        if result["isError"] != true {
+            if let Some(t) = task {
+                t.lock().unwrap().note_read(name);
+            }
+        }
         let mut result = self
             .host_extensions(name, result, cancel, depth, budget)
             .await?;
@@ -1064,7 +1074,7 @@ impl App {
                 });
                 continue;
             }
-            let quiet = self.pending.lock().unwrap().is_empty()
+            let quiet = self.pending.is_empty()
                 && self.session.lock().unwrap().mode == Mode::Wake
                 && self
                     .state
@@ -1081,7 +1091,49 @@ impl App {
 }
 
 /// "Type “hi” into Write" → "type “hi” into Write", for "May I …?".
+/// Set while a keyboard or pointer action runs, so a stop knows to release held keys.
+pub(super) static INPUT_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// What a spoken reply to "May I …?" means: (approved, for the rest of the task), or `None`
+/// when it isn't one of the exact phrases. Only the whole reply counts, so "I don't approve"
+/// or "approve it later" are not approvals. A spoken approve is ignored when the call needs a
+/// key press; a spoken deny always counts.
+pub(super) fn approval_phrase(text: &str, by_voice: bool, task_scope: bool) -> Option<(bool, bool)> {
+    match text.trim().trim_end_matches(['.', '!', '?']).to_lowercase().as_str() {
+        "approve for this task" | "allow for this task" if by_voice && task_scope => Some((true, true)),
+        "approve" | "yes approve" | "yes" | "allow once" if by_voice => Some((true, false)),
+        "deny" | "no" | "cancel" => Some((false, false)),
+        _ => None,
+    }
+}
+
 fn lowercase_first(s: &str) -> String {
     let mut c = s.chars();
     c.next().map(|f| f.to_lowercase().collect::<String>() + c.as_str()).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::approval_phrase;
+
+    #[test]
+    fn only_exact_spoken_phrases_count() {
+        assert_eq!(approval_phrase("Approve.", true, false), Some((true, false)));
+        assert_eq!(approval_phrase(" yes ", true, false), Some((true, false)));
+        assert_eq!(approval_phrase("Approve for this task!", true, true), Some((true, true)));
+        assert_eq!(approval_phrase("approve for this task", true, false), None, "task scope not offered");
+        for said in ["I don't approve", "approve it later", "yes, but not now", "approved", "do not approve", "approve approve", ""] {
+            assert_eq!(approval_phrase(said, true, true), None, "{said}");
+        }
+    }
+
+    #[test]
+    fn key_press_calls_ignore_a_spoken_approve_but_not_a_deny() {
+        for said in ["approve", "yes", "allow once", "approve for this task"] {
+            assert_eq!(approval_phrase(said, false, true), None, "{said}");
+        }
+        for said in ["deny", "No.", "cancel"] {
+            assert_eq!(approval_phrase(said, false, false), Some((false, false)), "{said}");
+        }
+    }
 }

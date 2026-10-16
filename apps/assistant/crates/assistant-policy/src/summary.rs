@@ -130,6 +130,8 @@ pub fn describe(tool: &str, args: &Value) -> String {
         "calendar.delete" => "Delete a calendar event".into(),
         "notes.edit" => "Change a note".into(),
         "notes.delete" => "Delete a note".into(),
+        "browser.navigate" | "web.read" => format!("Open {}", clip(s(args, "url"), 80)),
+        "browser.search" | "web.search" => format!("Search the web for “{}”", clip(s(args, "query"), 60)),
         "browser.click" => "Click on the web page".into(),
         "browser.fill" => format!("Type “{}” on the web page", clip(s(args, "text"), 60)),
         _ => String::new(),
@@ -169,6 +171,8 @@ mod tests {
         assert_eq!(describe("terminal.run", &json!({"argv": ["ls", "-l"]})), "Run ls -l");
         assert_eq!(describe("notes.undo", &json!({"request": "undo that"})), "Use notes.undo: “undo that”");
         assert_eq!(describe("mystery.tool", &json!({})), "Use mystery.tool");
+        assert_eq!(describe("web.search", &json!({"query": "rust"})), "Search the web for “rust”");
+        assert_eq!(describe("browser.navigate", &json!({"url": "https://x.test/?d=1"})), "Open https://x.test/?d=1");
         let long = "word ".repeat(40);
         assert!(describe("input.type", &json!({"text": long})).ends_with("…”"));
     }

@@ -272,6 +272,7 @@ impl Registry {
                 rules: &rules,
                 mode: cfg.agent.mode,
                 resource_approved: args.is_some_and(|a| resource_approved(name, a, cfg)),
+                runs_code: args.is_some_and(|a| writes_code(name, a)),
             },
         )
     }
@@ -597,6 +598,28 @@ fn search_text(home: &std::path::Path, path: &str, text: &str) -> Result<Value> 
 fn resource_approved(name: &str, args: &Value, cfg: &Config) -> bool {
     name == "services.control"
         && args["unit"].as_str().is_some_and(|unit| cfg.system.user_units.iter().any(|u| u == unit))
+}
+
+/// A file change whose destination runs as the user later (see `fs::runs_code`). A path the
+/// guard refuses isn't checked here: the call fails at dispatch.
+fn writes_code(name: &str, args: &Value) -> bool {
+    use crate::fs::{guard, runs_code, Access};
+    let Ok(home) = crate::fs::home() else { return false };
+    let s = |k: &str| args[k].as_str().unwrap_or("");
+    let check = |input: &str| guard(&home, input, Access::Write).is_ok_and(|p| runs_code(&home, &p));
+    match name {
+        "files.write" => check(s("path")),
+        // Moving into a folder keeps the name, as `fs::rename` does.
+        "files.move" => guard(&home, s("to"), Access::Write).is_ok_and(|to| {
+            let to = match std::path::Path::new(s("from")).file_name() {
+                Some(name) if to.is_dir() => to.join(name),
+                _ => to,
+            };
+            runs_code(&home, &to)
+        }),
+        "files.undo" => crate::fs::undo_targets(&home, s("backup")).iter().any(|p| runs_code(&home, p)),
+        _ => false,
+    }
 }
 
 fn drop_null_optionals(schema: &Value, args: Value) -> Value {

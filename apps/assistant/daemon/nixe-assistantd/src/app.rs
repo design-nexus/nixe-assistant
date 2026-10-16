@@ -1,6 +1,8 @@
 #[path = "extensions.rs"]
 mod extensions;
 use extensions::{ActionRecord, PowerSettings};
+#[path = "approvals.rs"]
+mod approvals;
 #[path = "duplex.rs"]
 mod duplex;
 #[path = "interaction.rs"]
@@ -90,8 +92,7 @@ pub async fn run(cfg: Config) -> Result<()> {
         paused_task: std::sync::Mutex::new(None),
         current_task: std::sync::Mutex::new(None),
         tool_mode: AtomicBool::new(false),
-        approvals: Mutex::new(std::collections::HashMap::new()),
-        pending: std::sync::Mutex::new(std::collections::HashMap::new()),
+        pending: approvals::Pending::default(),
         activity: std::sync::Mutex::new(std::collections::VecDeque::new()),
         restart_required: std::sync::Mutex::new(Vec::new()),
         reload_lock: Mutex::new(()),
@@ -282,8 +283,7 @@ struct App {
     current_task: std::sync::Mutex<Option<TaskRef>>,
     tool_mode: AtomicBool,
     /// Approval answers: (allow, for the rest of the task).
-    approvals: Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<(bool, bool)>>>,
-    pending: std::sync::Mutex<std::collections::HashMap<String, Value>>,
+    pending: approvals::Pending,
     activity: std::sync::Mutex<std::collections::VecDeque<Value>>,
     restart_required: std::sync::Mutex<Vec<String>>,
     reload_lock: Mutex<()>,
@@ -464,7 +464,7 @@ impl App {
             "hud_enabled":self.cfg().ui.enabled,
             "tool_mode":self.tool_mode.load(Ordering::Relaxed),
             "session":self.session_json(),
-            "pending_approvals":*self.pending.lock().unwrap(),
+            "pending_approvals":self.pending.snapshot(),
             "activity":*self.parts.lock().unwrap(),
             "mcp_tools":self.registry.catalog(&self.cfg()),
             "mcp_errors":self.registry.errors,
@@ -569,18 +569,7 @@ impl App {
                                 .unwrap_or_default()
                         })
                         .collect();
-                    let pending: Vec<_> = self
-                        .pending
-                        .lock()
-                        .unwrap()
-                        .iter()
-                        .filter(|(_, p)| names.contains(&p["tool"]))
-                        .map(|(id, _)| id.clone())
-                        .collect();
-                    for approval in pending {
-                        self.approvals.lock().await.remove(&approval);
-                        self.pending.lock().unwrap().remove(&approval);
-                    }
+                    self.pending.remove_tools(&names);
                 }
                 let value = plugins.change(&action, &id, &self.cfg()).await?;
                 self.emit(Event::Plugins {
@@ -669,35 +658,11 @@ impl App {
                 allow,
                 scope,
             } => {
-                let task_scope_allowed = self
-                    .pending
-                    .lock()
-                    .unwrap()
-                    .get(&approval_id)
-                    .is_some_and(|p| p["task_scope_allowed"] == true);
-                if self
-                    .pending
-                    .lock()
-                    .unwrap()
-                    .get(&approval_id)
-                    .and_then(|p| p["expires_at_ms"].as_u64())
-                    .is_none_or(|deadline| now_ms() >= deadline)
-                {
-                    self.approvals.lock().await.remove(&approval_id);
-                    self.pending.lock().unwrap().remove(&approval_id);
-                    anyhow::bail!("approval expired or unknown");
-                }
-                let tx = self
-                    .approvals
-                    .lock()
-                    .await
-                    .remove(&approval_id)
-                    .context("approval expired or unknown")?;
-                self.pending.lock().unwrap().remove(&approval_id);
-                let for_task =
-                    allow && scope == assistant_ipc::ApprovalScope::Task && task_scope_allowed;
-                tx.send((allow, for_task))
-                    .map_err(|_| anyhow::anyhow!("approval expired"))?;
+                let for_task = self.pending.answer(
+                    &approval_id,
+                    allow,
+                    scope == assistant_ipc::ApprovalScope::Task,
+                )?;
                 Ok(json!({"approved":allow,"scope":if for_task {"task"} else {"once"}}))
             }
             Control::TaskCancel { task_id } => {
@@ -893,6 +858,8 @@ impl App {
             Command::PttStart => self.ptt_start().await,
             Command::PttStop => self.ptt_stop().await,
             Command::Cancel => {
+                // Read before cancelling: the cut-off action clears it as it returns.
+                let input = interaction::INPUT_ACTIVE.load(Ordering::SeqCst);
                 *self.pending_browser.lock().unwrap() = None;
                 if let Some((mut task, _)) = self.paused_task.lock().unwrap().take() {
                     let _ = task.move_to(TaskState::Cancelling);
@@ -901,6 +868,13 @@ impl App {
                 }
                 self.cancel_turn().await;
                 self.registry.cancel_all_jobs().await;
+                // A keyboard action cut off halfway can leave a modifier held.
+                if input {
+                    if let Err(err) = assistant_desktop::input::release_all().await {
+                        tracing::warn!(%err, "couldn't release held keys");
+                    }
+                    self.emit(Event::ComputerInput { active: false });
+                }
             }
             Command::Status => self.emit_health(),
             Command::Shutdown => {}

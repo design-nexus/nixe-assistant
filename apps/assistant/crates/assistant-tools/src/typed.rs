@@ -4,10 +4,9 @@
 //! system inspection, and coding agent handoffs.
 
 use crate::agent::launch_coding_agent;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use assistant_core::config::{AgentCfg, PermissionsCfg};
 use serde_json::Value;
-use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use tokio::process::Command;
 
@@ -66,7 +65,7 @@ pub fn read_file_safe(
     if !path.is_file() {
         anyhow::bail!("file not found: {}", path.display());
     }
-    let file = File::open(&path).with_context(|| format!("failed to open {}", path.display()))?;
+    let file = crate::fs::open_nofollow(&path)?;
     let reader = BufReader::new(file.take(64 * 1024));
 
     let start = start_line.unwrap_or(1).max(1);

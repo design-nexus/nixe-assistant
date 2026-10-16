@@ -1,5 +1,7 @@
 //! Windows computer use never touches: password managers, terminals (a typed line runs as a
-//! command), authentication prompts, lock screens and the assistant's own windows.
+//! command), authentication prompts, lock screens, the assistant's own windows, and Nixe
+//! Settings and Store (they hold the assistant's permissions and approvals, and install
+//! packages).
 
 use anyhow::{bail, Result};
 use assistant_omarchy::hypr;
@@ -8,6 +10,7 @@ pub const DEFAULT_DENY: &[&str] = &[
     "1password", "keepassxc", "bitwarden", "org.keepassxc", "polkit", "hyprpolkitagent", "gcr-prompter", "pinentry",
     "foot", "kitty", "alacritty", "ghostty", "wezterm", "org.wezfurlong.wezterm", "xterm", "konsole", "terminal",
     "hyprlock", "swaylock", "nixe-assistant", "org.omarchy.agent", "quickshell",
+    "io.github.design_nexus.nixe.settings", "io.github.design_nexus.nixe.store",
 ];
 
 /// Refuse a window whose class (or class prefix, case-insensitive) is denied.
@@ -33,10 +36,21 @@ mod tests {
 
     #[test]
     fn denies_sensitive_windows() {
-        for c in ["foot", "kitty", "com.mitchellh.ghostty", "1Password", "org.keepassxc.KeePassXC", "Bitwarden", "nixe-assistant-tui", "hyprpolkitagent"] {
+        for c in [
+            "foot",
+            "kitty",
+            "com.mitchellh.ghostty",
+            "1Password",
+            "org.keepassxc.KeePassXC",
+            "Bitwarden",
+            "nixe-assistant-tui",
+            "hyprpolkitagent",
+            "io.github.design_nexus.nixe.Settings",
+            "io.github.design_nexus.nixe.Store",
+        ] {
             assert!(check(&win(c), &[]).is_err(), "{c}");
         }
-        for c in ["firefox", "io.github.design_nexus.nixe.Settings", "obsidian", "Spotify", "code"] {
+        for c in ["firefox", "io.github.design_nexus.nixe.Write", "obsidian", "Spotify", "code"] {
             assert!(check(&win(c), &[]).is_ok(), "{c}");
         }
         assert!(check(&win("obsidian"), &["obsidian".into()]).is_err());

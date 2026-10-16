@@ -1,8 +1,9 @@
 //! Tasks: one request carried out as a sequence of tool calls, with a state, a budget,
 //! task-wide approvals and an outcome that says what could be confirmed.
 
-use crate::{grant::now_ms, Capability};
+use crate::{grant::now_ms, Capability, Verdict};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// How long a task-wide approval lasts at most; it also ends with the task.
@@ -126,8 +127,31 @@ pub struct Task {
     pub updated_ms: u64,
     pub detail: Option<String>,
     pub steps: Vec<Step>,
+    /// Task-wide approvals: tool, resource (see `resource_of`), expiry.
     #[serde(skip)]
-    approvals: Vec<(String, u64)>,
+    approvals: Vec<(String, Option<String>, u64)>,
+    /// A step returned the user's own data.
+    #[serde(skip)]
+    read_private: bool,
+    /// A step returned content someone else wrote.
+    #[serde(skip)]
+    read_untrusted: bool,
+}
+
+/// What a task-wide approval is bound to besides the tool: the window for computer use, the
+/// destination folder for file changes. "Allow for this task" while typing into Write
+/// doesn't cover typing into another window.
+pub fn resource_of(tool: &str, args: &Value) -> Option<String> {
+    let text = |k: &str| args[k].as_str().map(str::trim).filter(|s| !s.is_empty());
+    match Capability::of(tool) {
+        Capability::ComputerUse => Some(text("window").unwrap_or("").to_lowercase()),
+        Capability::FileWrite => {
+            let path = text("to").or_else(|| text("path")).unwrap_or("");
+            let parent = std::path::Path::new(path).parent().map(|p| p.display().to_string()).unwrap_or_default();
+            Some(parent)
+        }
+        _ => None,
+    }
 }
 
 static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -148,6 +172,8 @@ impl Task {
             detail: None,
             steps: Vec::new(),
             approvals: Vec::new(),
+            read_private: false,
+            read_untrusted: false,
         }
     }
 
@@ -208,26 +234,42 @@ impl Task {
         }
     }
 
-    /// Remember a task-wide approval. Refused for capabilities that need a key press each time.
-    pub fn approve_for_task(&mut self, tool: &str) -> bool {
-        if !Capability::of(tool).task_approvable() || self.state.is_final() {
+    /// Remember a task-wide approval for this tool on this resource. Refused for calls that
+    /// need a key press each time or are asked about on their own.
+    pub fn approve_for_task(&mut self, verdict: &Verdict, resource: Option<&str>) -> bool {
+        if !verdict.task_approvable() || self.state.is_final() {
             return false;
         }
-        self.approvals.retain(|(t, _)| t != tool);
-        self.approvals.push((tool.into(), now_ms() + TASK_APPROVAL_TTL_MS));
+        let tool = verdict.tool();
+        self.approvals.retain(|(t, r, _)| !(t == tool && r.as_deref() == resource));
+        self.approvals.push((tool.into(), resource.map(String::from), now_ms() + TASK_APPROVAL_TTL_MS));
         true
     }
 
-    /// Whether an unexpired task-wide approval covers this tool.
-    pub fn approved_for_task(&mut self, tool: &str) -> bool {
+    /// Whether an unexpired task-wide approval covers this call.
+    pub fn approved_for_task(&mut self, verdict: &Verdict, resource: Option<&str>) -> bool {
         let now = now_ms();
-        self.approvals.retain(|(_, expires)| *expires > now);
-        !self.state.is_final() && self.approvals.iter().any(|(t, _)| t == tool)
+        self.approvals.retain(|(_, _, expires)| *expires > now);
+        verdict.task_approvable()
+            && !self.state.is_final()
+            && self.approvals.iter().any(|(t, r, _)| t == verdict.tool() && r.as_deref() == resource)
+    }
+
+    /// Note what a successful step brought into the task.
+    pub fn note_read(&mut self, tool: &str) {
+        self.read_private |= Capability::reads_private(tool);
+        self.read_untrusted |= Capability::brings_in_untrusted(tool);
+    }
+
+    /// Whether this call could carry the user's data out on someone else's instructions: the
+    /// task has read both private data and untrusted content, and the call sends things out.
+    pub fn may_leak(&self, tool: &str, args: &Value) -> bool {
+        self.read_private && self.read_untrusted && Capability::sends_out(tool, args)
     }
 
     #[cfg(test)]
     fn expire_approvals(&mut self) {
-        for (_, expires) in &mut self.approvals {
+        for (_, _, expires) in &mut self.approvals {
             *expires = 0;
         }
     }
@@ -236,6 +278,7 @@ impl Task {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use TaskState::*;
 
     fn task() -> Task {
@@ -311,19 +354,89 @@ mod tests {
         assert!(!t.already_done("notes.delete", "z"), "failed calls may be retried");
     }
 
+    fn verdict(tool: &str, runs_code: bool) -> Verdict {
+        let rules = crate::Rules::default();
+        crate::decide(
+            tool,
+            &crate::Context {
+                available: true,
+                trusted: true,
+                tool_rule: None,
+                rules: &rules,
+                mode: crate::AutonomyMode::Autonomous,
+                resource_approved: false,
+                runs_code,
+            },
+        )
+    }
+
     #[test]
     fn task_approvals() {
         let mut t = task();
         t.move_to(Planning).unwrap();
-        assert!(!t.approve_for_task("terminal.shell"));
-        assert!(!t.approve_for_task("system.shutdown"));
-        assert!(t.approve_for_task("notes.delete"));
-        assert!(t.approved_for_task("notes.delete"));
-        assert!(!t.approved_for_task("notes.edit"));
+        let v = |tool| verdict(tool, false);
+        assert!(!t.approve_for_task(&v("terminal.shell"), None));
+        assert!(!t.approve_for_task(&v("system.shutdown"), None));
+        assert!(!t.approve_for_task(&v("admin.install"), None));
+        assert!(t.approve_for_task(&v("notes.delete"), None));
+        assert!(t.approved_for_task(&v("notes.delete"), None));
+        assert!(!t.approved_for_task(&v("notes.edit"), None));
         t.expire_approvals();
-        assert!(!t.approved_for_task("notes.delete"), "expired");
-        assert!(t.approve_for_task("notes.delete"));
+        assert!(!t.approved_for_task(&v("notes.delete"), None), "expired");
+        assert!(t.approve_for_task(&v("notes.delete"), None));
         t.move_to(Completed).unwrap();
-        assert!(!t.approved_for_task("notes.delete"), "ends with the task");
+        assert!(!t.approved_for_task(&v("notes.delete"), None), "ends with the task");
+        let mut other = task();
+        other.move_to(Planning).unwrap();
+        assert!(!other.approved_for_task(&v("notes.delete"), None), "doesn't cross tasks");
+    }
+
+    #[test]
+    fn task_approvals_are_bound_to_the_resource() {
+        let mut t = task();
+        t.move_to(Planning).unwrap();
+        let typing = verdict("input.type", false);
+        let write = resource_of("input.type", &json!({"window": "Write", "text": "hi"}));
+        let firefox = resource_of("input.type", &json!({"window": "Firefox", "text": "hi"}));
+        assert!(t.approve_for_task(&typing, write.as_deref()));
+        assert!(t.approved_for_task(&typing, resource_of("input.type", &json!({"window": " write "})).as_deref()));
+        assert!(!t.approved_for_task(&typing, firefox.as_deref()), "another window asks again");
+        assert!(!t.approved_for_task(&typing, resource_of("input.type", &json!({})).as_deref()));
+        let files = verdict("files.write", false);
+        let work = resource_of("files.write", &json!({"path": "~/work/a.txt"}));
+        assert!(t.approve_for_task(&files, work.as_deref()));
+        assert!(t.approved_for_task(&files, resource_of("files.write", &json!({"path": "~/work/b.txt"})).as_deref()));
+        assert!(!t.approved_for_task(&files, resource_of("files.write", &json!({"path": "~/other/b.txt"})).as_deref()));
+        assert_eq!(resource_of("files.move", &json!({"from": "~/a", "to": "~/b/c"})).as_deref(), Some("~/b"));
+        // A write that runs code later is never covered, even in an approved folder.
+        let rc = verdict("files.write", true);
+        assert!(!t.approve_for_task(&rc, Some("~")));
+        assert!(!t.approved_for_task(&rc, work.as_deref()));
+    }
+
+    #[test]
+    fn leaks_need_private_data_and_untrusted_content() {
+        let mut t = task();
+        assert!(!t.may_leak("browser.navigate", &json!({})));
+        t.note_read("browser.snapshot");
+        assert!(!t.may_leak("browser.navigate", &json!({})), "untrusted content alone");
+        let mut u = task();
+        u.note_read("notes.list");
+        u.note_read("weather.lookup");
+        assert!(u.may_leak("web.search", &json!({})), "notes are private and can hold instructions");
+        t.note_read("files.read");
+        for tool in ["browser.navigate", "browser.search", "browser.fill", "web.read", "ext.anything"] {
+            assert!(t.may_leak(tool, &json!({})), "{tool}");
+        }
+        assert!(t.may_leak("browser.tabs", &json!({"action": "create", "url": "https://x.test"})));
+        assert!(!t.may_leak("browser.tabs", &json!({"action": "list"})));
+        for tool in ["browser.snapshot", "files.write", "notes.add", "weather.lookup"] {
+            assert!(!t.may_leak(tool, &json!({})), "{tool} doesn't send out");
+        }
+        let mut w = task();
+        w.note_read("weather.lookup");
+        w.note_read("system.status");
+        w.note_read("hypr.workspace");
+        assert!(!w.may_leak("web.search", &json!({})));
     }
 }

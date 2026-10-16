@@ -157,6 +157,9 @@ Ollama/LM Studio model on the 5080 while measuring the assistant, or the numbers
 Snippet: `scripts/hypr-bind.lua`. Default is **Alt+Space** hold-to-talk.
 `Super+Alt+Space` is the Apps menu and stays that way.
 
+Emergency stop: `scripts/hypr-stop.lua` binds **Super+Shift+Escape** to `nixe-assistant cancel`
+(speech, tasks, jobs and approvals stop; held keys are released). install.sh adds both.
+
 ## HUD
 
 Standalone Quickshell overlay (not wired into `shell.json`). `install.sh`

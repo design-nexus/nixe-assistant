@@ -84,10 +84,14 @@ systemctl --user daemon-reload
 systemctl --user disable nixe-assistant-stt.service nixe-assistant-hud.service
 systemctl --user enable nixe-assistantd.service
 if [[ $start_after == 1 ]]; then systemctl --user restart nixe-assistantd.service; fi
-if [[ -f "$bind_file" ]] && ! rg -q 'Assistant PTT' "$bind_file"; then
-  cat "$root/scripts/hypr-bind.lua" >> "$bind_file"
-  hyprctl reload
-  [[ -z $(hyprctl configerrors) ]]
+if [[ -f "$bind_file" ]]; then
+  bound=0
+  if ! rg -q 'Assistant PTT' "$bind_file"; then cat "$root/scripts/hypr-bind.lua" >> "$bind_file"; bound=1; fi
+  if ! rg -q 'Assistant stop' "$bind_file"; then printf '\n' >> "$bind_file"; cat "$root/scripts/hypr-stop.lua" >> "$bind_file"; bound=1; fi
+  if [[ $bound == 1 ]]; then
+    hyprctl reload
+    [[ -z $(hyprctl configerrors) ]]
+  fi
 fi
 if [[ $start_after != 1 ]]; then
   trap - ERR

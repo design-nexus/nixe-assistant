@@ -2,7 +2,8 @@
 //!
 //! Inside: the system read-only, an empty home with only the working folder writable and
 //! the configured toolchain folders readable, a private /tmp, and no `XDG_RUNTIME_DIR`, so
-//! no Wayland, D-Bus or assistant socket. Network is shared only when configured.
+//! no Wayland, D-Bus or assistant socket. Network is shared only when configured. A
+//! repository's hooks and config stay read-only: git runs them later, outside the sandbox.
 
 use std::path::{Path, PathBuf};
 
@@ -51,13 +52,26 @@ pub fn bwrap_args(sandbox: &Sandbox, home: &Path, cwd: &Path) -> Vec<String> {
         }
     }
     let cwd_s = cwd.display().to_string();
-    push(&["--bind", &cwd_s, &cwd_s, "--chdir", &cwd_s, "--clearenv"]);
+    push(&["--bind", &cwd_s, &cwd_s]);
+    if let Some(git) = repository(home, cwd) {
+        for part in ["hooks", "config"] {
+            let p = git.join(part).display().to_string();
+            push(&["--ro-bind-try", &p, &p]);
+        }
+    }
+    push(&["--chdir", &cwd_s, "--clearenv"]);
     let path = std::env::var("PATH").unwrap_or_else(|_| "/usr/local/bin:/usr/bin".into());
     push(&["--setenv", "PATH", &path, "--setenv", "HOME", &home_s, "--setenv", "TERM", "dumb"]);
     if let Ok(lang) = std::env::var("LANG") {
         push(&["--setenv", "LANG", &lang]);
     }
     a
+}
+
+/// The `.git` folder of the repository `cwd` is in, looking up to HOME. Its hooks and config
+/// run code when Ken next uses git, so they are bound read-only over the writable `cwd`.
+fn repository(home: &Path, cwd: &Path) -> Option<PathBuf> {
+    cwd.ancestors().take_while(|d| d.starts_with(home) && *d != home).map(|d| d.join(".git")).find(|g| g.is_dir())
 }
 
 /// The full command line: `bwrap <args> -- <argv>`.
@@ -118,5 +132,38 @@ mod tests {
         assert_eq!(std::fs::read_to_string(home.join("proj/inside")).unwrap(), "x\n");
         let env = run("echo \"${XDG_RUNTIME_DIR:-unset}\"");
         assert_eq!(String::from_utf8_lossy(&env.stdout).trim(), "unset");
+        assert!(!run("ls /run/user").status.success() || run("ls -A /run/user").stdout.is_empty(), "no runtime sockets");
+        let sock = std::env::var("XDG_RUNTIME_DIR").unwrap_or_default() + "/nixe-assistant/assistant.sock";
+        assert!(!run(&format!("test -e '{sock}'")).status.success(), "the assistant socket isn't there");
+        assert!(!run("test -e /run/dbus/system_bus_socket").status.success(), "no system bus");
+        // No network unless configured.
+        assert!(run("cat /proc/net/dev").status.success());
+        assert!(!run("tail -n +3 /proc/net/dev | grep -qv ' lo:'").status.success(), "only loopback");
+    }
+
+    /// A generated command can't plant a git hook or config that runs later, outside.
+    #[test]
+    fn repository_hooks_stay_read_only() {
+        if std::process::Command::new("bwrap").arg("--version").output().is_err() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().canonicalize().unwrap();
+        std::fs::create_dir_all(home.join("repo/.git/hooks")).unwrap();
+        std::fs::create_dir_all(home.join("repo/src")).unwrap();
+        std::fs::write(home.join("repo/.git/config"), "[core]\n").unwrap();
+        let s = Sandbox { network: false, read_only: vec![] };
+        for cwd in [home.join("repo"), home.join("repo/src")] {
+            let run = |script: &str| {
+                let argv = wrap(&s, &home, &cwd, vec!["sh".into(), "-c".into(), script.into()]);
+                std::process::Command::new(&argv[0]).args(&argv[1..]).output().unwrap()
+            };
+            let git = if cwd.ends_with("src") { "../.git" } else { ".git" };
+            assert!(!run(&format!("echo evil > {git}/hooks/pre-commit")).status.success(), "{cwd:?}");
+            assert!(!run(&format!("echo '[core] fsmonitor = evil' >> {git}/config")).status.success(), "{cwd:?}");
+            assert!(run("echo ok > file").status.success(), "the working folder stays writable");
+        }
+        assert!(!home.join("repo/.git/hooks/pre-commit").exists());
+        assert_eq!(std::fs::read_to_string(home.join("repo/.git/config")).unwrap(), "[core]\n");
     }
 }

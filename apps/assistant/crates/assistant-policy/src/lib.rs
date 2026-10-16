@@ -14,7 +14,7 @@ pub mod task;
 pub use capability::Capability;
 pub use grant::{digest, Grant, GrantKind};
 use serde::{Deserialize, Serialize};
-pub use task::{Budget, Task, TaskState, Verification};
+pub use task::{resource_of, Budget, Task, TaskState, Verification};
 
 /// Ordered from least to most restrictive, so `max` picks the stricter one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -103,6 +103,10 @@ pub struct Context<'a> {
     /// The call's resource is one the user pre-approved in config (a service unit listed in
     /// `[system] user_units`). Lets an asking capability run without asking; a deny still wins.
     pub resource_approved: bool,
+    /// The call writes somewhere that runs as the user later, outside any sandbox (shell
+    /// startup files, `~/.local/bin`, autostart, Hyprland config, git hooks). It always asks,
+    /// by key press, one call at a time.
+    pub runs_code: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,6 +115,10 @@ pub struct Verdict {
     capability: Capability,
     decision: Decision,
     rule: &'static str,
+    /// Approved by key press only, and never for the rest of a task.
+    key_press: bool,
+    /// Asked about on its own, never covered by a task-wide approval.
+    single: bool,
 }
 
 impl Verdict {
@@ -127,6 +135,25 @@ impl Verdict {
     pub fn rule(&self) -> &'static str {
         self.rule
     }
+    /// Whether only a key press approves it (HUD, Settings, TUI or `nixe-assistant approve`):
+    /// a spoken "approve" could come from a video, a page read aloud or someone nearby.
+    pub fn key_press(&self) -> bool {
+        self.key_press || !self.capability.voice_approvable()
+    }
+    /// Whether one approval may cover the rest of the task.
+    pub fn task_approvable(&self) -> bool {
+        !self.single && !self.key_press && self.capability.task_approvable()
+    }
+    /// For a call that could carry private data out of the machine after the task read
+    /// untrusted content: an allowed call asks, by itself. A deny stays a deny.
+    pub fn ask_before_sending(mut self) -> Self {
+        if self.decision < Decision::Ask {
+            self.decision = Decision::Ask;
+            self.rule = "may send private data";
+        }
+        self.single = true;
+        self
+    }
 }
 
 /// The decision point. Order: unavailable or disabled tools are denied; an explicit deny
@@ -135,7 +162,8 @@ impl Verdict {
 /// and mandatory floors cap what any rule can allow.
 pub fn decide(tool: &str, cx: &Context) -> Verdict {
     let capability = Capability::of(tool);
-    let verdict = |decision, rule| Verdict { tool: tool.into(), capability, decision, rule };
+    let verdict =
+        |decision, rule| Verdict { tool: tool.into(), capability, decision, rule, key_press: cx.runs_code, single: cx.runs_code };
     if !cx.available {
         return verdict(Decision::Deny, "unavailable");
     }
@@ -174,6 +202,9 @@ pub fn decide(tool: &str, cx: &Context) -> Verdict {
             (decision, rule) = (floor, "mandatory");
         }
     }
+    if cx.runs_code && decision < Decision::Ask {
+        (decision, rule) = (Decision::Ask, "runs code");
+    }
     verdict(decision, rule)
 }
 
@@ -189,6 +220,7 @@ mod tests {
             rules,
             mode: AutonomyMode::Autonomous,
             resource_approved: false,
+            runs_code: false,
         }
     }
 
@@ -392,5 +424,75 @@ mod tests {
         let mut c = cx(&rules);
         c.mode = AutonomyMode::Manual;
         assert_eq!(d(&c, "files.read"), Decision::Deny);
+    }
+
+    #[test]
+    fn writes_that_run_code_ask_by_key_press_each_time() {
+        let rules = Rules { files_write: Decision::Allow, ..Rules::default() };
+        let mut c = cx(&rules);
+        c.tool_rule = Some(Decision::Allow);
+        c.runs_code = true;
+        let v = decide("files.write", &c);
+        assert_eq!((v.decision(), v.rule()), (Decision::Ask, "runs code"));
+        assert!(v.key_press() && !v.task_approvable());
+        c.tool_rule = Some(Decision::Deny);
+        assert_eq!(decide("files.write", &c).decision(), Decision::Deny, "deny still wins");
+        c.tool_rule = None;
+        c.runs_code = false;
+        let v = decide("files.write", &c);
+        assert_eq!(v.decision(), Decision::Allow);
+        assert!(!v.key_press(), "an ordinary write takes a spoken approve");
+    }
+
+    #[test]
+    fn sending_after_untrusted_reads_asks_on_its_own() {
+        let rules = Rules::default();
+        let c = cx(&rules);
+        let v = decide("web.search", &c);
+        assert_eq!(v.decision(), Decision::Allow);
+        let v = v.ask_before_sending();
+        assert_eq!((v.decision(), v.rule()), (Decision::Ask, "may send private data"));
+        assert!(!v.task_approvable() && !v.key_press());
+        let mut c = cx(&rules);
+        c.tool_rule = Some(Decision::Deny);
+        assert_eq!(decide("web.search", &c).ask_before_sending().decision(), Decision::Deny);
+    }
+
+    /// What a page with injected instructions could make a planner ask for, under the default
+    /// rules in the most permissive mode. Nothing that changes the system, runs code or sends
+    /// data away goes through on a spoken "approve", and nothing carries over to a new target.
+    #[test]
+    fn a_compromised_planner_cant_act_alone() {
+        let rules = Rules::default();
+        let c = cx(&rules);
+        // Generated commands, admin work, shutdown, captures, computer use: key press each time.
+        for t in ["terminal.run", "terminal.shell", "admin.install", "admin.service", "system.shutdown", "capture.clipboard", "input.type", "ui.act"] {
+            let v = decide(t, &c);
+            assert_eq!(v.decision(), Decision::Ask, "{t}");
+            assert!(v.key_press(), "{t}");
+        }
+        assert_eq!(decide("shell", &c).decision(), Decision::Deny);
+        // Startup files, ~/.local/bin and friends: a key press, never the whole task.
+        let mut rc = cx(&rules);
+        rc.runs_code = true;
+        let v = decide("files.write", &rc);
+        assert!(v.key_press() && !v.task_approvable());
+        // A third-party tool's own claim of safety doesn't count.
+        let mut ext = cx(&rules);
+        ext.trusted = false;
+        assert_eq!(decide("notes.add", &ext).decision(), Decision::Ask);
+        // Data out after untrusted content: asks, and no task-wide approval covers it.
+        let mut t = Task::new("1", "summarize this page", Budget { max_calls: 10, max_active_ms: 60_000 });
+        t.move_to(TaskState::Planning).unwrap();
+        t.note_read("browser.snapshot");
+        t.note_read("files.read");
+        assert!(t.may_leak("browser.navigate", &serde_json::json!({"url": "https://x.test/?d=key"})));
+        let v = decide("browser.navigate", &c).ask_before_sending();
+        assert_eq!(v.decision(), Decision::Ask);
+        assert!(!t.approve_for_task(&v, None) && !t.approved_for_task(&v, None));
+        // "Allow for this task" while typing into one window doesn't cover another.
+        let typing = decide("input.type", &c);
+        assert!(t.approve_for_task(&typing, Some("write")));
+        assert!(!t.approved_for_task(&typing, Some("firefox")));
     }
 }

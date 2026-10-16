@@ -366,6 +366,9 @@ async fn main() -> anyhow::Result<()> {
         "bench" if std::env::args().nth(2).as_deref() == Some("computer") => {
             bench::computer(std::env::args().nth(3)).await?;
         }
+        "bench" if std::env::args().nth(2).as_deref() == Some("injection") => {
+            bench::injection().await?;
+        }
         "bench" if std::env::args().nth(2).as_deref() == Some("vision") => {
             match (std::env::args().nth(3).as_deref(), std::env::args().nth(4)) {
                 (Some("--one"), Some(model)) => {
@@ -1154,6 +1157,7 @@ fn print_help() {
            bench duplex [--echo-only]  false interruptions and live interruption trials\n\
            bench computer [TASK]  computer-use tasks in real apps, each checked\n\
            bench vision     which vision model picks the right mark (Gemma vs GLM)\n\
+           bench injection  pages and files with planted instructions; nothing may come of them\n\
            preview [voice speed] TTS only, without saving\n\
            calibrate      quiet/speech measurement; suggestions only\n\
            search-provider [show|builtin|duckduckgo]\n\

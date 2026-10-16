@@ -31,7 +31,7 @@ fn calls_need_the_hosts_grant() {
     let rules = Rules::default();
     let verdict = decide(
         "system.status",
-        &Context { available: true, trusted: true, tool_rule: None, rules: &rules, mode: AutonomyMode::Autonomous, resource_approved: false },
+        &Context { available: true, trusted: true, tool_rule: None, rules: &rules, mode: AutonomyMode::Autonomous, resource_approved: false, runs_code: false },
     );
     let grant = Grant::allowed(&verdict, &args).unwrap();
     grant.check("system.status", &args).unwrap();

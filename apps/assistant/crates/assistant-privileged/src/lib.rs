@@ -300,6 +300,21 @@ mod tests {
             &["service", "stop", "getty@tty1.service"],
             &["service", "stop", "nixe-assistantd.service"],
             &["service", "restart"],
+            // Look-alikes, control characters and smuggled flags.
+            &["install", "\u{0455}l"],
+            &["install", "sl\n"],
+            &["install", "sl\0"],
+            &["install", "sl --noconfirm"],
+            &["install", "sl\t-Syu"],
+            &["install", "$(id)"],
+            &["install", "`id`"],
+            &["remove", "linux-lts"],
+            &["remove", "omarchy"],
+            &["service", "restart", "../../x.service"],
+            &["service", "restart", "-H.service"],
+            &["service", "restart", "cups.service\n"],
+            &["service", "restart", "cups.service --root=/"],
+            &["service", "restart", "c\u{0443}ps.service"],
             &eleven,
         ] {
             assert!(Action::parse(args).is_err(), "accepted {args:?}");
