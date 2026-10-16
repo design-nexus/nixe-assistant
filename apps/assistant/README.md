@@ -30,6 +30,8 @@ Hold **Alt+Space**, talk, release. **Super+Shift+Escape** stops everything the a
 
 Voice-launched apps live in `~/.config/nixe-assistant/apps.toml` (template: `config/apps.toml`). Desktop command phrases live in `commands.toml`. Edit those files, then `nixe-assistant reload` (or SIGHUP). No rebuild.
 
+`nixe-assistant-tui` edits the same settings in a terminal: Overview, Audio, Download, Persona, Features, Diagnostics, Activity, Calibration, Commands and Plugins (keys 1–9 and 0, or Tab). F6 moves between panes, F2 lists screens and panes, Ctrl+K lists every action for the screen, and ? shows all keys. Changes are a draft until Ctrl+S applies them (Ctrl+R applies and restarts). The theme is Aurora; Follow Omarchy and Terminal are in Ctrl+K and kept in `~/.config/nixe-assistant/tui.toml`. `--no-mouse` leaves the mouse to the terminal.
+
 See [settings, MCP, diagnostics and installation](docs/REVIEWED-IMPROVEMENTS.md) for the reviewed improvements and new controls.
 
 ## Layout

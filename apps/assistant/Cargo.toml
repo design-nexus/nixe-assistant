@@ -39,7 +39,7 @@ assistant-desktop = { path = "crates/assistant-desktop" }
 assistant-models = { path = "crates/assistant-models" }
 assistant-tools = { path = "crates/assistant-tools" }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-crossterm = { version = "0.28", features = ["event-stream"] }
+crossterm = { version = "0.29", features = ["event-stream"] }
 dirs = "6"
 futures-util = "0.3"
 hound = "3"
@@ -50,7 +50,7 @@ ort = { version = "=2.0.0-rc.13", default-features = false, features = [
     "tls-rustls",
     "api-22",
 ] }
-ratatui = "0.29"
+ratatui = { version = "=0.30.2", features = ["crossterm_0_29"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }

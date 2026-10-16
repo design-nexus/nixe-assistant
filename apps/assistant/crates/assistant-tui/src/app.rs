@@ -5,10 +5,8 @@ use crate::theme::Theme;
 use anyhow::{Context, Result};
 use assistant_core::{paths, AppsFile, CommandsFile, Config, Persona};
 use assistant_ipc::{request, Control};
-use ratatui::widgets::ListState;
 use serde_json::{json, Value};
 use std::{
-    cell::RefCell,
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -42,25 +40,8 @@ impl Tab {
         Self::Commands,
         Self::Plugins,
     ];
-    pub fn title(self) -> &'static str {
-        match self {
-            Self::Dashboard => "1:Dashboard",
-            Self::Models => "2:Audio",
-            Self::Downloader => "3:Download",
-            Self::Persona => "4:Persona",
-            Self::Features => "5:Features",
-            Self::Diagnostics => "6:Diagnostics",
-            Self::Activity => "7:Activity",
-            Self::Calibration => "8:Calibration",
-            Self::Commands => "9:Apps & Commands",
-            Self::Plugins => "0:Plugins",
-        }
-    }
-    pub fn next(self) -> Self {
-        Self::ALL[(self as usize + 1) % Self::ALL.len()]
-    }
-    pub fn prev(self) -> Self {
-        Self::ALL[(self as usize + Self::ALL.len() - 1) % Self::ALL.len()]
+    pub fn index(self) -> usize {
+        self as usize
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -130,9 +111,7 @@ pub struct App {
     pub diagnostics: Value,
     pub activity: Value,
     pub calibration: Value,
-    pub scroll: u16,
     pub quit_pending: bool,
-    pub list_states: RefCell<Vec<ListState>>,
     pub apps_text: String,
     pub commands_text: String,
     pub commands_pane: bool,
@@ -141,9 +120,28 @@ pub struct App {
     pub plugin_draft: std::collections::BTreeMap<String, assistant_tools::plugins::Saved>,
     pub plugin_saved: std::collections::BTreeMap<String, assistant_tools::plugins::Saved>,
     pub selected_plugin: usize,
+    /// Screens, panes, mouse targets and the F2 menu.
+    pub navigation: crate::navigation::State,
+    /// Ctrl+K actions.
+    pub commands: crate::commands::Palette,
+    pub help: bool,
+    pub help_scroll: u16,
+    /// "Discard the draft and quit?"
+    pub quit_confirm: bool,
+    /// Set by a confirmed quit from the mouse.
+    pub quit_now: bool,
+    /// The approval the person put aside with Esc; it stays pending in the daemon.
+    pub approval_hidden: Option<String>,
+    pub approval_scroll: u16,
+    pub selected_turn: usize,
+    /// `aurora`, `omarchy`, `terminal` or a built-in palette (`tui.toml`).
+    pub theme_id: String,
+    pub omarchy: Option<Theme>,
+    pub mouse: bool,
 }
 impl App {
-    pub fn new(theme: Theme) -> Result<Self> {
+    pub fn new(theme_id: String, omarchy: Option<Theme>) -> Result<Self> {
+        let theme = crate::theme::resolve(&theme_id, omarchy.as_ref());
         let mut config = Config::load()?;
         let personas = Persona::load_all()?;
         if config.assistant.persona_id.is_empty() {
@@ -227,9 +225,7 @@ impl App {
             diagnostics: Value::Null,
             activity: json!({"turns":[]}),
             calibration: Value::Null,
-            scroll: 0,
             quit_pending: false,
-            list_states: RefCell::new(vec![ListState::default(); 9]),
             apps_text,
             commands_text,
             commands_pane: false,
@@ -238,6 +234,18 @@ impl App {
             plugin_draft: assistant_tools::plugins::saved()?,
             plugin_saved: assistant_tools::plugins::saved()?,
             selected_plugin: 0,
+            navigation: crate::navigation::State::default(),
+            commands: crate::commands::Palette::default(),
+            help: false,
+            help_scroll: 0,
+            quit_confirm: false,
+            quit_now: false,
+            approval_hidden: None,
+            approval_scroll: 0,
+            selected_turn: 0,
+            theme_id,
+            omarchy,
+            mouse: true,
         };
         app.routes()?;
         let event_tx = app.tx.clone();
@@ -498,7 +506,8 @@ impl App {
                         self.selected_hf_idx = 0;
                         self.hf_files.clear();
                         self.download_pane = 1;
-                        self.set_toast("Select a repository, then Enter to list GGUF files");
+                        self.navigation.focus[Tab::Downloader.index()] = 1;
+                        self.set_toast("Select a repository; (Enter) lists its GGUF files");
                     }
                     Err(e) => self.set_toast(format!("Search: {e}")),
                 }
@@ -511,6 +520,7 @@ impl App {
                         self.hf_files = files;
                         self.selected_file_idx = 0;
                         self.download_pane = 2;
+                        self.navigation.focus[Tab::Downloader.index()] = 2;
                     }
                     Err(e) => self.set_toast(format!("Files: {e}")),
                 }
@@ -522,11 +532,17 @@ impl App {
                     task_scope_allowed,
                     summary,
                     ..
-                } => self.set_toast(format!(
-                    "Approval needed: {} — y allow{} / n deny",
-                    if summary.is_empty() { format!("{tool} {arguments}") } else { summary },
-                    if task_scope_allowed { " / t allow for this task" } else { "" }
-                )),
+                } => {
+                    let _ = task_scope_allowed;
+                    // A new request shows its dialog even if an earlier one was put aside.
+                    self.approval_hidden = None;
+                    self.approval_scroll = 0;
+                    self.set_toast(format!(
+                        "Approval needed: {}",
+                        if summary.is_empty() { format!("{tool} {arguments}") } else { summary }
+                    ));
+                    self.poll_daemon();
+                }
                 assistant_core::Event::Turn { event, .. } if event["type"] == "calibration" => {
                     self.set_toast(format!("Calibration: {} for five seconds", event["phase"]))
                 }
@@ -726,12 +742,17 @@ impl App {
             4 => self.adjust_vad(1.0),
             5 => self.config.agent.enabled = !self.config.agent.enabled,
             6 => {
-                let agents = ["agy", "claude", "codex", "cursor"];
+                // Only agents installed here are offered.
+                let agents = assistant_tools::agent::installed_agents();
+                if agents.is_empty() {
+                    self.set_toast("No coding agents are installed (see omarchy default agent)");
+                    return;
+                }
                 let idx = agents
                     .iter()
-                    .position(|a| *a == self.config.agent.default_agent)
-                    .unwrap_or(0);
-                self.config.agent.default_agent = agents[(idx + 1) % 4].into();
+                    .position(|a| a.id == self.config.agent.default_agent)
+                    .map_or(0, |i| (i + 1) % agents.len());
+                self.config.agent.default_agent = agents[idx].id.into();
             }
             7 => self.config.llm.flash_attn = !self.config.llm.flash_attn,
             8 => self.config.llm.prefix_cache = !self.config.llm.prefix_cache,
@@ -853,9 +874,13 @@ impl App {
         ))
     }
     pub fn route_entries(&self) -> Vec<Value> {
+        self.route_list(self.commands_pane)
+    }
+    /// The apps (false) or commands (true) in the draft, as JSON.
+    pub fn route_list(&self, commands: bool) -> Vec<Value> {
         match self.routes() {
             Ok((a, c)) => {
-                if self.commands_pane {
+                if commands {
                     c.command
                         .iter()
                         .filter_map(|v| serde_json::to_value(v).ok())

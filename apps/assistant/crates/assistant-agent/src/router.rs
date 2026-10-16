@@ -74,8 +74,11 @@ pub fn match_agent_handoff(text: &str) -> Option<Intent> {
     }
     let lower = trimmed.to_lowercase();
 
-    // 1. Explicit agent phrases: ask/have/tell <agent> [to] <prompt>
-    for agent in &["claude", "codex", "cursor", "agy", "antigravity"] {
+    // 1. Explicit agent phrases: ask/have/tell <agent> [to] <prompt>. Longer names first, so
+    // "cursor agent" isn't taken for "cursor".
+    let mut words: Vec<&str> = assistant_tools::agent::AGENTS.iter().flat_map(|a| a.words.iter().copied()).collect();
+    words.sort_by_key(|w| std::cmp::Reverse(w.len()));
+    for agent in &words {
         let prefixes = [
             format!("ask {agent} to "),
             format!("ask {agent} "),
@@ -120,10 +123,11 @@ pub fn match_agent_handoff(text: &str) -> Option<Intent> {
     // 2. Generic coding agent launch: "open coding agent", "start coding agent"
     for verb in &["open", "launch", "start"] {
         if lower == format!("{verb} coding agent") || lower == format!("{verb} the coding agent") {
+            // An empty agent means the configured default.
             return Some(Intent::AgentHandoff {
-                agent: "agy".into(),
+                agent: String::new(),
                 prompt: String::new(),
-                spoken: "Opening Antigravity.".into(),
+                spoken: "Opening your coding agent.".into(),
             });
         }
     }
@@ -142,9 +146,9 @@ pub fn match_agent_handoff(text: &str) -> Option<Intent> {
         if lower.starts_with(prefix) {
             let prompt = trimmed[prefix.len()..].trim().to_string();
             return Some(Intent::AgentHandoff {
-                agent: "agy".into(),
+                agent: String::new(),
                 prompt,
-                spoken: "Handing off to Antigravity.".into(),
+                spoken: "Handing off to your coding agent.".into(),
             });
         }
     }
@@ -160,9 +164,9 @@ pub fn match_agent_handoff(text: &str) -> Option<Intent> {
             let prompt = trimmed[prefix.len()..].trim().to_string();
             if !prompt.is_empty() {
                 return Some(Intent::AgentHandoff {
-                    agent: "agy".into(),
+                    agent: String::new(),
                     prompt,
-                    spoken: "Handing off to Antigravity.".into(),
+                    spoken: "Handing off to your coding agent.".into(),
                 });
             }
         }
@@ -799,6 +803,27 @@ mod tests {
     }
 
     #[test]
+    fn every_known_agent_is_routed_by_name() {
+        for (said, id) in [
+            ("ask grok to explain this error", "grok"),
+            ("tell muse to write the tests", "muse"),
+            ("have cursor agent fix the build", "cursor-agent"),
+            ("ask open code to refactor", "opencode"),
+            ("ask github copilot to review", "copilot"),
+            ("open hermes", "hermes"),
+        ] {
+            match route(said) {
+                Intent::AgentHandoff { agent, .. } => assert_eq!(agent, id, "{said}"),
+                other => panic!("{said}: {other:?}"),
+            }
+        }
+        match route("code a parser for toml") {
+            Intent::AgentHandoff { agent, prompt, .. } => assert_eq!((agent.as_str(), prompt.as_str()), ("", "a parser for toml")),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
     fn agent_handoff_routing() {
         match route("ask claude to fix the auth test") {
             Intent::AgentHandoff {
@@ -808,7 +833,7 @@ mod tests {
             } => {
                 assert_eq!(agent, "claude");
                 assert_eq!(prompt, "fix the auth test");
-                assert_eq!(spoken, "Handing off to Claude.");
+                assert_eq!(spoken, "Handing off to Claude Code.");
             }
             other => panic!("{other:?}"),
         }
@@ -832,9 +857,9 @@ mod tests {
                 prompt,
                 spoken,
             } => {
-                assert_eq!(agent, "agy");
+                assert_eq!(agent, "", "the configured default");
                 assert_eq!(prompt, "");
-                assert_eq!(spoken, "Opening Antigravity.");
+                assert_eq!(spoken, "Opening your coding agent.");
             }
             other => panic!("{other:?}"),
         }
@@ -847,7 +872,7 @@ mod tests {
             } => {
                 assert_eq!(agent, "claude");
                 assert_eq!(prompt, "");
-                assert_eq!(spoken, "Opening Claude.");
+                assert_eq!(spoken, "Opening Claude Code.");
             }
             other => panic!("{other:?}"),
         }

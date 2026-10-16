@@ -53,6 +53,14 @@ fn route(request: &str, id: &str, cfg: &Config) -> Result<Value> {
             prompt,
             spoken,
         } if id == "coding-agents" => {
+            // "Open the coding agent" names none: the configured default, said by name.
+            let (agent, spoken) = if agent.is_empty() {
+                let agent = cfg.agent.default_agent.clone();
+                let (_, spoken) = assistant_tools::agent::build_launch_cmd(&agent, &prompt, "");
+                (agent, spoken)
+            } else {
+                (agent, spoken)
+            };
             json!({"tool":"agent.handoff","arguments":{"agent":agent,"prompt":prompt},"reply":spoken})
         }
         _ => Value::Null,

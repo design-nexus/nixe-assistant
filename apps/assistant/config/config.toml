@@ -145,7 +145,7 @@ admin = "confirm"     # packages and system services through the polkit helper: 
 
 [agent]
 enabled = true
-default_agent = "agy" # "agy", "claude", "codex", "cursor"
+default_agent = "agy" # claude, codex, opencode, pi, omp, ori, grok, agy, copilot, crush, cursor-agent, cursor, muse, hermes, openclaw
 terminal = "omarchy-launch-terminal"
 # "autonomous": permitted tools run without asking (rules above still apply).
 # "assisted": reads and desktop, volume and app changes run; other changes ask.
