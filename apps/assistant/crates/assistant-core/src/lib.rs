@@ -9,6 +9,7 @@ pub mod location;
 pub mod paths;
 pub mod persona;
 pub mod state;
+pub mod telemetry;
 pub mod timing;
 pub mod weather;
 

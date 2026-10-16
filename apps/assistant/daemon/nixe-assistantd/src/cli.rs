@@ -352,7 +352,10 @@ async fn main() -> anyhow::Result<()> {
         "install-helper" => install_helper()?,
         "perf" => {
             let mut v = request(Control::Perf, 3000).await?;
-            v["gpu"] = gpu_usage(v["pid"].as_u64());
+            let machine = assistant_core::telemetry::snapshot(v["pid"].as_u64());
+            for key in ["gpu", "cpu_temp_c", "on_battery", "process"] {
+                v[key] = machine[key].clone();
+            }
             if std::env::args().any(|a| a == "--json") {
                 println!("{v}");
             } else {
@@ -365,6 +368,13 @@ async fn main() -> anyhow::Result<()> {
         }
         "bench" if std::env::args().nth(2).as_deref() == Some("computer") => {
             bench::computer(std::env::args().nth(3)).await?;
+        }
+        "bench" if std::env::args().nth(2).as_deref() == Some("load") => {
+            let only = std::env::args().skip_while(|a| a != "--only").nth(1);
+            bench::load(std::env::args().any(|a| a == "--heat"), only).await?;
+        }
+        "bench" if std::env::args().nth(2).as_deref() == Some("crash") => {
+            bench::crash().await?;
         }
         "bench" if std::env::args().nth(2).as_deref() == Some("injection") => {
             bench::injection().await?;
@@ -887,30 +897,6 @@ async fn config_command(rest: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// VRAM in use on the GPU, and by the assistant's process, from nvidia-smi.
-fn gpu_usage(pid: Option<u64>) -> serde_json::Value {
-    let run = |args: &[&str]| {
-        std::process::Command::new("nvidia-smi").args(args).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-    };
-    let Some(total) = run(&["--query-gpu=name,memory.used,memory.total", "--format=csv,noheader,nounits"]) else {
-        return serde_json::Value::Null;
-    };
-    let f: Vec<&str> = total.lines().next().unwrap_or("").split(", ").collect();
-    let mine = pid.and_then(|pid| {
-        run(&["--query-compute-apps=pid,used_memory", "--format=csv,noheader,nounits"])?
-            .lines()
-            .filter_map(|l| l.split_once(", "))
-            .find(|(p, _)| p.trim().parse::<u64>().ok() == Some(pid))
-            .and_then(|(_, m)| m.trim().parse::<u64>().ok())
-    });
-    serde_json::json!({
-        "name": f.first().unwrap_or(&""),
-        "used_mib": f.get(1).and_then(|v| v.trim().parse::<u64>().ok()),
-        "total_mib": f.get(2).and_then(|v| v.trim().parse::<u64>().ok()),
-        "assistant_mib": mine,
-    })
-}
-
 async fn reload_if_running() {
     if let Err(e) = request(Control::Reload, 30_000).await {
         eprintln!("saved; the assistant isn't running ({e})");
@@ -1158,6 +1144,8 @@ fn print_help() {
            bench computer [TASK]  computer-use tasks in real apps, each checked\n\
            bench vision     which vision model picks the right mark (Gemma vs GLM)\n\
            bench injection  pages and files with planted instructions; nothing may come of them\n\
+           bench load [--only idle|cpu|gpu|both] [--heat]  first audio under load; --heat adds 10 minutes\n\
+           bench crash      kill each part of the assistant and measure how it comes back\n\
            preview [voice speed] TTS only, without saving\n\
            calibrate      quiet/speech measurement; suggestions only\n\
            search-provider [show|builtin|duckduckgo]\n\

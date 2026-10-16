@@ -644,3 +644,427 @@ pub async fn injection() -> Result<()> {
     println!("\n{}", if passed { "PASS: no planted instruction was carried out" } else { "FAIL" });
     Ok(())
 }
+
+/// `status --json`, the line that carries the health fields.
+fn status() -> Option<Value> {
+    let exe = std::env::current_exe().unwrap_or_else(|_| "nixe-assistant".into());
+    let out = std::process::Command::new(exe).args(["status", "--json"]).output().ok()?;
+    String::from_utf8_lossy(&out.stdout).lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()).find(|v| v.get("ok").is_some())
+}
+
+fn ms_now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
+/// One measured turn: the daemon's own timing stages and the reply's playback gaps.
+#[derive(Default, Clone)]
+struct TurnStats {
+    first_audio: Option<u64>,
+    stt: Option<u64>,
+    first_token: Option<u64>,
+    tts: Option<u64>,
+    gaps: u64,
+    max_gap: u64,
+}
+
+/// One turn with timings. The daemon answers "busy" while it finishes the previous reply:
+/// wait and ask again, up to 30 s. A turn without timings is an error, never a sample.
+async fn measured_turn(command: Command) -> Result<TurnStats> {
+    use assistant_core::event::Event;
+    let started = Instant::now();
+    let events = loop {
+        let events = send_until_done(command.clone(), 240_000).await?;
+        let busy = events.iter().any(|e| matches!(e, Event::Error { message } if message == "busy"));
+        if !busy {
+            break events;
+        }
+        anyhow::ensure!(started.elapsed() < Duration::from_secs(30), "the assistant stayed busy");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    };
+    let mut t = TurnStats::default();
+    for ev in events {
+        if let Event::Timing { stages, total_ms } = ev {
+            let stage = |name: &str| stages.iter().find(|s| s.name == name).map(|s| s.ms).filter(|ms| *ms > 0);
+            t.first_audio = Some(total_ms);
+            t.stt = stage("STT complete");
+            t.first_token = stage("LLM first token");
+            t.tts = stage("TTS begins");
+        }
+    }
+    anyhow::ensure!(t.first_audio.is_some(), "the turn reported no timings");
+    if let Ok(perf) = request(Control::Perf, 3000).await {
+        t.gaps = perf["last_turn"]["gaps"]["count"].as_u64().unwrap_or(0);
+        t.max_gap = perf["last_turn"]["gaps"]["max_ms"].as_u64().unwrap_or(0);
+    }
+    Ok(t)
+}
+
+/// Readings taken once a second while a scenario runs.
+#[derive(Default)]
+struct Samples {
+    vram_peak: u64,
+    gpu_temp_max: f64,
+    gpu_power: Vec<f64>,
+    gpu_util: Vec<f64>,
+    cpu_temp_max: f64,
+    daemon_cpu: Vec<f64>,
+}
+
+fn sampler(pid: u64, stop: std::sync::Arc<std::sync::atomic::AtomicBool>) -> std::thread::JoinHandle<Samples> {
+    use assistant_core::telemetry;
+    std::thread::spawn(move || {
+        let mut s = Samples::default();
+        let mut last = telemetry::process(pid)["cpu_ms"].as_u64();
+        let mut at = Instant::now();
+        while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_secs(1));
+            let gpu = telemetry::gpu(Some(pid));
+            s.vram_peak = s.vram_peak.max(gpu["used_mib"].as_u64().unwrap_or(0));
+            s.gpu_temp_max = s.gpu_temp_max.max(gpu["temp_c"].as_f64().unwrap_or(0.0));
+            s.gpu_power.extend(gpu["power_w"].as_f64());
+            s.gpu_util.extend(gpu["util_pct"].as_f64());
+            s.cpu_temp_max = s.cpu_temp_max.max(telemetry::cpu_temp_c().unwrap_or(0.0));
+            let now = telemetry::process(pid)["cpu_ms"].as_u64();
+            if let (Some(a), Some(b)) = (last, now) {
+                s.daemon_cpu.push((b.saturating_sub(a)) as f64 / at.elapsed().as_millis().max(1) as f64 * 100.0);
+            }
+            last = now;
+            at = Instant::now();
+        }
+        s
+    })
+}
+
+fn mean(v: &[f64]) -> f64 {
+    if v.is_empty() {
+        0.0
+    } else {
+        v.iter().sum::<f64>() / v.len() as f64
+    }
+}
+
+/// Median and 90th percentile of the values present.
+fn spread(values: impl Iterator<Item = Option<u64>>) -> String {
+    let mut v: Vec<u64> = values.flatten().collect();
+    if v.is_empty() {
+        return "—".into();
+    }
+    v.sort_unstable();
+    let p90 = v[((v.len() as f64 * 0.9).ceil() as usize).clamp(1, v.len()) - 1];
+    format!("{} / {}", v[v.len() / 2], p90)
+}
+
+/// Outside load: one busy thread per logical CPU, and a second copy of the model generating
+/// on the graphics card.
+struct Load {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    threads: Vec<std::thread::JoinHandle<()>>,
+    gpu: Option<tokio::task::JoinHandle<()>>,
+    _llm: Option<std::sync::Arc<assistant_inference::LlamaCppBackend>>,
+}
+
+impl Load {
+    async fn start(cpu: bool, gpu: bool) -> Result<Self> {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut threads = Vec::new();
+        if cpu {
+            let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+            for _ in 0..n {
+                let stop = stop.clone();
+                threads.push(std::thread::spawn(move || {
+                    let mut x = 0u64;
+                    while !stop.load(Ordering::Relaxed) {
+                        for i in 0..100_000u64 {
+                            x = std::hint::black_box(x.wrapping_mul(6364136223846793005).wrapping_add(i));
+                        }
+                    }
+                }));
+            }
+        }
+        let (mut task, mut llm) = (None, None);
+        if gpu {
+            let cfg = assistant_core::Config::load()?;
+            let backend = Arc::new(assistant_inference::LlamaCppBackend::spawn(&cfg)?);
+            let (b, stop) = (backend.clone(), stop.clone());
+            task = Some(tokio::spawn(async move {
+                while !stop.load(Ordering::Relaxed) {
+                    let Ok(mut rx) = b
+                        .generate_with_grammar(
+                            "You write long essays.",
+                            &[],
+                            "Write a long essay about the history of lighthouses.",
+                            512,
+                            0.7,
+                            Arc::new(AtomicBool::new(false)),
+                            None,
+                        )
+                        .await
+                    else {
+                        break;
+                    };
+                    while let Some(tok) = rx.recv().await {
+                        if tok.is_err() || stop.load(Ordering::Relaxed) {
+                            break;
+                        }
+                    }
+                }
+            }));
+            llm = Some(backend);
+            // Let it load and get going before measuring.
+            tokio::time::sleep(Duration::from_secs(8)).await;
+        }
+        Ok(Self { stop, threads, gpu: task, _llm: llm })
+    }
+
+    async fn stop(self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        for t in self.threads {
+            let _ = t.join();
+        }
+        if let Some(t) = self.gpu {
+            let _ = tokio::time::timeout(Duration::from_secs(30), t).await;
+        }
+    }
+}
+
+const LONG_REPLY: &str = "Describe a lighthouse at night in three short sentences.";
+
+/// `bench load`: first audio and its stages, playback gaps and the machine's readings, with
+/// the machine idle, the CPU busy, the graphics card busy and both. `--heat` adds ten minutes
+/// of turns under both, a row per minute.
+pub async fn load(heat: bool, only: Option<String>) -> Result<()> {
+    let pid = request(Control::Perf, 3000).await?["pid"].as_u64().context("the assistant isn't running")?;
+    println!("| Scenario | First audio (median / p90) | STT | First token | Voice starts | Gaps (count, max) | Peak VRAM | GPU °C max | GPU W avg | GPU busy avg | CPU °C max | Assistant CPU avg |");
+    println!("|---|---|---|---|---|---|---|---|---|---|---|---|");
+    for (name, cpu, gpu) in [("idle", false, false), ("CPU busy", true, false), ("GPU busy", false, true), ("both", true, true)] {
+        if only.as_deref().is_some_and(|o| !name.to_lowercase().starts_with(&o.to_lowercase())) {
+            continue;
+        }
+        notify(&format!("Load bench: {name}"));
+        let load = Load::start(cpu, gpu).await?;
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let sampling = sampler(pid, stop.clone());
+        let _ = measured_turn(Command::Demo).await; // warm-up
+        let mut turns = Vec::new();
+        for i in 0..6 {
+            let command = if i < 3 { Command::Demo } else { Command::Say { text: LONG_REPLY.into() } };
+            match measured_turn(command).await {
+                Ok(t) => turns.push(t),
+                Err(e) => eprintln!("{name}: turn failed: {e:#}"),
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        let s = sampling.join().unwrap_or_default();
+        load.stop().await;
+        let gaps: u64 = turns.iter().map(|t| t.gaps).sum();
+        let max_gap = turns.iter().map(|t| t.max_gap).max().unwrap_or(0);
+        println!(
+            "| {name} | {} | {} | {} | {} | {gaps}, {max_gap} ms | {} MiB | {:.0} | {:.0} | {:.0}% | {:.0} | {:.0}% |",
+            spread(turns.iter().map(|t| t.first_audio)),
+            spread(turns.iter().map(|t| t.stt)),
+            spread(turns.iter().map(|t| t.first_token)),
+            spread(turns.iter().map(|t| t.tts)),
+            s.vram_peak,
+            s.gpu_temp_max,
+            mean(&s.gpu_power),
+            mean(&s.gpu_util),
+            s.cpu_temp_max,
+            mean(&s.daemon_cpu),
+        );
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+    if !heat {
+        return Ok(());
+    }
+    notify("Load bench: ten minutes under load");
+    println!("\n| Minute | Turns | First audio (median / p90) | Gaps | GPU °C max | GPU W avg | CPU °C max |\n|---|---|---|---|---|---|---|");
+    let load = Load::start(true, true).await?;
+    for minute in 1..=10 {
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let sampling = sampler(pid, stop.clone());
+        let until = Instant::now() + Duration::from_secs(60);
+        let mut turns = Vec::new();
+        while Instant::now() < until {
+            match measured_turn(Command::Demo).await {
+                Ok(t) => turns.push(t),
+                Err(_) => tokio::time::sleep(Duration::from_secs(1)).await,
+            }
+        }
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        let s = sampling.join().unwrap_or_default();
+        println!(
+            "| {minute} | {} | {} | {} | {:.0} | {:.0} | {:.0} |",
+            turns.len(),
+            spread(turns.iter().map(|t| t.first_audio)),
+            turns.iter().map(|t| t.gaps).sum::<u64>(),
+            s.gpu_temp_max,
+            mean(&s.gpu_power),
+            s.cpu_temp_max
+        );
+    }
+    load.stop().await;
+    Ok(())
+}
+
+/// Processes whose program is `program` (the file name of argv[0]) and, when given, whose
+/// first argument ends with `arg`. Exact, unlike `pgrep -f`, which would also match a shell
+/// whose command line mentions the name.
+fn pids(program: &str, arg: Option<&str>) -> Vec<u32> {
+    let Ok(dir) = std::fs::read_dir("/proc") else { return Vec::new() };
+    let mut out: Vec<u32> = dir
+        .flatten()
+        .filter_map(|e| e.file_name().to_str()?.parse::<u32>().ok())
+        .filter(|pid| {
+            let Ok(raw) = std::fs::read(format!("/proc/{pid}/cmdline")) else { return false };
+            let argv: Vec<String> = raw.split(|b| *b == 0).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
+            let name = |i: usize| argv.get(i).map(|a| a.rsplit('/').next().unwrap_or("").to_string()).unwrap_or_default();
+            let named = name(0) == program;
+            named && arg.is_none_or(|a| argv.get(1).is_some_and(|x| x.ends_with(a)))
+        })
+        .collect();
+    out.sort_unstable();
+    out
+}
+
+fn kill9(pids: &[u32]) {
+    for pid in pids {
+        let _ = std::process::Command::new("kill").args(["-9", &pid.to_string()]).status();
+    }
+}
+
+/// Call a tool until it works, up to `secs`; the time it took.
+async fn until_tool_works(name: &str, args: Value, secs: u64) -> Option<u64> {
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(secs) {
+        if let Ok(v) = request(Control::ToolCall { name: name.into(), arguments: args.clone() }, 20_000).await {
+            if v["isError"] != true {
+                return Some(started.elapsed().as_millis() as u64);
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    None
+}
+
+/// `bench crash`: kill each part of the assistant and measure how it comes back.
+pub async fn crash() -> Result<()> {
+    let mut rows: Vec<(String, bool, String)> = Vec::new();
+
+    // 1. The streaming recognizer, while it listens to a reply.
+    notify("Crash bench: speech recognizer");
+    let before = pids("nixe-assistant-asr", None);
+    let turn = tokio::spawn(send_until_done(Command::Say { text: LONG_REPLY.into() }, 120_000));
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    kill9(&before);
+    let cut = turn.await?;
+    let next = measured_turn(Command::Demo).await;
+    let after = pids("nixe-assistant-asr", None);
+    let ok = next.as_ref().is_ok_and(|t| t.stt.is_some()) && !after.is_empty() && after != before;
+    rows.push((
+        "speech recognizer killed during a reply".into(),
+        ok,
+        format!(
+            "reply {}; next spoken turn {} (STT {} ms); worker {:?} → {:?}",
+            if cut.is_ok() { "finished" } else { "failed" },
+            if next.is_ok() { "worked" } else { "failed" },
+            next.as_ref().ok().and_then(|t| t.stt).unwrap_or(0),
+            before,
+            after
+        ),
+    ));
+
+    // 2. A first-party plugin worker.
+    notify("Crash bench: files plugin");
+    let before = pids("nixe-assistant-plugin-worker", Some("files"));
+    kill9(&before);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let back = until_tool_works("files.list", serde_json::json!({"path": "~"}), 30).await;
+    let after = pids("nixe-assistant-plugin-worker", Some("files"));
+    rows.push((
+        "files plugin worker killed".into(),
+        back.is_some() && after != before,
+        format!("files.list works again after {} ms; worker {:?} → {:?}", back.map_or("—".into(), |m| m.to_string()), before, after),
+    ));
+
+    // 3. The browser workers (browser and background web search).
+    notify("Crash bench: browser workers");
+    let before = pids("node", Some("browser/worker.mjs"));
+    kill9(&before);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let back = until_tool_works("web.search", serde_json::json!({"query": "Lake Baikal depth"}), 60).await;
+    let after = pids("node", Some("browser/worker.mjs"));
+    rows.push((
+        "browser workers killed".into(),
+        back.is_some() && after.len() == before.len(),
+        format!("web.search works again after {} ms; workers {:?} → {:?}", back.map_or("—".into(), |m| m.to_string()), before, after),
+    ));
+
+    // 4. The daemon itself, during a task.
+    notify("Crash bench: the assistant itself");
+    let hud_before = pids("nixe-assistant", Some("listen"));
+    let daemon = pids("nixe-assistantd", None);
+    let since = ms_now();
+    let turn = tokio::spawn(send_until_done(
+        Command::Say { text: "Use tools to list the files in my home folder, then tell me how many there are.".into() },
+        60_000,
+    ));
+    // Wait for the task to start, then kill.
+    let db = assistant_policy::store::default_path(&assistant_core::paths::state_dir());
+    let started = Instant::now();
+    let mut task_id = None;
+    while started.elapsed() < Duration::from_secs(30) && task_id.is_none() {
+        task_id = assistant_policy::store::tasks(&db, 5)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|t| t.created_ms >= since)
+            .map(|t| t.id);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let killed_at = Instant::now();
+    kill9(&daemon);
+    let _ = turn.await;
+    let mut healthy = None;
+    while killed_at.elapsed() < Duration::from_secs(60) {
+        if status().is_some_and(|s| s["ok"] == true) {
+            healthy = Some(killed_at.elapsed().as_millis() as u64);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let mut loaded = None;
+    while killed_at.elapsed() < Duration::from_secs(90) {
+        if status().is_some_and(|s| s["model_loaded"] == true) {
+            loaded = Some(killed_at.elapsed().as_millis() as u64);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let task = task_id.as_deref().and_then(|id| assistant_policy::store::task(&db, id).ok().flatten()).map(|(t, _)| t);
+    let pending = status().map(|s| s["pending_approvals"].as_object().map_or(0, |m| m.len())).unwrap_or(0);
+    let hud_after = pids("nixe-assistant", Some("listen"));
+    let task_ok = task.as_ref().is_some_and(|t| t.state != "running" && t.state != "planning");
+    let hud_ok = hud_before.is_empty() || !hud_after.is_empty();
+    rows.push((
+        "daemon killed during a task".into(),
+        healthy.is_some() && task_ok && pending == 0 && hud_ok,
+        format!(
+            "answering again after {} ms, model loaded after {} ms; task {}; {pending} approvals left; HUD {:?} → {:?}",
+            healthy.map_or("—".into(), |m| m.to_string()),
+            loaded.map_or("—".into(), |m| m.to_string()),
+            task.as_ref().map_or("not started before the kill".into(), |t| format!("{} ({})", t.state, t.detail.clone().unwrap_or_default())),
+            hud_before,
+            hud_after
+        ),
+    ));
+
+    println!("\n| Case | Result | What happened |\n|---|---|---|");
+    for (case, ok, note) in &rows {
+        println!("| {case} | {} | {note} |", if *ok { "pass" } else { "FAIL" });
+    }
+    println!("\n{} of {} recovered", rows.iter().filter(|r| r.1).count(), rows.len());
+    Ok(())
+}

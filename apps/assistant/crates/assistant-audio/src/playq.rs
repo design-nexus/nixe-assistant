@@ -3,10 +3,14 @@
 //! Audio arrives as segments tagged with the reply (generation) and phrase they belong to.
 //! The output callback pulls samples through [`PlayQueue::pull`], which applies the ducking
 //! gain with a short ramp (no clicks) and records how far playback got, so the daemon knows
-//! what the listener actually heard when a reply is interrupted.
+//! what the listener actually heard when a reply is interrupted. It also measures gaps: the
+//! queue running dry between two phrases of the same reply, which the listener hears as an
+//! extra pause.
 
 use std::collections::VecDeque;
 
+/// The playback rate.
+const RATE: usize = 24_000;
 /// Gain changes ramp over about 10 ms at the 24 kHz playback rate.
 const RAMP_SAMPLES: f32 = 240.0;
 
@@ -35,11 +39,26 @@ pub struct PlayQueue {
     target: f32,
     played: PlayedTo,
     paused: bool,
+    /// The phrase that ended when the queue last ran dry, and the silent samples since.
+    dry_after: Option<(u64, u32)>,
+    dry: usize,
+    /// Mid-reply gaps: generation and length in samples.
+    gaps: Vec<(u64, usize)>,
 }
 
 impl Default for PlayQueue {
     fn default() -> Self {
-        Self { segments: VecDeque::new(), queued: 0, gain: 1.0, target: 1.0, played: PlayedTo::default(), paused: false }
+        Self {
+            segments: VecDeque::new(),
+            queued: 0,
+            gain: 1.0,
+            target: 1.0,
+            played: PlayedTo::default(),
+            paused: false,
+            dry_after: None,
+            dry: 0,
+            gaps: Vec::new(),
+        }
     }
 }
 
@@ -61,12 +80,17 @@ impl PlayQueue {
     pub fn clear(&mut self) {
         self.segments.clear();
         self.queued = 0;
+        self.dry_after = None;
     }
 
     /// Drop the audio of `generation` and older replies; newer audio keeps playing.
     pub fn cancel_through(&mut self, generation: u64) {
         self.segments.retain(|s| s.generation > generation);
         self.queued = self.segments.iter().map(|s| s.pcm.len() - s.pos).sum();
+        self.gaps.retain(|(g, _)| *g > generation);
+        if self.dry_after.is_some_and(|(g, _)| g <= generation) {
+            self.dry_after = None;
+        }
     }
 
     /// The gain to ramp to (1.0 normal, lower while ducked).
@@ -83,6 +107,13 @@ impl PlayQueue {
         self.played
     }
 
+    /// The gaps heard so far in `generation`'s reply, in ms; older replies' are dropped.
+    pub fn take_gaps(&mut self, generation: u64) -> Vec<u32> {
+        let gaps = self.gaps.iter().filter(|(g, _)| *g == generation).map(|(_, n)| (n * 1000 / RATE) as u32).collect();
+        self.gaps.retain(|(g, _)| *g > generation);
+        gaps
+    }
+
     /// Fill `out` with the next samples, silence once the queue runs dry.
     pub fn pull(&mut self, out: &mut [f32]) {
         let step = 1.0 / RAMP_SAMPLES;
@@ -93,14 +124,27 @@ impl PlayQueue {
         for slot in out.iter_mut() {
             let Some(seg) = self.segments.front_mut() else {
                 *slot = 0.0;
+                if self.dry_after.is_some() {
+                    self.dry += 1;
+                }
                 continue;
             };
+            if let Some((generation, phrase)) = self.dry_after.take() {
+                if seg.generation == generation && seg.phrase > phrase && self.dry > 0 {
+                    self.gaps.push((generation, self.dry));
+                }
+            }
+            self.dry = 0;
             let s = seg.pcm[seg.pos];
             seg.pos += 1;
             self.queued -= 1;
             self.played = PlayedTo { generation: seg.generation, phrase: seg.phrase, samples: seg.pos, total: seg.pcm.len() };
             if seg.pos == seg.pcm.len() {
+                let ended = (seg.generation, seg.phrase);
                 self.segments.pop_front();
+                if self.segments.is_empty() {
+                    self.dry_after = Some(ended);
+                }
             }
             self.gain += (self.target - self.gain).clamp(-step, step);
             *slot = s * self.gain;
@@ -174,5 +218,56 @@ mod tests {
         assert!(out.windows(2).all(|w| (w[0] - w[1]).abs() <= 1.0 / RAMP_SAMPLES + 1e-6));
         assert!((out[999] - 0.25).abs() < 1e-6);
         assert!(out[0] > 0.99, "starts from full volume");
+    }
+
+    #[test]
+    fn gaps_between_phrases_of_a_reply() {
+        let mut q = PlayQueue::default();
+        q.push(1, 0, vec![0.5; 10]);
+        q.push(1, 1, vec![0.5; 10]);
+        let mut out = vec![0.0; 25];
+        q.pull(&mut out);
+        assert!(q.take_gaps(1).is_empty(), "contiguous phrases");
+        // The next phrase arrives 2400 samples (100 ms) after the queue ran dry.
+        q.push(2, 0, vec![0.5; 10]);
+        let mut out = vec![0.0; 10];
+        q.pull(&mut out);
+        let mut out = vec![0.0; 2400];
+        q.pull(&mut out);
+        q.push(2, 1, vec![0.5; 10]);
+        let mut out = vec![0.0; 10];
+        q.pull(&mut out);
+        assert_eq!(q.take_gaps(2), vec![100]);
+        assert!(q.take_gaps(2).is_empty(), "taken once");
+        // Silence after the last phrase, or before the next reply, isn't a gap.
+        let mut out = vec![0.0; 4800];
+        q.pull(&mut out);
+        q.push(3, 0, vec![0.5; 10]);
+        q.pull(&mut out);
+        assert!(q.take_gaps(2).is_empty() && q.take_gaps(3).is_empty());
+    }
+
+    #[test]
+    fn cancelled_replies_and_pauses_leave_no_gaps() {
+        let mut q = PlayQueue::default();
+        q.push(1, 0, vec![0.5; 10]);
+        let mut out = vec![0.0; 500];
+        q.pull(&mut out);
+        q.push(1, 1, vec![0.5; 10]);
+        q.pull(&mut out);
+        q.cancel_through(1);
+        assert!(q.take_gaps(1).is_empty(), "dropped with its reply");
+        // A pause holds the queue; it isn't the queue running dry.
+        q.push(2, 0, vec![0.5; 4]);
+        q.push(2, 1, vec![0.5; 4]);
+        let mut out = vec![0.0; 2];
+        q.pull(&mut out);
+        q.set_paused(true);
+        let mut out = vec![0.0; 2400];
+        q.pull(&mut out);
+        q.set_paused(false);
+        let mut out = vec![0.0; 10];
+        q.pull(&mut out);
+        assert!(q.take_gaps(2).is_empty());
     }
 }

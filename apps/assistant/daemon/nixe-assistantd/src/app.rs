@@ -361,7 +361,15 @@ impl App {
     }
     fn emit(&self, ev: Event) {
         if matches!(ev, Event::Timing { .. }) {
-            *self.last_timing.lock().unwrap() = serde_json::to_value(&ev).ok();
+            // The reply has finished playing: what gaps it had between phrases.
+            let generation = self.reply.lock().unwrap().generation;
+            let gaps = self.audio.take_gaps(generation);
+            if let Some(&max) = gaps.iter().max().filter(|&&m| m >= 150) {
+                tracing::warn!(max_ms = max, count = gaps.len(), "playback gaps in the reply");
+            }
+            let mut value = serde_json::to_value(&ev).unwrap_or_default();
+            value["gaps"] = json!({"count": gaps.len(), "max_ms": gaps.iter().max(), "total_ms": gaps.iter().sum::<u32>()});
+            *self.last_timing.lock().unwrap() = Some(value);
         }
         if matches!(
             ev,

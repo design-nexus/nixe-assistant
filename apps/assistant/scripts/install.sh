@@ -30,7 +30,7 @@ fi
 backup="$HOME/.local/state/nixe-assistant/backups/$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$backup/files" "$cfg_dir" "$unit_dir" "$data_dir" "$bin_dir"
 chmod 0700 "$backup"
-assets=(.local/bin/nixe-assistant-plugin-worker .local/bin/nixe-assistant-helper .local/bin/nixe-assistant-asr .local/share/nixe-assistant/abilities .local/share/nixe-assistant/plugin-data .local/bin/nixe-assistant-node .local/share/nixe-assistant/browser .local/bin/nixe-assistantd .local/bin/nixe-assistant .local/bin/nixe-assistant-tui .local/bin/libonnxruntime_providers_cuda.so .local/bin/libonnxruntime_providers_shared.so .config/nixe-assistant .config/systemd/user/nixe-assistantd.service .config/systemd/user/nixe-assistant-hud.service .config/systemd/user/nixe-assistant-stt.service .local/share/nixe-assistant/quickshell .config/hypr/bindings.lua .config/omarchy/plugins .config/omarchy/shell.json)
+assets=(.local/bin/nixe-assistant-plugin-worker .local/bin/nixe-assistant-helper .local/bin/nixe-assistant-asr .local/share/nixe-assistant/abilities .local/share/nixe-assistant/plugin-data .local/bin/nixe-assistant-node .local/share/nixe-assistant/browser .local/bin/nixe-assistantd .local/bin/nixe-assistant .local/bin/nixe-assistant-tui .local/bin/libonnxruntime_providers_cuda.so .local/bin/libonnxruntime_providers_shared.so .config/nixe-assistant .config/systemd/user/nixe-assistantd.service .config/systemd/user/nixe-assistant-hud.service .config/systemd/user/nixe-assistant-stt.service .config/systemd/user/nixe-assistant-failed.service .local/share/nixe-assistant/quickshell .config/hypr/bindings.lua .config/omarchy/plugins .config/omarchy/shell.json)
 for asset in "${assets[@]}"; do
   if [[ -e "$HOME/$asset" ]]; then mkdir -p "$backup/files/$(dirname "$asset")"; cp -a "$HOME/$asset" "$backup/files/$asset"; fi
 done
@@ -62,7 +62,7 @@ mv "$bin_dir/nixe-assistant-node.new" "$bin_dir/nixe-assistant-node"
 "$bin_dir/nixe-assistant" plugins migrate "$root"
 mkdir -p "$data_dir/quickshell"
 cp -a "$root/quickshell/." "$data_dir/quickshell/"
-for unit in nixe-assistantd nixe-assistant-hud nixe-assistant-stt; do install -m 0644 "$root/systemd/$unit.service" "$unit_dir/$unit.service"; done
+for unit in nixe-assistantd nixe-assistant-hud nixe-assistant-stt nixe-assistant-failed; do install -m 0644 "$root/systemd/$unit.service" "$unit_dir/$unit.service"; done
 "$root/scripts/install-plugin.sh"
 # The streaming speech model is a separate, explicit download; without it, speech falls back to Voxtype.
 if [[ ! -f "$data_dir/models/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25/encoder.int8.onnx" ]]; then

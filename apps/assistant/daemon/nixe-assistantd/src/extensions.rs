@@ -16,13 +16,28 @@ pub(super) struct ActionRecord {
 pub(super) struct PowerSettings {
     pub profile: String,
     pub idle_seconds: u64,
+    /// On battery, unload after this long instead (0: no change). Off by default: measured on
+    /// the RTX 5080 laptop, the card stays awake anyway while Hyprland, a browser or another
+    /// app holds it, so unloading saved about 0.6 W and cost 2.5 s on the next answer.
+    #[serde(default)]
+    pub battery_idle_seconds: u64,
 }
 impl Default for PowerSettings {
     fn default() -> Self {
         Self {
             profile: "normal".into(),
             idle_seconds: 300,
+            battery_idle_seconds: 0,
         }
+    }
+}
+/// How long the models stay loaded while nothing happens: the shorter battery limit when
+/// unplugged. 0 means never unload.
+pub(super) fn idle_limit(settings: &PowerSettings, on_battery: bool) -> u64 {
+    match (settings.idle_seconds, on_battery && settings.battery_idle_seconds > 0) {
+        (0, true) => settings.battery_idle_seconds,
+        (idle, true) => idle.min(settings.battery_idle_seconds),
+        (idle, false) => idle,
     }
 }
 impl PowerSettings {
@@ -31,7 +46,9 @@ impl PowerSettings {
             .ok()
             .and_then(|v| serde_json::from_slice::<Self>(&v).ok())
             .filter(|s| {
-                matches!(s.profile.as_str(), "normal" | "battery") && s.idle_seconds <= 86400
+                matches!(s.profile.as_str(), "normal" | "battery")
+                    && s.idle_seconds <= 86400
+                    && s.battery_idle_seconds <= 86400
             })
             .unwrap_or_default()
     }
@@ -192,6 +209,7 @@ impl App {
                     idle_seconds: directive["idle_seconds"]
                         .as_u64()
                         .context("missing idle time")?,
+                    battery_idle_seconds: self.power.lock().unwrap().battery_idle_seconds,
                 };
                 anyhow::ensure!(
                     matches!(settings.profile.as_str(), "normal" | "battery")
@@ -269,7 +287,8 @@ impl App {
         let Ok(_guard) = self.reload_lock.try_lock() else {
             return;
         };
-        let seconds = self.power.lock().unwrap().idle_seconds;
+        let on_battery = assistant_core::telemetry::on_battery().unwrap_or(false);
+        let seconds = idle_limit(&self.power.lock().unwrap(), on_battery);
         if seconds > 0
             && self.llm.is_loaded()
             && self.last_activity.lock().unwrap().elapsed().as_secs() >= seconds
@@ -342,5 +361,21 @@ mod tests {
             "notes.edit",
             &json!({"version":2,"tool":"notes.undo","arguments":{}})
         ));
+    }
+
+    #[test]
+    fn unloads_sooner_on_battery() {
+        let mut p = PowerSettings::default();
+        assert_eq!((idle_limit(&p, false), idle_limit(&p, true)), (300, 300), "off by default");
+        p.battery_idle_seconds = 60;
+        assert_eq!((idle_limit(&p, false), idle_limit(&p, true)), (300, 60));
+        p.idle_seconds = 30;
+        assert_eq!(idle_limit(&p, true), 30, "a shorter limit wins");
+        p.idle_seconds = 0;
+        assert_eq!((idle_limit(&p, false), idle_limit(&p, true)), (0, 60), "never on AC, still on battery");
+        p.battery_idle_seconds = 0;
+        assert_eq!(idle_limit(&p, true), 0);
+        let old: PowerSettings = serde_json::from_str(r#"{"profile":"normal","idle_seconds":300}"#).unwrap();
+        assert_eq!(old.battery_idle_seconds, 0, "files from before keep working");
     }
 }

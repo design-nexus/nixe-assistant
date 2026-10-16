@@ -212,6 +212,11 @@ impl AudioEngine {
         self.play_state().queue.played()
     }
 
+    /// The gaps (ms) heard between phrases of `generation`'s reply.
+    pub fn take_gaps(&self, generation: u64) -> Vec<u32> {
+        self.play_state().queue.take_gaps(generation)
+    }
+
     pub fn cancel_playback(&self) -> Result<()> {
         let t0 = Instant::now();
         let epoch = self.play_epoch.fetch_add(1, Ordering::SeqCst) + 1;

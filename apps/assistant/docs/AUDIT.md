@@ -55,9 +55,9 @@ concurrent load §4.6 asks for. Tests: 62 passed before this work (73 after) (`c
 | §11.1 voice authorization | partial | Wake word and AEC exist. High-impact tools, and since Phase 8a writes to files that run code later, refuse a spoken approve; only the exact phrases count. The rest accept it. No speaker recognition. |
 | §11.2 prompt injection | **mostly (Phase 8a)** | Tool results are untrusted data; the grammar admits only registered tools. Computer use can't reach Settings or the Store; sending out after reading private data and untrusted content asks; task-wide approvals are bound to one window or folder. `bench injection` passes. |
 | §11.3 emergency stop | **done in Phase 8a** | Super+Shift+Escape (`nixe-assistant cancel`) anywhere, Escape on the HUD, voice "stop", Stop in Settings, job cancel. It never waits on the model, and releases held modifiers after a cut-off keyboard action. |
-| §12 audit and recovery | **audit done in Phase 1**; recovery missing | Abilities keep their own undo (`history.undo`, `*.undo`). |
+| §12 audit and recovery | **audit done in Phase 1**; crash recovery **Phase 8b** | Abilities keep their own undo (`history.undo`, `*.undo`). Crashed plugins restart (3 per 5 min); the recognizer restarts on the next utterance; systemd restarts the daemon, stops after 5 crashes in 2 min and says so. `bench crash` 4/4. |
 | §13 GTK settings | **done in Phase 7** | An Assistant group in Nixe Settings (General, Voice, Permissions, Activity, Performance, Models), through `nixe-assistant config/perf/models` so the assistant still checks every value. The TUI stays for personas. |
-| §14 hardware profiles | missing | One configuration. |
+| §14 hardware profiles | partial (Phase 8b) | One configuration. Measured under load on the RTX 5080 (BENCHMARKS.md); temperatures, power and the power source in `perf` and Settings. On battery the card can't sleep while Hyprland holds it, so early unloading is off by default. No Lite/Balanced/Advanced presets. |
 
 ## Reusable as is
 
@@ -107,10 +107,10 @@ plus `assistant-policy`.
       (live-checked 2026-10-15).
 - [x] Phase 8a: security tests (injection, path traversal and links, approval reuse, voice,
       sandbox escape, privilege escalation) and the fixes they called for; a global stop.
-- [ ] Phase 8b: latency, graphics memory and heat under concurrent load; crash recovery.
+- [x] Phase 8b: latency, graphics memory and heat under concurrent load; crash recovery.
 - [ ] Phase 8c: planner and vision benchmarks; the deferred Phase 6 work.
 
-**Recommended next milestone:** Phase 8b.
+**Recommended next milestone:** Phase 8c.
 
 ## Phase 1 as built
 
@@ -331,4 +331,35 @@ Accepted limits:
   Unix sockets are reachable.
 - The guard resolves a path, then the tool opens it: a parent folder swapped for a link in
   between isn't caught (the last component is).
+
+## Phase 8b as built
+
+- `bench load` (scenarios idle, CPU busy, GPU busy, both; `--heat` for ten minutes under
+  both) and `bench crash`, both in `daemon/.../bench.rs`. Results in BENCHMARKS.md.
+- Playback gaps: the play queue records the queue running dry between two phrases of a reply
+  (`PlayQueue::take_gaps`); each answer's gaps are in `perf --json` (`last_turn.gaps`) and
+  Settings → Performance, and gaps of 150 ms or more are logged. None measured under any load.
+- Telemetry (`assistant_core::telemetry`): the card's temperature, power, use, memory and
+  pstate, the CPU package temperature, the power source and the daemon's CPU time and memory.
+  The card's runtime-PM state is read from sysfs first and `nvidia-smi` is skipped while it
+  sleeps, so looking never wakes it. Shown in `perf` and in Settings → Performance → Machine.
+- `CPUWeight=1000` on `nixe-assistantd.service`: ahead of a compile, first audio with the CPU
+  busy went from 1115 to 953 ms (median).
+- Battery: `power.json` gains `battery_idle_seconds` (0, off); when set, unplugged, the models
+  unload after the shorter of the two limits. Measured on battery with 60 s: the card stayed
+  `active` before and after the unload (Hyprland, Firefox and Plezy hold `/dev/nvidia*`), the
+  machine drew 30.5 → 29.9 W, and the next answer took 3290 ms instead of about 820. So it
+  ships off; it helps only where nothing else keeps the card awake.
+- Crash recovery: crashed plugins restart with backoff (`plugins::may_restart`: 3 in 5
+  minutes, then "crashed repeatedly; reload to retry"); `StartLimitIntervalSec=120`,
+  `StartLimitBurst=5` and `OnFailure=nixe-assistant-failed.service` (a notification) on the
+  daemon.
+
+Accepted limits:
+- First audio meets §4.6's 900 ms at idle (823 ms) but not under load: about 980 ms with the
+  CPU busy and 1.2–1.3 s with a second model on the card. GPU sharing isn't something the
+  daemon can steer.
+- Under sustained full load the CPU throttles (95–102 °C) and first audio drifts up by about
+  450 ms in three minutes.- The NVIDIA card can't runtime-suspend while Hyprland (and other apps) hold it, so the
+  assistant unloading its model saves almost no power on battery.
 

@@ -137,6 +137,7 @@ dependencies = [
  "assistant-policy",
  "chrono",
  "dirs",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",

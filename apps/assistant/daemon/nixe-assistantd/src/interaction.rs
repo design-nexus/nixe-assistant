@@ -1022,7 +1022,33 @@ impl App {
         let Some(plugins) = &self.registry.plugins else {
             return;
         };
-        if plugins.refresh_health() {
+        let died = plugins.refresh_health();
+        if !died.is_empty() {
+            self.emit(Event::Plugins {
+                state: plugins.inspect(),
+            });
+            // Start crashed plugins again, with backoff. A plugin that needs another one
+            // that also died gets a second try once that one is back.
+            let cfg = self.cfg();
+            let mut retry = Vec::new();
+            for id in &died {
+                if !plugins.allow_restart(id) {
+                    tracing::warn!(plugin = %id, "plugin keeps crashing; left stopped");
+                    plugins.mark_crashed(id);
+                    continue;
+                }
+                match plugins.change("reload", id, &cfg).await {
+                    Ok(_) => tracing::warn!(plugin = %id, "plugin crashed; restarted"),
+                    Err(err) => retry.push((id, err)),
+                }
+            }
+            for (id, first) in retry {
+                if let Err(err) = plugins.change("reload", id, &cfg).await {
+                    tracing::error!(plugin = %id, %first, %err, "crashed plugin couldn't be restarted");
+                } else {
+                    tracing::warn!(plugin = %id, "plugin crashed; restarted");
+                }
+            }
             self.emit(Event::Plugins {
                 state: plugins.inspect(),
             });

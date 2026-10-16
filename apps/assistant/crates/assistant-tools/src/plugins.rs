@@ -165,6 +165,23 @@ pub struct PluginManager {
     entries: Mutex<BTreeMap<String, Running>>,
     failures: Mutex<BTreeMap<String, String>>,
     changes: tokio::sync::Mutex<()>,
+    /// When each plugin was restarted after a crash (ms), for the backoff.
+    restarts: Mutex<BTreeMap<String, Vec<u64>>>,
+}
+
+/// Automatic restarts allowed per plugin within `RESTART_WINDOW_MS`.
+pub const RESTART_LIMIT: usize = 3;
+pub const RESTART_WINDOW_MS: u64 = 5 * 60_000;
+
+/// Whether a crashed plugin may be started again now, recording the attempt: up to
+/// `RESTART_LIMIT` restarts in any `RESTART_WINDOW_MS`, then it stays down until reloaded.
+pub fn may_restart(history: &mut Vec<u64>, now_ms: u64) -> bool {
+    history.retain(|t| now_ms.saturating_sub(*t) < RESTART_WINDOW_MS);
+    if history.len() >= RESTART_LIMIT {
+        return false;
+    }
+    history.push(now_ms);
+    true
 }
 impl PluginManager {
     pub fn new() -> Self {
@@ -1104,18 +1121,31 @@ impl PluginManager {
 }
 
 impl PluginManager {
-    /// Report disconnections without automatic restarts.
-    pub fn refresh_health(&self) -> bool {
-        let mut changed = false;
-        for r in self.entries.lock().unwrap().values_mut() {
+    /// Mark plugins whose process went away; returns their IDs, for the host to restart.
+    pub fn refresh_health(&self) -> Vec<String> {
+        let mut died = Vec::new();
+        for (id, r) in self.entries.lock().unwrap().iter_mut() {
             if r.error.is_none() && !r.client.healthy() {
                 r.error = Some("MCP process disconnected; reload to retry".into());
                 r.cancel.cancel();
                 r.client.terminate();
-                changed = true;
+                died.push(id.clone());
             }
         }
-        changed
+        died
+    }
+
+    /// Whether `id` may be restarted after a crash now (see `may_restart`).
+    pub fn allow_restart(&self, id: &str) -> bool {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+        may_restart(self.restarts.lock().unwrap().entry(id.into()).or_default(), now)
+    }
+
+    /// Leave a plugin that keeps crashing down, saying so.
+    pub fn mark_crashed(&self, id: &str) {
+        if let Some(r) = self.entries.lock().unwrap().get_mut(id) {
+            r.error = Some("crashed repeatedly; reload to retry".into());
+        }
     }
     pub async fn cancel_jobs(&self) {
         let clients: Vec<_> = self
@@ -1144,3 +1174,20 @@ impl PluginManager {
         }
     }
 }
+
+#[cfg(test)]
+mod restart_tests {
+    use super::*;
+
+    #[test]
+    fn crashed_plugins_restart_with_backoff() {
+        let mut h = Vec::new();
+        assert!(may_restart(&mut h, 1_000));
+        assert!(may_restart(&mut h, 2_000));
+        assert!(may_restart(&mut h, 3_000));
+        assert!(!may_restart(&mut h, 4_000), "a fourth crash in five minutes stays down");
+        assert!(!may_restart(&mut h, 1_000 + RESTART_WINDOW_MS - 1));
+        assert!(may_restart(&mut h, 1_000 + RESTART_WINDOW_MS), "the oldest restart has aged out");
+    }
+}
+

@@ -2,12 +2,18 @@
 Description=Nixe Assistant voice daemon
 After=pipewire.service nixe-assistant-stt.service
 Wants=pipewire.service nixe-assistant-stt.service nixe-assistant-hud.service
+# Five crashes in two minutes: stop restarting and say so.
+StartLimitIntervalSec=120
+StartLimitBurst=5
+OnFailure=nixe-assistant-failed.service
 
 [Service]
 Type=simple
 ExecStart=%h/.local/bin/nixe-assistantd
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
+# Ahead of a compile or other busy apps: speech, voice and the recognizer worker live here.
+CPUWeight=1000
 RestartSec=2
 Environment=RUST_LOG=info
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin

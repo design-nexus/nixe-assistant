@@ -133,6 +133,71 @@ Live, through the planner and checked against the app:
 - "In the Firefox window titled Bench search, search the page for nixe": the title became
   "searched: nixe"
 
+## Under load (Phase 8b, 2026-10-15)
+
+`nixe-assistant bench load [--only idle|cpu|gpu|both] [--heat]`. Each scenario: one warm-up,
+then 3 `demo` turns (Kokoro speech → STT → LLM → speakers) and 3 long `say` replies (the
+recognizer listens while the LLM generates and Kokoro speaks). Times are median / p90 in ms
+from the end of speech. CPU busy = one busy thread per logical CPU (16), like a compile; GPU
+busy = a second copy of Gemma 4 E4B generating on the card. Readings sampled once a second.
+RTX 5080 Laptop, plugged in, `CPUWeight=1000` on the daemon.
+
+| Scenario | First audio | STT | First token | Gaps (count, max) | Peak VRAM | GPU °C max | GPU W avg | GPU busy | CPU °C max | Assistant CPU |
+|---|---|---|---|---|---|---|---|---|---|---|
+| idle | 823 / 836 | 215 / 217 | 321 / 339 | 0 | 5616 MiB | 59 | 22 | 5% | 86 | 126% |
+| CPU busy | 984 / 1070 | 302 / 422 | 455 / 580 | 0 | 5622 MiB | 61 | 22 | 7% | 86 | 107% |
+| GPU busy | 1204 / 1408 | 217 / 222 | 579 / 617 | 0 | 11229 MiB | 65 | 79 | 89% | 94 | 132% |
+| both | 1307 / 1707 | 388 / 403 | 644 / 829 | 0 | 11229 MiB | 73 | 78 | 79% | 102 | 117% |
+
+`CPUWeight=1000` (the daemon ahead of other apps for CPU time), before → after, same bench:
+CPU busy 1115 / 1429 → 953 / 1062 (STT 548 → 264); both 1562 / 2022 → 1393 / 1605. That
+comparison came from the bench's first version, which skipped turns the daemon answered
+"busy" (fewer samples, same timings); the table above is the fixed bench, after the change.
+
+§4.6's 900 ms first audio holds at idle only. A busy CPU costs about 160 ms (STT and Kokoro
+share it); a second model on the card about 380 ms (llama.cpp shares the GPU, nothing the
+daemon can steer). No playback gaps in any scenario: Kokoro keeps ahead of playback.
+
+Ten minutes under both loads (`--heat`), Demo turns back to back:
+
+| Minute | Turns | First audio | GPU °C max | GPU W | CPU °C max |
+|---|---|---|---|---|---|
+| 1 | 26 | 1428 / 1621 | 74 | 78 | 99 |
+| 2 | 20 | 1712 / 1991 | 74 | 78 | 97 |
+| 3 | 20 | 1852 / 2047 | 75 | 78 | 100 |
+| 5 | 19 | 1908 / 2576 | 74 | 78 | 95 |
+| 7 | 19 | 1867 / 2086 | 75 | 78 | 96 |
+| 10 | 20 | 1924 / 2211 | 75 | 78 | 97 |
+
+First audio rises by about 450 ms over the first three minutes and then holds; the card stays
+at 74–76 °C while the CPU package sits at 95–102 °C, so the drift is the CPU throttling under
+16 busy threads, not the GPU. No gaps.
+
+## Battery (Phase 8b, 2026-10-15)
+
+Unplugged, whole-machine draw from the battery (`current_now × voltage_now`, so the card isn't
+queried), the card's runtime-PM state once a second, with `battery_idle_seconds = 60`:
+
+| State | Machine | Card |
+|---|---|---|
+| model loaded | 30.5 W (40 s) | active 40/40 |
+| model unloaded | 29.9 W (60 s) | active 60/60 |
+| next answer, reloading | first audio 3290 ms (STT 459, model back by 2249) | |
+
+Hyprland, Firefox and Plezy hold `/dev/nvidia*`, so the card never suspends; unloading saves
+~0.6 W and costs ~2.5 s. Early unloading on battery ships off (`battery_idle_seconds = 0`).
+
+## Crash recovery (Phase 8b, 2026-10-15)
+
+`nixe-assistant bench crash`: `kill -9` on each part, recovery measured from outside.
+
+| Case | Result | What happened |
+|---|---|---|
+| speech recognizer killed during a reply | pass | the reply finished; the next spoken turn worked (STT 1586 ms, the worker reloading its model) |
+| files plugin worker killed | pass | restarted; `files.list` works again after 771 ms |
+| browser workers killed | pass | both restarted; `web.search` works again after 5408 ms |
+| daemon killed during a task | pass | answering again after 6244 ms, model loaded after 6310 ms; the task marked failed (interrupted by restart); no approvals left; the HUD reconnected |
+
 ## Prompt injection (Phase 8a, 2026-10-15)
 
 `nixe-assistant bench injection`: a loopback page, a text file and a Firefox window each carry
