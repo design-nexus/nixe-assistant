@@ -1,6 +1,6 @@
 # Desktop abilities
 
-Eight bundled plugins add routines, project context, clipboard/screen capture,
+Nine bundled plugins add routines, project context, clipboard/screen capture,
 local calendars, opt-in file indexing, media controls, resource management, and
 shared undo. All use the same enabled state and permission checks as other tools.
 The assistant daemon owns the HUD, STT service, and plugin processes; stopping
@@ -170,3 +170,18 @@ the stdio SDK. Package contents have normal user-account OS access.
 Sources: [MCP tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools),
 [MPRIS Player interface](https://specifications.freedesktop.org/mpris/latest/Player_Interface.html),
 and [RFC 5545](https://www.rfc-editor.org/rfc/rfc5545).
+
+## Notepad and Write
+
+The `nixe-apps` ability works Notepad and Write directly, through the control interface each
+app serves on the session bus, instead of typing into their windows. An app that isn't
+running is started first.
+
+```bash
+nixe-assistant tool notepad.tabs '{}'
+nixe-assistant tool write.read '{}'
+```
+
+Say **"In Notepad, write call mum and save it as todo.txt"** or **"In Write, add a heading
+saying Results"**. Inserting text and saving ask first; files stay inside the home folder and
+are never overwritten unless asked. "New notepad tab" and "new document in Write" are direct.

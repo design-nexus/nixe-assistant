@@ -1955,13 +1955,15 @@ impl App {
             String::new()
         };
         let kind = classify(ask);
+        // A Nixe app named in the request offers its own tools beside computer use.
+        let app_tools = crate::session::app_tool_prefixes(ask);
         if let Some(tools) = catalog.as_array_mut() {
             tools.retain(|tool| {
                 let n = tool["name"].as_str().unwrap_or("");
                 match kind {
                     RequestKind::Browse => n.starts_with("browser."),
                     RequestKind::Terminal => n.starts_with("terminal."),
-                    RequestKind::Computer => ["ui.", "screen.", "input.", "windows."].iter().any(|p| n.starts_with(p)),
+                    RequestKind::Computer => ["ui.", "screen.", "input.", "windows."].iter().chain(&app_tools).any(|p| n.starts_with(p)),
                     _ => true,
                 }
             });
@@ -2100,9 +2102,11 @@ impl App {
                 const ACTIONS: &[&str] = &["ui.act", "input.type", "input.key", "input.click", "input.scroll"];
                 // Only a confirmed action counts: "no error" isn't evidence it worked.
                 let acted = results.iter().any(|r| {
-                    r["tool"].as_str().is_some_and(|t| ACTIONS.contains(&t))
-                        && r["result"]["isError"] != true
-                        && r.to_string().contains("\"verified\":true")
+                    let tool = r["tool"].as_str().unwrap_or("");
+                    let ok = r["result"]["isError"] != true;
+                    // An app's own tools report what they did; computer use needs evidence.
+                    (ACTIONS.contains(&tool) && ok && r.to_string().contains("\"verified\":true"))
+                        || (ok && ["notepad.", "write."].iter().any(|p| tool.starts_with(p)) && !tool.ends_with(".read") && !tool.ends_with(".tabs"))
                 });
                 if classify(ask) == RequestKind::Computer && !acted && !results.iter().any(|r| r["tool"] == "finish_refused") {
                     results.push(json!({"tool":"finish_refused","arguments":{},"result":{"isError":true,"text":"Not done: nothing has been typed, pressed or clicked in the app yet. Do the action the request asks for."}}));

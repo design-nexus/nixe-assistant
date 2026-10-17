@@ -110,14 +110,11 @@ plus `assistant-policy`.
 - [x] Phase 8b: latency, graphics memory and heat under concurrent load; crash recovery.
 - [x] Phase 8c: planner and vision benchmarks; the deferred Phase 6 work (VS Code confirmed;
       Spotify only through `media.*`).
-- [ ] Phase 9: typed control of the Nixe apps. Each app gets a narrow D-Bus interface on its
-      GTK application id; one `nixe` plugin (an MCP worker) maps typed tools such as
-      `notepad.new_tab` and `write.insert_text` to it, through the usual policy, approvals and
-      audit. First Notepad, Write and Tasks; Settings and Store read-only at most. App requests
-      should then see the app's own tools next to the computer tools (today they see only the
-      computer tools). Measured with `bench planner`'s app-tool cases.
+- [x] Phase 9: typed control of Notepad and Write through their control interface (the
+      `nixe-apps` ability); computer use stays the fallback for other apps.
 
-**Recommended next milestone:** Phase 9.
+**Recommended next milestone:** typed control for more Nixe apps (Music, Contacts), measured
+the same way.
 
 ## Phase 1 as built
 
@@ -251,6 +248,30 @@ plus `assistant-policy`.
   - The planner (Gemma 4 E4B) sometimes stops early or picks the wrong key.
   - Qwen 3.5 9B was tried and wasn't better (see BENCHMARKS.md).
   - Vision grounding is weak.
+
+## Phase 9 as built
+
+- `nixe-core::control`: `io.github.design_nexus.nixe.Control` on an app's own GApplication
+  connection and object path (`Describe() -> s`, `Call(s name, s arguments) -> s` with
+  `{"ok"}` or `{"error"}`), served by the primary instance from `connect_startup`, handled on
+  the main thread. `home_path` and `save_target` keep files inside the home folder (links
+  resolved first) and never overwrite without `overwrite: true`.
+- Notepad (`apps/notepad/src/control.rs`): `notepad.new_tab`, `open`, `read`, `tabs`,
+  `insert_text`, `save`. Write (`apps/office/src/write/control.rs`, Write only):
+  `write.new_document`, `open`, `read` (Markdown), `insert_text` (paragraph styles),
+  `save` (format by extension), `export_pdf`. Starting or opening another document is
+  refused while the open one has unsaved changes; nothing closes or deletes.
+- `abilities/nixe-apps`: the twelve tools over `busctl`; an app that isn't running is started
+  (and reaped) first. Bundled like the other abilities.
+- Policy: `*.open` is file reading, `*.insert_text` a plugin edit (asks), `*.save` and
+  `write.export_pdf` file writes (ask); reading and listing are allowed. Approval sentences
+  ("Save the Notepad tab as ~/todo.txt").
+- Planner: an app request that names Notepad or Write (`session::app_tool_prefixes`) gets
+  that app's tools beside the computer-use ones; a worked example shows new tab, insert,
+  save; the early-finish guard counts an app tool's change.
+- Bench: `bench planner` uses the real tools (11 app-tool steps); `bench computer`
+  `notepad-typed` and `write-typed` check the saved file (exact text; a heading in the
+  `.odt`).
 
 ## Phase 8c as built
 

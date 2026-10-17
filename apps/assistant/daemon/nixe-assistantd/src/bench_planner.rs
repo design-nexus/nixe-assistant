@@ -93,7 +93,7 @@ const CASES: &[Case] = &[
     Case { group: "computer", ask: "In the Game window, press the Start button.",
         done: &[("ui.tree", r#"{"window":"Game"}"#, r#"{"isError":true,"content":[{"type":"text","text":"this window has no accessibility tree"}]}"#)],
         expect: &[Some(("screen.marks", &[]))] },
-    // The app's own tools next to the computer tools (as Phase 9 would offer them): the
+    // The app's own tools next to the computer tools (as the daemon offers them for Nixe apps): the
     // typed tool is the right call.
     Case { group: "typed", ask: "In the Spotify window, press the play/pause button.", done: &[],
         expect: &[Some(("media.control", &[("action", M::Is("toggle"))])), Some(("media.control", &[("action", M::Is("play"))])), Some(("media.control", &[("action", M::Is("pause"))]))] },
@@ -105,18 +105,38 @@ const CASES: &[Case] = &[
         expect: &[Some(("notepad.insert_text", &[("text", M::Has("hello"))]))] },
     Case { group: "typed", ask: "In the Write window, type the sentence: Benchmark sentence for Write.", done: &[],
         expect: &[Some(("write.insert_text", &[("text", M::Has("benchmark sentence for write"))]))] },
+    Case { group: "typed", ask: "In Notepad, write call mum and save it as ~/todo.txt.", done: &[],
+        expect: &[Some(("notepad.new_tab", &[]))] },
+    Case { group: "typed", ask: "In Notepad, write call mum and save it as ~/todo.txt.",
+        done: &[("notepad.new_tab", "{}", r#"{"isError":false,"structuredContent":{"tab":{"name":"Untitled"}}}"#), ("notepad.insert_text", r#"{"text":"call mum"}"#, r#"{"isError":false,"structuredContent":{"inserted":8}}"#)],
+        expect: &[Some(("notepad.save", &[("path", M::Has("todo.txt"))]))] },
+    Case { group: "typed", ask: "In Notepad, open ~/notes/ideas.txt.", done: &[],
+        expect: &[Some(("notepad.open", &[("path", M::Has("ideas.txt"))]))] },
+    Case { group: "typed", ask: "In Write, read me what the document says.", done: &[],
+        expect: &[Some(("write.read", &[]))] },
+    Case { group: "typed", ask: "In Write, add a heading saying Results.", done: &[],
+        expect: &[Some(("write.insert_text", &[("text", M::Has("results")), ("style", M::Is("heading1"))])), Some(("write.insert_text", &[("text", M::Has("results")), ("style", M::Is("heading2"))]))] },
+    Case { group: "typed", ask: "In Write, save the document as ~/report.odt.", done: &[],
+        expect: &[Some(("write.save", &[("path", M::Has("report.odt"))]))] },
 ];
 
-/// App tools for the typed group: `media.*` as the media ability defines them, and the
-/// Notepad and Write tools Phase 9 would add.
+/// App tools for the typed group: `media.*` as the media ability defines them, and Notepad's
+/// and Write's own tools as the nixe-apps ability defines them.
 const TYPED: &[(&str, &str, &str)] = &[
     ("media.status", "Read current song and playback state", r#"{"type":"object","properties":{"player":{"type":"string"}}}"#),
     ("media.control", "Play, pause, toggle, next, previous, or stop a media player", r#"{"type":"object","properties":{"player":{"type":"string"},"action":{"type":"string","enum":["play","pause","toggle","next","previous","stop"]}},"required":["action"]}"#),
-    ("notepad.new_tab", "Open a new tab in Notepad.", r#"{"type":"object","properties":{},"additionalProperties":false}"#),
-    ("notepad.insert_text", "Insert text at the cursor in Notepad's current tab.", r#"{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false}"#),
-    ("notepad.save", "Save Notepad's current tab.", r#"{"type":"object","properties":{},"additionalProperties":false}"#),
-    ("write.insert_text", "Insert text at the cursor in the Write document.", r#"{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false}"#),
-    ("write.save", "Save the Write document.", r#"{"type":"object","properties":{},"additionalProperties":false}"#),
+    ("notepad.new_tab", "Open a new, empty Notepad tab.", r#"{"type":"object","properties":{}}"#),
+    ("notepad.open", "Open a text file (inside the home folder) in a Notepad tab.", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    ("notepad.read", "Read the current Notepad tab: name, file and text.", r#"{"type":"object","properties":{}}"#),
+    ("notepad.tabs", "List Notepad's tabs: name, file, unsaved changes.", r#"{"type":"object","properties":{}}"#),
+    ("notepad.insert_text", "Insert text into the current Notepad tab, at the cursor or at the end.", r#"{"type":"object","properties":{"text":{"type":"string"},"at":{"enum":["cursor","end"]}},"required":["text"]}"#),
+    ("notepad.save", "Save the current Notepad tab; give a path (inside the home folder) for an untitled tab or to save under a new name.", r#"{"type":"object","properties":{"path":{"type":"string"},"overwrite":{"type":"boolean"}}}"#),
+    ("write.new_document", "Start a new, empty Write document.", r#"{"type":"object","properties":{}}"#),
+    ("write.open", "Open a document (inside the home folder) in Write.", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    ("write.read", "Read the open Write document: title, file and text (as Markdown).", r#"{"type":"object","properties":{}}"#),
+    ("write.insert_text", "Insert text into the Write document at the cursor or the end; each line is a paragraph in the given style.", r#"{"type":"object","properties":{"text":{"type":"string"},"style":{"enum":["body","title","heading1","heading2","heading3","quote"]},"at":{"enum":["cursor","end"]}},"required":["text"]}"#),
+    ("write.save", "Save the Write document; give a path (inside the home folder; .nwrite, .odt, .docx, .md...) for a new document or to save under a new name.", r#"{"type":"object","properties":{"path":{"type":"string"},"overwrite":{"type":"boolean"}}}"#),
+    ("write.export_pdf", "Export the Write document as a PDF (a path inside the home folder ending in .pdf).", r#"{"type":"object","properties":{"path":{"type":"string"},"overwrite":{"type":"boolean"}},"required":["path"]}"#),
 ];
 
 /// The catalog an app request sees in the daemon: computer and window tools (computer use
@@ -181,13 +201,13 @@ fn score(out: &str, expect: &[Alt]) -> &'static str {
     }
 }
 
-/// The models compared: the curated list, where installed. (Ternary Bonsai 2 9B waits for
+/// The models compared: the suitable curated ones, where installed. (Ternary Bonsai 2 9B waits for
 /// a bundled llama.cpp that applies its `prism.hadamard` transform; without it, it loads and
 /// talks nonsense.)
 pub(crate) fn models() -> Vec<(String, Option<std::path::PathBuf>)> {
     let installed = assistant_core::Config::scan_local_models();
     let find = |file: &str| installed.iter().find(|p| p.file_name().is_some_and(|n| n == file)).cloned();
-    assistant_models::CURATED_MODELS.iter().map(|m| (m.name.to_string(), find(m.filename))).collect()
+    assistant_models::recommended(None).into_iter().map(|m| (m.name.to_string(), find(m.filename))).collect()
 }
 
 pub(crate) fn gb(path: &Path) -> String {

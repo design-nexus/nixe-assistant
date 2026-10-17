@@ -91,6 +91,22 @@ fn computer_request(s: &str) -> bool {
     let place = s.contains(" window") || s.starts_with("in ") || s.contains(" in the app") || s.starts_with("on the screen");
     place && ACTS.iter().any(|a| s.contains(a))
 }
+/// The tools of the Nixe apps a request names that have their own ("notepad.", "write."):
+/// an app request gets them next to the computer-use tools.
+pub fn app_tool_prefixes(text: &str) -> Vec<&'static str> {
+    let lower = text.to_lowercase();
+    let window = window_in_request(text).map(|w| w.to_lowercase()).unwrap_or_default();
+    let mut out = Vec::new();
+    if lower.contains("notepad") {
+        out.push("notepad.");
+    }
+    // "write" is also a verb: only the app named as the place ("In Write, …").
+    if window == "write" || window.starts_with("write ") || window == "nixe write" {
+        out.push("write.");
+    }
+    out
+}
+
 /// The app window a request names: "In Write, …", "In the Notepad window, …",
 /// "… in VS Code". Used when the planner leaves out the window.
 pub fn window_in_request(text: &str) -> Option<String> {
@@ -268,6 +284,14 @@ mod tests {
         for t in ["what's the weather", "in the morning remind me", "click the first result", "tell me a story"] {
             assert_ne!(classify(t), RequestKind::Computer, "{t}");
         }
+    }
+    #[test]
+    fn app_tools_for_named_apps() {
+        assert_eq!(app_tool_prefixes("In Notepad, write a shopping list and save it"), ["notepad."]);
+        assert_eq!(app_tool_prefixes("In the Write window, type the sentence: Hello."), ["write."]);
+        assert_eq!(app_tool_prefixes("In Write, add a heading"), ["write."]);
+        assert!(app_tool_prefixes("In VS Code, write a new line").is_empty());
+        assert!(app_tool_prefixes("write a poem").is_empty());
     }
     #[test]
     fn session_expiry_and_controls() {

@@ -161,7 +161,7 @@ async fn run_turn(text: &str) -> Result<(Vec<String>, u64, Vec<String>)> {
     let mut approvals = Vec::new();
     while !turn.is_finished() {
         for (id, tool) in pending() {
-            let allow = ["ui.", "screen.", "input."].iter().any(|p| tool.starts_with(p));
+            let allow = ["ui.", "screen.", "input.", "notepad.", "write."].iter().any(|p| tool.starts_with(p));
             let _ = request(Control::Approve { approval_id: id, allow, scope: assistant_ipc::ApprovalScope::Task }, 2000).await;
             approvals.push(format!("{}{tool}", if allow { "" } else { "denied " }));
         }
@@ -172,13 +172,14 @@ async fn run_turn(text: &str) -> Result<(Vec<String>, u64, Vec<String>)> {
     let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
         - started.elapsed().as_millis() as u64;
     let path = assistant_policy::store::default_path(&assistant_core::paths::state_dir());
-    let mut tools: Vec<String> = assistant_policy::store::recent(&path, 200)
+    let mut calls: Vec<_> = assistant_policy::store::recent(&path, 200)
         .unwrap_or_default()
         .into_iter()
         .filter(|r| r.event == "call" && r.at_ms >= since)
-        .map(|r| if r.outcome == "ok" { r.tool } else { format!("{} ({})", r.tool, r.outcome) })
         .collect();
-    tools.reverse();
+    // In the order they ran (a record can be written after later ones).
+    calls.sort_by_key(|r| r.at_ms);
+    let tools: Vec<String> = calls.into_iter().map(|r| if r.outcome == "ok" { r.tool } else { format!("{} ({})", r.tool, r.outcome) }).collect();
     Ok((tools, started.elapsed().as_millis() as u64, approvals))
 }
 
@@ -239,7 +240,7 @@ pub async fn computer(only: Option<String>) -> Result<()> {
         println!("Turned the session's accessibility on (apps started from now expose their trees).");
     }
     let mut results: Vec<Outcome> = Vec::new();
-    let tasks = ["notepad-tab", "notepad-type", "write", "firefox", "vscode", "spotify", "spotify-next"];
+    let tasks = ["notepad-tab", "notepad-type", "notepad-typed", "write", "write-typed", "firefox", "vscode", "spotify", "spotify-next"];
     // Spotify's tasks run with the default output muted, and with Spotify started if it
     // wasn't running (then closed again). Both are put back after the loop, whatever happens.
     let spotify_runs = tasks.iter().any(|t| t.starts_with("spotify") && only.as_deref().is_none_or(|o| o == *t));
@@ -310,6 +311,46 @@ pub async fn computer(only: Option<String>) -> Result<()> {
                 close_all("notepad").await;
                 notepad_gone().await;
                 Ok(Outcome { name, passed: Some(text.contains("The bench typed this")), note: format!("file: {:?}", text.trim()), ms, tools })
+            }
+            .await,
+            // Notepad's own tools (nixe-apps), not typing: the file on disk is the check.
+            "notepad-typed" => async {
+                if notepad_in_use() {
+                    return Ok(Outcome { name, passed: None, note: "skipped: Notepad is open (the bench doesn't touch your tabs)".into(), ms: 0, tools: vec![] });
+                }
+                close_all("notepad").await;
+                let file = dir.join("typed.txt");
+                let _ = tokio::fs::remove_file(&file).await;
+                spawn("nixe-notepad", &[])?;
+                wait_window("notepad", 15).await?;
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                let ask = format!("In Notepad, write The bench wrote this directly. and save it as {}.", file.display());
+                let (tools, ms, _) = run_turn(&ask).await?;
+                let text = read_file(&file).await;
+                close_all("notepad").await;
+                notepad_gone().await;
+                // Only the new text: written into a new tab, not one already open.
+                Ok(Outcome { name, passed: Some(text.trim() == "The bench wrote this directly."), note: format!("file: {:?}", text.trim()), ms, tools })
+            }
+            .await,
+            "write-typed" => async {
+                if window("write").await.is_some() {
+                    return Ok(Outcome { name, passed: None, note: "skipped: Write is already open (the bench doesn't touch your documents)".into(), ms: 0, tools: vec![] });
+                }
+                let file = dir.join("typed.odt");
+                let _ = tokio::fs::remove_file(&file).await;
+                spawn("nixe-write", &[])?;
+                let w = wait_window("write", 20).await?;
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                let ask = format!("In Write, add a heading saying Bench report, then save the document as {}.", file.display());
+                let (tools, ms, _) = run_turn(&ask).await?;
+                // The saved document: the heading as a heading.
+                let content = std::process::Command::new("unzip").arg("-p").arg(&file).arg("content.xml").output().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
+                let heading = content.contains("<text:h") && content.contains("Bench report");
+                if w.pid > 0 {
+                    let _ = std::process::Command::new("kill").arg(w.pid.to_string()).status();
+                }
+                Ok(Outcome { name, passed: Some(heading), note: if heading { "heading saved in typed.odt".into() } else if file.exists() { "saved, but no Bench report heading".into() } else { "not saved".into() }, ms, tools })
             }
             .await,
             "write" => async {

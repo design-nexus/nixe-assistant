@@ -70,7 +70,7 @@ const PLUGIN_EDITS: &[&str] = &[
 ];
 
 const PLUGIN_PREFIXES: &[&str] =
-    &["routines.", "projects.", "calendar.", "file_search.", "media.", "power.", "history.", "notes.", "reminders."];
+    &["routines.", "projects.", "calendar.", "file_search.", "media.", "power.", "history.", "notes.", "reminders.", "notepad.", "write."];
 
 const DESKTOP_PREFIXES: &[&str] = &["hypr.", "toggle.", "display.", "theme.", "windows.", "workspaces.", "monitors."];
 
@@ -110,6 +110,10 @@ impl Capability {
             "system.shutdown" => return Self::Shutdown,
             "capture.screen" | "capture.clipboard" => return Self::Capture,
             "history.undo" => return Self::PluginData,
+            // Nixe apps worked directly: reading a file in, typing into a document, saving.
+            "notepad.open" | "write.open" => return Self::FileRead,
+            "notepad.insert_text" | "write.insert_text" => return Self::PluginEdit,
+            "notepad.save" | "write.save" | "write.export_pdf" => return Self::FileWrite,
             _ => {}
         }
         if tool.starts_with("admin.") {
@@ -258,3 +262,20 @@ const READ_BROWSER: &[&str] = &[
     "web.search",
     "web.read",
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nixe_app_tools() {
+        assert_eq!(Capability::of("notepad.read"), Capability::PluginData);
+        assert_eq!(Capability::of("write.new_document"), Capability::PluginData);
+        assert_eq!(Capability::of("notepad.open"), Capability::FileRead);
+        assert_eq!(Capability::of("write.insert_text"), Capability::PluginEdit);
+        assert_eq!(Capability::of("notepad.save"), Capability::FileWrite);
+        assert_eq!(Capability::of("write.export_pdf"), Capability::FileWrite);
+        assert_eq!(Capability::FileWrite.default_decision("write.save"), Decision::Ask);
+        assert_eq!(Capability::PluginData.default_decision("notepad.tabs"), Decision::Allow);
+    }
+}

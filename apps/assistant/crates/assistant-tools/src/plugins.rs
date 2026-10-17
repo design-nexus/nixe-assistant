@@ -964,6 +964,7 @@ pub async fn migrate(cfg: &Config, worker: &Path, checkout: &Path) -> Result<()>
         "media",
         "power",
         "history",
+        "nixe-apps",
     ] {
         let folder = package_dir().join(id);
         if !folder.exists() {

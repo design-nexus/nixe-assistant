@@ -133,6 +133,23 @@ Live, through the planner and checked against the app:
 - "In the Firefox window titled Bench search, search the page for nixe": the title became
   "searched: nixe"
 
+## Nixe apps' own tools (Phase 9, 2026-10-16)
+
+`bench planner` with Notepad's and Write's real tools offered beside computer use (11 steps:
+new tab, open, insert, save, read, a heading, save as .odt, plus media):
+
+| Model | Computer use | App tools | Mistakes | Median step |
+|---|---|---|---|---|
+| Gemma 4 E4B (Q4_K_M) | 19/21 | 10/11 | 2 wrong tool | 789 ms |
+| Qwen 3.5 9B (Q4_K_M) | 18/21 | 10/11 | 2 wrong tool | 1252 ms |
+| Gemma 4 E2B (Q4_K_M) | 13/21 | 11/11 | 8 | 887 ms |
+
+Gemma's app-tool miss: "In Notepad, type hello and save it" starts with a new tab (the worked
+example's habit for new files). Live (`bench computer`): `notepad-typed` (new tab, insert,
+save as typed.txt; the file is exactly the text) 16.9 s, `write-typed` (a Heading 1 saved in
+typed.odt) 12.7 s, both passing; through computer use the same Write task needed OCR and
+couldn't check the saved file.
+
 ## Computer use (Phase 8c, 2026-10-16)
 
 Planner (`bench planner`): the daemon's own planner prompt and grammar (`planner.rs`) on 21
