@@ -199,6 +199,7 @@ impl State {
         }
         None
     }
+    #[allow(clippy::too_many_arguments)]
     pub fn bar(
         &self,
         frame: &mut Frame,
@@ -423,32 +424,6 @@ pub fn step(index: usize, count: usize, direction: i32) -> usize {
         (index as i32 + direction).rem_euclid(count as i32) as usize
     }
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn cycle_wraps_both_directions_and_one_screen_stays_put() {
-        assert_eq!(step(0, 4, -1), 3);
-        assert_eq!(step(3, 4, 1), 0);
-        assert_eq!(step(0, 1, 1), 0);
-    }
-    #[test]
-    fn mouse_targets_are_clipped_and_rebuilt_on_resize() {
-        let mut s = State::default();
-        s.begin(Rect::new(0, 0, 60, 20));
-        s.hit(Rect::new(50, 2, 30, 2), Intent::Screen(1));
-        let mouse = |x, y| MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: x,
-            row: y,
-            modifiers: crossterm::event::KeyModifiers::NONE,
-        };
-        assert_eq!(s.mouse(mouse(59, 2)), Some(Intent::Screen(1)));
-        assert_eq!(s.mouse(mouse(65, 2)), None);
-        s.begin(Rect::new(0, 0, 20, 10));
-        assert_eq!(s.mouse(mouse(19, 2)), None);
-    }
-}
 impl State {
     pub fn outline(
         &self,
@@ -600,5 +575,31 @@ impl State {
                 Intent::Command("Cancel"),
             );
         }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn cycle_wraps_both_directions_and_one_screen_stays_put() {
+        assert_eq!(step(0, 4, -1), 3);
+        assert_eq!(step(3, 4, 1), 0);
+        assert_eq!(step(0, 1, 1), 0);
+    }
+    #[test]
+    fn mouse_targets_are_clipped_and_rebuilt_on_resize() {
+        let mut s = State::default();
+        s.begin(Rect::new(0, 0, 60, 20));
+        s.hit(Rect::new(50, 2, 30, 2), Intent::Screen(1));
+        let mouse = |x, y| MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: x,
+            row: y,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        assert_eq!(s.mouse(mouse(59, 2)), Some(Intent::Screen(1)));
+        assert_eq!(s.mouse(mouse(65, 2)), None);
+        s.begin(Rect::new(0, 0, 20, 10));
+        assert_eq!(s.mouse(mouse(19, 2)), None);
     }
 }

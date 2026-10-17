@@ -94,7 +94,7 @@ impl Frame {
         }
         let mut raw = vec![0u8; n as usize * 2];
         r.read_exact(&mut raw)?;
-        let samples = raw.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+        let samples = raw.as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
         Ok(Some(Self { kind, utterance, samples }))
     }
 }

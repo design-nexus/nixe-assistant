@@ -103,11 +103,9 @@ fn required(value: &Option<String>, key: &str) -> Result<Color, String> {
 }
 
 fn first(values: [&Option<String>; 3]) -> Color {
-    for value in values {
-        if let Some(text) = value {
-            if let Some(color) = super::parse_hex(text) {
-                return color;
-            }
+    for text in values.into_iter().flatten() {
+        if let Some(color) = super::parse_hex(text) {
+            return color;
         }
     }
     hex("888888")
@@ -156,15 +154,10 @@ pub fn spawn_watcher(path: PathBuf, on_change: impl Fn() + Send + 'static) {
         }
         // `watcher` stays on this thread so the inotify subscription lives
         // until the channel closes.
-        loop {
-            match srx.recv() {
-                Ok(_) => {
-                    std::thread::sleep(std::time::Duration::from_millis(200));
-                    while srx.try_recv().is_ok() {}
-                    on_change();
-                }
-                Err(_) => break,
-            }
+        while srx.recv().is_ok() {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            while srx.try_recv().is_ok() {}
+            on_change();
         }
     });
 }

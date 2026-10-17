@@ -560,6 +560,20 @@ fn monokai() -> Theme {
     )
 }
 
+pub fn aurora() -> Theme {
+    let mut theme = pal(
+        "aurora",
+        "Aurora",
+        Kind::Dark,
+        [
+            "171820", "14151d", "222432", "3d4054", "222432", "ececf4", "a5a9be", "a5a9be",
+            "b5a0ff", "ed8796", "eac38c", "a3d6b0", "83d9dc", "b5a0ff", "b5a0ff",
+        ],
+    );
+    theme.selection_fg = theme.accent;
+    theme
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -611,18 +625,4 @@ mod tests {
         assert_eq!(fallback_id(false), "aurora");
         assert_eq!(fallback_id(true), "aurora");
     }
-}
-
-pub fn aurora() -> Theme {
-    let mut theme = pal(
-        "aurora",
-        "Aurora",
-        Kind::Dark,
-        [
-            "171820", "14151d", "222432", "3d4054", "222432", "ececf4", "a5a9be", "a5a9be",
-            "b5a0ff", "ed8796", "eac38c", "a3d6b0", "83d9dc", "b5a0ff", "b5a0ff",
-        ],
-    );
-    theme.selection_fg = theme.accent;
-    theme
 }

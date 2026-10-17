@@ -574,7 +574,7 @@ fn look_one(
             ctx.n_ubatch()
         );
     }
-    let mut n_cur = chunks
+    let start = chunks
         .eval_chunks(vision, ctx, 0, 0, n_batch.max(1) as i32, true)
         .map_err(|e| anyhow::anyhow!("evaluate image: {e}"))?;
     let mut sampler = LlamaSampler::greedy();
@@ -582,7 +582,7 @@ fn look_one(
     let mut decoder = UTF_8.new_decoder();
     let mut out = String::new();
     let mut idx = -1;
-    for _ in 0..n_predict.max(1) {
+    for n_cur in start..start + n_predict.max(1) {
         let token = sampler.sample(ctx, idx);
         if model.vocab().is_eog(token) {
             break;
@@ -594,7 +594,6 @@ fn look_one(
         batch.clear();
         batch.add(token, n_cur, &[0], true)?;
         ctx.decode(&mut batch).context("decode token")?;
-        n_cur += 1;
         idx = 0;
     }
     Ok(strip_thinking(&out).to_string())

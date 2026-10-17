@@ -86,7 +86,7 @@ fn click(x: u16, y: u16) -> MouseEvent {
 #[tokio::test]
 async fn every_screen_and_pane_fits_the_size_matrix() {
     let mut app = fixture();
-    for screen in 0..SCREENS.len() {
+    for (screen, _) in SCREENS.iter().enumerate() {
         app.select_screen(screen);
         for pane in 0..app.pane_names().len() {
             app.focus_pane(pane);

@@ -17,9 +17,13 @@ pub struct Line {
 /// Words below this confidence are dropped (icons and textures read as junk).
 const MIN_CONFIDENCE: f32 = 45.0;
 
+/// A line being gathered: tesseract's (block, paragraph, line, page) key, the line, and how
+/// many words it has.
+type Gathering = ((i32, i32, i32, i32), Line, u32);
+
 /// Parse `tesseract … tsv` output into lines.
 pub fn parse_tsv(tsv: &str) -> Vec<Line> {
-    let mut lines: Vec<((i32, i32, i32, i32), Line, u32)> = Vec::new();
+    let mut lines: Vec<Gathering> = Vec::new();
     for row in tsv.lines().skip(1) {
         let f: Vec<&str> = row.split('\t').collect();
         if f.len() < 12 || f[0] != "5" {

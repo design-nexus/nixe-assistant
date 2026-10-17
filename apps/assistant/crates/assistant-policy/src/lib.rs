@@ -356,8 +356,7 @@ mod tests {
 
     #[test]
     fn admin_always_asks_by_key_press() {
-        let mut rules = Rules::default();
-        rules.admin = Decision::Allow;
+        let mut rules = Rules { admin: Decision::Allow, ..Rules::default() };
         let mut c = cx(&rules);
         c.resource_approved = true;
         c.tool_rule = Some(Decision::Allow);

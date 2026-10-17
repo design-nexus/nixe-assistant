@@ -166,8 +166,6 @@ pub fn sidebar(frame: &mut Frame, area: Rect, border: Style) -> Rect {
     inner
 }
 
-/// Native terminal pixel lettering at a shared size, without image overlays.
-
 fn title_color(accent: Option<Color>, data: Option<Color>, x: usize, width: usize) -> Color {
     if let (Some(Color::Rgb(ar, ag, ab)), Some(Color::Rgb(dr, dg, db))) = (accent, data) {
         let t = x as f32 / width.saturating_sub(1).max(1) as f32;
