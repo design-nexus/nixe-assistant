@@ -1,10 +1,10 @@
 manifest_version = 1
 id = "nixe-apps"
-version = "1.0.0"
-description = "Notepad and Write, worked directly (their control interface)"
+version = "1.1.0"
+description = "Notepad, Write, Music and Contacts, worked directly (their control interface)"
 executable = "python3"
 args = ["./main.py"]
-tools = ["notepad.new_tab", "notepad.open", "notepad.read", "notepad.tabs", "notepad.insert_text", "notepad.save", "write.new_document", "write.open", "write.read", "write.insert_text", "write.save", "write.export_pdf"]
+tools = ["notepad.new_tab", "notepad.open", "notepad.read", "notepad.tabs", "notepad.insert_text", "notepad.save", "write.new_document", "write.open", "write.read", "write.insert_text", "write.save", "write.export_pdf", "music.search", "music.play", "music.queue", "music.status", "music.control", "contacts.find", "contacts.add", "contacts.update"]
 
 [[routes]]
 pattern = "^(?i:(?:open a )?new notepad tab)$"
@@ -14,4 +14,9 @@ template = true
 [[routes]]
 pattern = "^(?i:(?:start a )?new (?:write )?document in write)$"
 tool = "write.new_document"
+template = true
+
+[[routes]]
+pattern = "^(?i:what(?:'s| is) playing in music)$"
+tool = "music.status"
 template = true

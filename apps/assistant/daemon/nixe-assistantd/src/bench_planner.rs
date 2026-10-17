@@ -118,6 +118,21 @@ const CASES: &[Case] = &[
         expect: &[Some(("write.insert_text", &[("text", M::Has("results")), ("style", M::Is("heading1"))])), Some(("write.insert_text", &[("text", M::Has("results")), ("style", M::Is("heading2"))]))] },
     Case { group: "typed", ask: "In Write, save the document as ~/report.odt.", done: &[],
         expect: &[Some(("write.save", &[("path", M::Has("report.odt"))]))] },
+    Case { group: "typed", ask: "In Music, play the album Blue.", done: &[],
+        expect: &[Some(("music.play", &[("what", M::Is("album")), ("name", M::Is("blue"))]))] },
+    Case { group: "typed", ask: "In Music, shuffle my Running playlist.", done: &[],
+        expect: &[Some(("music.play", &[("what", M::Is("playlist")), ("name", M::Has("running"))]))] },
+    Case { group: "typed", ask: "In Music, play Hey Jude next.", done: &[],
+        expect: &[Some(("music.queue", &[("name", M::Has("hey jude"))]))] },
+    Case { group: "typed", ask: "In Music, what's playing?", done: &[],
+        expect: &[Some(("music.status", &[]))] },
+    Case { group: "typed", ask: "In Contacts, what's Anna Berg's phone number?", done: &[],
+        expect: &[Some(("contacts.find", &[("query", M::Has("anna"))]))] },
+    Case { group: "typed", ask: "In Contacts, add Sam Lee with the email sam@example.com.", done: &[],
+        expect: &[Some(("contacts.add", &[("first", M::Is("sam")), ("last", M::Is("lee"))]))] },
+    Case { group: "typed", ask: "In Contacts, add the email anna@work.example to Anna Berg.",
+        done: &[("contacts.find", r#"{"query":"Anna Berg"}"#, r#"{"isError":false,"structuredContent":{"contacts":[{"id":"c-17","name":"Anna Berg","emails":[]}]}}"#)],
+        expect: &[Some(("contacts.update", &[("id", M::Is("c-17")), ("add_email", M::Is("anna@work.example"))]))] },
 ];
 
 /// App tools for the typed group: `media.*` as the media ability defines them, and Notepad's
@@ -136,6 +151,14 @@ const TYPED: &[(&str, &str, &str)] = &[
     ("write.read", "Read the open Write document: title, file and text (as Markdown).", r#"{"type":"object","properties":{}}"#),
     ("write.insert_text", "Insert text into the Write document at the cursor or the end; each line is a paragraph in the given style.", r#"{"type":"object","properties":{"text":{"type":"string"},"style":{"enum":["body","title","heading1","heading2","heading3","quote"]},"at":{"enum":["cursor","end"]}},"required":["text"]}"#),
     ("write.save", "Save the Write document; give a path (inside the home folder; .nwrite, .odt, .docx, .md...) for a new document or to save under a new name.", r#"{"type":"object","properties":{"path":{"type":"string"},"overwrite":{"type":"boolean"}}}"#),
+    ("music.search", "Search the music library: tracks, albums, artists and playlists matching the words.", r#"{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}"#),
+    ("music.play", "Play a track, album, artist or playlist from the library (by name), optionally shuffled.", r#"{"type":"object","properties":{"what":{"enum":["track","album","artist","playlist"]},"name":{"type":"string"},"shuffle":{"type":"boolean"}},"required":["what","name"]}"#),
+    ("music.queue", "Add a track, album, artist or playlist to the queue: next, or at the end.", r#"{"type":"object","properties":{"what":{"enum":["track","album","artist","playlist"]},"name":{"type":"string"},"next":{"type":"boolean"}},"required":["what","name"]}"#),
+    ("music.status", "What Music is playing: track, artist, album, playing or paused, shuffle, repeat, what's next.", r#"{"type":"object","properties":{}}"#),
+    ("music.control", "Play, pause, toggle, next, previous or stop in Music; or set shuffle on/off.", r#"{"type":"object","properties":{"action":{"enum":["play","pause","toggle","next","previous","stop","shuffle_on","shuffle_off"]}},"required":["action"]}"#),
+    ("contacts.find", "Find contacts by name, company, email or phone: their details.", r#"{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}"#),
+    ("contacts.add", "Add a new contact.", r#"{"type":"object","properties":{"first":{"type":"string"},"last":{"type":"string"},"company":{"type":"string"},"emails":{"type":"array"},"phones":{"type":"array"}},"required":["first"]}"#),
+    ("contacts.update", "Change a contact's details (by id from contacts.find) or add an email or phone; nothing is removed.", r#"{"type":"object","properties":{"id":{"type":"string"},"company":{"type":"string"},"add_email":{"type":"string"},"add_phone":{"type":"string"}},"required":["id"]}"#),
     ("write.export_pdf", "Export the Write document as a PDF (a path inside the home folder ending in .pdf).", r#"{"type":"object","properties":{"path":{"type":"string"},"overwrite":{"type":"boolean"}},"required":["path"]}"#),
 ];
 

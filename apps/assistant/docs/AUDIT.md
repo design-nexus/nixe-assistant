@@ -113,8 +113,10 @@ plus `assistant-policy`.
 - [x] Phase 9: typed control of Notepad and Write through their control interface (the
       `nixe-apps` ability); computer use stays the fallback for other apps.
 
-**Recommended next milestone:** typed control for more Nixe apps (Music, Contacts), measured
-the same way.
+- [x] Phase 10: typed control of Music and Contacts (same interface and ability).
+
+**Recommended next milestone:** typed control for the remaining Nixe apps people talk to
+(Chat, PDF, Gallery), measured the same way.
 
 ## Phase 1 as built
 
@@ -248,6 +250,24 @@ the same way.
   - The planner (Gemma 4 E4B) sometimes stops early or picks the wrong key.
   - Qwen 3.5 9B was tried and wasn't better (see BENCHMARKS.md).
   - Vision grounding is weak.
+
+## Phase 10 as built
+
+- `nixe-core::control::serve_async`: a handler answers through a `Reply`, later if it must
+  (Music's playlists come from the database in the background); `serve` wraps it.
+- Music (`apps/music/src/control.rs`): `music.search`, `music.play` and `music.queue`
+  (track, album, artist or playlist by name; exact, then starts with, then contains;
+  several equally good name each other), `music.status`, `music.control`.
+- Contacts (`apps/contacts/src/control.rs`): `contacts.find` (up to 10, untrusted),
+  `contacts.add` (refused when another contact has the email or phone), `contacts.update`
+  (change or add, never remove). Saved through `ui::commit`, so the window follows.
+- Policy: adding and updating contacts ask; Music and finding are allowed, and finding counts
+  as reading private data (the leak guard applies).
+- Bundled abilities are now replaced on install when the checkout has another version of
+  them; before, an update never reached an existing install.
+- Bench: 7 more app-tool cases; `music-typed` (an album plays, muted; checked by
+  `music.status`) and `contacts-typed` (a scratch address book) pass. The bench finds
+  Nixe apps by window class: a title match had found a terminal named after the task.
 
 ## Phase 9 as built
 

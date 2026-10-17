@@ -137,6 +137,17 @@ pub fn describe(tool: &str, args: &Value) -> String {
         "write.save" => "Save the Write document".into(),
         "write.export_pdf" => format!("Export the Write document as {}", clip(s(args, "path"), 80)),
         "write.open" => format!("Open {} in Write", clip(s(args, "path"), 80)),
+        "contacts.add" => format!("Add {} {} to Contacts", s(args, "first"), s(args, "last")).trim_end().to_string(),
+        "contacts.update" => {
+            let what: Vec<&str> = [("first", "name"), ("last", "name"), ("company", "company"), ("title", "job title"), ("birthday", "birthday"), ("notes", "notes"), ("add_email", "email"), ("add_phone", "phone"), ("favorite", "favourite")]
+                .into_iter()
+                .filter(|(k, _)| !args[*k].is_null())
+                .map(|(_, w)| w)
+                .collect();
+            let mut what = what;
+            what.dedup();
+            format!("Change a contact's {}", if what.is_empty() { "details".to_string() } else { what.join(", ") })
+        }
         "notes.edit" => "Change a note".into(),
         "notes.delete" => "Delete a note".into(),
         "browser.navigate" | "web.read" => format!("Open {}", clip(s(args, "url"), 80)),

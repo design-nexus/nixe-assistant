@@ -127,6 +127,29 @@ async fn vscode_profile(dir: &Path) -> Result<PathBuf> {
     Ok(profile)
 }
 
+/// A Nixe app's window by its class (`io.github.design_nexus.nixe.<App>`): unlike `window`,
+/// never a terminal or browser whose title happens to contain the app's name.
+async fn app_window(app: &str) -> Option<assistant_omarchy::hypr::Client> {
+    let class = format!("io.github.design_nexus.nixe.{app}");
+    assistant_omarchy::hypr::clients().await.ok()?.into_iter().find(|c| c.class == class)
+}
+
+async fn wait_app_window(app: &str, secs: u64) -> Result<assistant_omarchy::hypr::Client> {
+    let until = Instant::now() + Duration::from_secs(secs);
+    while Instant::now() < until {
+        if let Some(w) = app_window(app).await {
+            return Ok(w);
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    bail!("no {app} window appeared")
+}
+
+/// A tool called directly (not through the planner), for checking a task's outcome.
+async fn tool_call(name: &str, arguments: Value) -> Value {
+    request(Control::ToolCall { name: name.into(), arguments }, 30_000).await.unwrap_or_default()
+}
+
 /// Close every window matching `pattern` (a clean start for the next task).
 async fn close_all(pattern: &str) {
     let p = pattern.to_lowercase();
@@ -161,7 +184,7 @@ async fn run_turn(text: &str) -> Result<(Vec<String>, u64, Vec<String>)> {
     let mut approvals = Vec::new();
     while !turn.is_finished() {
         for (id, tool) in pending() {
-            let allow = ["ui.", "screen.", "input.", "notepad.", "write."].iter().any(|p| tool.starts_with(p));
+            let allow = ["ui.", "screen.", "input.", "notepad.", "write.", "music.", "contacts."].iter().any(|p| tool.starts_with(p));
             let _ = request(Control::Approve { approval_id: id, allow, scope: assistant_ipc::ApprovalScope::Task }, 2000).await;
             approvals.push(format!("{}{tool}", if allow { "" } else { "denied " }));
         }
@@ -240,7 +263,7 @@ pub async fn computer(only: Option<String>) -> Result<()> {
         println!("Turned the session's accessibility on (apps started from now expose their trees).");
     }
     let mut results: Vec<Outcome> = Vec::new();
-    let tasks = ["notepad-tab", "notepad-type", "notepad-typed", "write", "write-typed", "firefox", "vscode", "spotify", "spotify-next"];
+    let tasks = ["notepad-tab", "notepad-type", "notepad-typed", "write", "write-typed", "music-typed", "contacts-typed", "firefox", "vscode", "spotify", "spotify-next"];
     // Spotify's tasks run with the default output muted, and with Spotify started if it
     // wasn't running (then closed again). Both are put back after the loop, whatever happens.
     let spotify_runs = tasks.iter().any(|t| t.starts_with("spotify") && only.as_deref().is_none_or(|o| o == *t));
@@ -351,6 +374,62 @@ pub async fn computer(only: Option<String>) -> Result<()> {
                     let _ = std::process::Command::new("kill").arg(w.pid.to_string()).status();
                 }
                 Ok(Outcome { name, passed: Some(heading), note: if heading { "heading saved in typed.odt".into() } else if file.exists() { "saved, but no Bench report heading".into() } else { "not saved".into() }, ms, tools })
+            }
+            .await,
+            // Music's own tools: an album from the library plays (muted), checked by music.status.
+            "music-typed" => async {
+                let was_open = app_window("Music").await.is_some();
+                if was_open {
+                    let state = tool_call("music.status", serde_json::json!({})).await;
+                    if state.to_string().contains("\"state\":\"playing\"") {
+                        return Ok(Outcome { name, passed: None, note: "skipped: Music is playing".into(), ms: 0, tools: vec![] });
+                    }
+                }
+                let found = tool_call("music.search", serde_json::json!({"query": "a"})).await;
+                let Some(album) = found["structuredContent"]["albums"][0]["title"].as_str().map(String::from) else {
+                    return Ok(Outcome { name, passed: None, note: "skipped: no album in the library".into(), ms: 0, tools: vec![] });
+                };
+                let was_muted = sink_muted();
+                set_sink_muted(true);
+                let (tools, ms, _) = run_turn(&format!("In Music, play the album {album}.")).await?;
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                let state = tool_call("music.status", serde_json::json!({})).await;
+                let playing = &state["structuredContent"];
+                let passed = playing["state"] == "playing" && playing["track"]["album"].as_str() == Some(album.as_str());
+                tool_call("music.control", serde_json::json!({"action": "pause"})).await;
+                set_sink_muted(was_muted);
+                if !was_open {
+                    if let Some(w) = app_window("Music").await {
+                        let _ = assistant_omarchy::hypr::close_window(&w.address).await;
+                    }
+                }
+                Ok(Outcome { name, passed: Some(passed), note: format!("{album}: {} {}", playing["state"], playing["track"]["title"]), ms, tools })
+            }
+            .await,
+            // Contacts' own tools, on a scratch address book (never the person's).
+            "contacts-typed" => async {
+                if app_window("Contacts").await.is_some() {
+                    return Ok(Outcome { name, passed: None, note: "skipped: Contacts is open (the bench uses its own address book)".into(), ms: 0, tools: vec![] });
+                }
+                let data = dir.join("contacts-data");
+                let _ = tokio::fs::remove_dir_all(&data).await;
+                tokio::fs::create_dir_all(&data).await?;
+                std::process::Command::new("nixe-contacts")
+                    .env("XDG_DATA_HOME", &data)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                    .context("start nixe-contacts")?;
+                let w = wait_app_window("Contacts", 20).await?;
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                let (tools, ms, _) = run_turn("In Contacts, add Bench Person with the email bench@example.com.").await?;
+                let found = tool_call("contacts.find", serde_json::json!({"query": "bench@example.com"})).await;
+                let names: Vec<String> = found["structuredContent"]["contacts"].as_array().cloned().unwrap_or_default().iter().filter_map(|c| c["name"].as_str().map(String::from)).collect();
+                if w.pid > 0 {
+                    let _ = std::process::Command::new("kill").arg(w.pid.to_string()).status();
+                }
+                Ok(Outcome { name, passed: Some(names.iter().any(|n| n == "Bench Person")), note: format!("found: {names:?}"), ms, tools })
             }
             .await,
             "write" => async {

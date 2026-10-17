@@ -133,6 +133,19 @@ Live, through the planner and checked against the app:
 - "In the Firefox window titled Bench search, search the page for nixe": the title became
   "searched: nixe"
 
+## Music and Contacts tools (Phase 10, 2026-10-16)
+
+`bench planner` with 18 app-tool steps (Notepad, Write, Music, Contacts, media):
+
+| Model | Computer use | App tools | Median step |
+|---|---|---|---|
+| Gemma 4 E4B (Q4_K_M) | 19/21 | 17/18 | 780 ms |
+| Qwen 3.5 9B (Q4_K_M) | 16/21 | 15/18 | 1417 ms |
+| Gemma 4 E2B (Q4_K_M) | 13/21 | 13/18 | 745 ms |
+
+Live: `music-typed` 12.3 s (music.play; the album plays) and `contacts-typed` 13.4 s
+(contacts.add; found again by email), both passing.
+
 ## Nixe apps' own tools (Phase 9, 2026-10-16)
 
 `bench planner` with Notepad's and Write's real tools offered beside computer use (11 steps:

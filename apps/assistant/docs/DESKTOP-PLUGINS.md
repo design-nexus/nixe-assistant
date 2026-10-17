@@ -171,9 +171,9 @@ Sources: [MCP tools](https://modelcontextprotocol.io/specification/2025-11-25/se
 [MPRIS Player interface](https://specifications.freedesktop.org/mpris/latest/Player_Interface.html),
 and [RFC 5545](https://www.rfc-editor.org/rfc/rfc5545).
 
-## Notepad and Write
+## Notepad, Write, Music and Contacts
 
-The `nixe-apps` ability works Notepad and Write directly, through the control interface each
+The `nixe-apps` ability works Notepad, Write, Music and Contacts directly, through the control interface each
 app serves on the session bus, instead of typing into their windows. An app that isn't
 running is started first.
 
@@ -185,3 +185,7 @@ nixe-assistant tool write.read '{}'
 Say **"In Notepad, write call mum and save it as todo.txt"** or **"In Write, add a heading
 saying Results"**. Inserting text and saving ask first; files stay inside the home folder and
 are never overwritten unless asked. "New notepad tab" and "new document in Write" are direct.
+
+Music: **"In Music, play the album Blue"**, **"shuffle my Running playlist"**, **"what's playing
+in Music"**. Contacts: **"In Contacts, what's Anna's phone number"**, **"add Sam Lee with the
+email sam@example.com"**. Adding and changing contacts ask first; nothing is removed.

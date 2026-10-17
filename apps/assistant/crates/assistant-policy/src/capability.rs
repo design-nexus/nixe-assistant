@@ -70,7 +70,7 @@ const PLUGIN_EDITS: &[&str] = &[
 ];
 
 const PLUGIN_PREFIXES: &[&str] =
-    &["routines.", "projects.", "calendar.", "file_search.", "media.", "power.", "history.", "notes.", "reminders.", "notepad.", "write."];
+    &["routines.", "projects.", "calendar.", "file_search.", "media.", "power.", "history.", "notes.", "reminders.", "notepad.", "write.", "music.", "contacts."];
 
 const DESKTOP_PREFIXES: &[&str] = &["hypr.", "toggle.", "display.", "theme.", "windows.", "workspaces.", "monitors."];
 
@@ -112,7 +112,7 @@ impl Capability {
             "history.undo" => return Self::PluginData,
             // Nixe apps worked directly: reading a file in, typing into a document, saving.
             "notepad.open" | "write.open" => return Self::FileRead,
-            "notepad.insert_text" | "write.insert_text" => return Self::PluginEdit,
+            "notepad.insert_text" | "write.insert_text" | "contacts.add" | "contacts.update" => return Self::PluginEdit,
             "notepad.save" | "write.save" | "write.export_pdf" => return Self::FileWrite,
             _ => {}
         }
@@ -277,5 +277,8 @@ mod tests {
         assert_eq!(Capability::of("write.export_pdf"), Capability::FileWrite);
         assert_eq!(Capability::FileWrite.default_decision("write.save"), Decision::Ask);
         assert_eq!(Capability::PluginData.default_decision("notepad.tabs"), Decision::Allow);
+        assert_eq!(Capability::of("contacts.add"), Capability::PluginEdit);
+        assert_eq!(Capability::of("music.play"), Capability::PluginData);
+        assert!(Capability::reads_private("contacts.find"));
     }
 }

@@ -104,6 +104,12 @@ pub fn app_tool_prefixes(text: &str) -> Vec<&'static str> {
     if window == "write" || window.starts_with("write ") || window == "nixe write" {
         out.push("write.");
     }
+    if window == "music" || window.starts_with("music ") || window == "nixe music" {
+        out.push("music.");
+    }
+    if lower.contains("contacts") {
+        out.push("contacts.");
+    }
     out
 }
 
@@ -292,6 +298,9 @@ mod tests {
         assert_eq!(app_tool_prefixes("In Write, add a heading"), ["write."]);
         assert!(app_tool_prefixes("In VS Code, write a new line").is_empty());
         assert!(app_tool_prefixes("write a poem").is_empty());
+        assert_eq!(app_tool_prefixes("In Music, play the album Blue"), ["music."]);
+        assert_eq!(app_tool_prefixes("In Contacts, add Sam Lee"), ["contacts."]);
+        assert!(app_tool_prefixes("play some music").is_empty());
     }
     #[test]
     fn session_expiry_and_controls() {

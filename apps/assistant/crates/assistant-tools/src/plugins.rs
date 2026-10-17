@@ -967,8 +967,16 @@ pub async fn migrate(cfg: &Config, worker: &Path, checkout: &Path) -> Result<()>
         "nixe-apps",
     ] {
         let folder = package_dir().join(id);
+        let source = checkout.join("abilities").join(id);
+        // A bundled ability is replaced when the checkout has another version of it, so
+        // updates reach existing installs (its data lives elsewhere, in plugin-data).
+        let stale = folder.exists()
+            && Manifest::read(&source).ok().map(|m| m.version) != Manifest::read(&folder).ok().map(|m| m.version);
+        if stale {
+            std::fs::remove_dir_all(&folder)?;
+        }
         if !folder.exists() {
-            copy_tree(&checkout.join("abilities").join(id), &folder)?;
+            copy_tree(&source, &folder)?;
         }
         let m = Manifest::read(&folder)?;
         state.entry(m.id).or_insert(Saved {
