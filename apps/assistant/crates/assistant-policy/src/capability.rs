@@ -70,7 +70,8 @@ const PLUGIN_EDITS: &[&str] = &[
 ];
 
 const PLUGIN_PREFIXES: &[&str] =
-    &["routines.", "projects.", "calendar.", "file_search.", "media.", "power.", "history.", "notes.", "reminders.", "notepad.", "write.", "music.", "contacts."];
+    &["routines.", "projects.", "calendar.", "file_search.", "media.", "power.", "history.", "notes.", "reminders.", "notepad.", "write.", "music.", "contacts.", "archive.", "chat.", "fonts.", "photos.", "glimpse.",
+      "video.", "pdf.", "settings.", "store.", "tasks.", "torrents."];
 
 const DESKTOP_PREFIXES: &[&str] = &["hypr.", "toggle.", "display.", "theme.", "windows.", "workspaces.", "monitors."];
 
@@ -90,7 +91,7 @@ const DESKTOP: &[&str] = &[
 /// Stopping is never held for approval.
 const PASSIVE_VERBS: &[&str] = &[
     "cancel", "stop", "list", "get", "read", "search", "status", "current", "preview", "snapshot", "tabs", "now", "lookup",
-    "find", "show", "query", "scroll", "active", "devices",
+    "find", "show", "query", "scroll", "active", "devices", "installed", "albums", "pages", "top", "tabs",
 ];
 
 impl Capability {
@@ -111,9 +112,11 @@ impl Capability {
             "capture.screen" | "capture.clipboard" => return Self::Capture,
             "history.undo" => return Self::PluginData,
             // Nixe apps worked directly: reading a file in, typing into a document, saving.
-            "notepad.open" | "write.open" => return Self::FileRead,
-            "notepad.insert_text" | "write.insert_text" | "contacts.add" | "contacts.update" => return Self::PluginEdit,
-            "notepad.save" | "write.save" | "write.export_pdf" => return Self::FileWrite,
+            "notepad.open" | "write.open" | "archive.list" | "archive.open" | "photos.open" | "pdf.open" => return Self::FileRead,
+            "notepad.insert_text" | "write.insert_text" | "contacts.add" | "contacts.update" | "chat.send" => return Self::PluginEdit,
+            "notepad.save" | "write.save" | "write.export_pdf" | "archive.extract" | "archive.create" => return Self::FileWrite,
+            // Reach the network with what they're given.
+            "fonts.install" | "torrents.add" => return Self::External,
             _ => {}
         }
         if tool.starts_with("admin.") {
@@ -280,5 +283,10 @@ mod tests {
         assert_eq!(Capability::of("contacts.add"), Capability::PluginEdit);
         assert_eq!(Capability::of("music.play"), Capability::PluginData);
         assert!(Capability::reads_private("contacts.find"));
+        assert_eq!(Capability::of("archive.extract"), Capability::FileWrite);
+        assert_eq!(Capability::of("chat.send"), Capability::PluginEdit);
+        assert_eq!(Capability::of("torrents.add"), Capability::External);
+        assert_eq!(Capability::of("tasks.top"), Capability::PluginData);
+        assert!(Capability::reads_private("pdf.read") && Capability::reads_private("photos.search"));
     }
 }

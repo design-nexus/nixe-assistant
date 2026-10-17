@@ -148,6 +148,11 @@ pub fn describe(tool: &str, args: &Value) -> String {
             what.dedup();
             format!("Change a contact's {}", if what.is_empty() { "details".to_string() } else { what.join(", ") })
         }
+        "archive.extract" => format!("Extract {}{}", clip(s(args, "path"), 60), if s(args, "to").is_empty() { String::new() } else { format!(" into {}", clip(s(args, "to"), 60)) }),
+        "archive.create" => format!("Pack {} item(s) into {}", args["files"].as_array().map_or(0, Vec::len), clip(s(args, "path"), 60)),
+        "chat.send" => format!("Send “{}” in Chat", clip(s(args, "text"), 60)),
+        "fonts.install" => format!("Download and install the font {}", clip(s(args, "family"), 60)),
+        "torrents.add" => format!("Add the torrent {}", clip(s(args, "link"), 70)),
         "notes.edit" => "Change a note".into(),
         "notes.delete" => "Delete a note".into(),
         "browser.navigate" | "web.read" => format!("Open {}", clip(s(args, "url"), 80)),

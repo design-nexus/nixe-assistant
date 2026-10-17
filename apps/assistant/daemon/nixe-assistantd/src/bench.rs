@@ -184,7 +184,7 @@ async fn run_turn(text: &str) -> Result<(Vec<String>, u64, Vec<String>)> {
     let mut approvals = Vec::new();
     while !turn.is_finished() {
         for (id, tool) in pending() {
-            let allow = ["ui.", "screen.", "input.", "notepad.", "write.", "music.", "contacts."].iter().any(|p| tool.starts_with(p));
+            let allow = ["ui.", "screen.", "input.", "notepad.", "write.", "music.", "contacts.", "archive.", "chat.", "photos.", "video.", "pdf.", "settings.", "store.", "tasks.", "glimpse."].iter().any(|p| tool.starts_with(p));
             let _ = request(Control::Approve { approval_id: id, allow, scope: assistant_ipc::ApprovalScope::Task }, 2000).await;
             approvals.push(format!("{}{tool}", if allow { "" } else { "denied " }));
         }

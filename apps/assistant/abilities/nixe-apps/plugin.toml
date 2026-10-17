@@ -1,10 +1,10 @@
 manifest_version = 1
 id = "nixe-apps"
-version = "1.1.0"
-description = "Notepad, Write, Music and Contacts, worked directly (their control interface)"
+version = "1.2.0"
+description = "The Nixe apps, worked directly (their control interface)"
 executable = "python3"
 args = ["./main.py"]
-tools = ["notepad.new_tab", "notepad.open", "notepad.read", "notepad.tabs", "notepad.insert_text", "notepad.save", "write.new_document", "write.open", "write.read", "write.insert_text", "write.save", "write.export_pdf", "music.search", "music.play", "music.queue", "music.status", "music.control", "contacts.find", "contacts.add", "contacts.update"]
+tools = ["notepad.new_tab", "notepad.open", "notepad.read", "notepad.tabs", "notepad.insert_text", "notepad.save", "write.new_document", "write.open", "write.read", "write.insert_text", "write.save", "write.export_pdf", "music.search", "music.play", "music.queue", "music.status", "music.control", "archive.list", "archive.open", "archive.extract", "archive.create", "chat.list", "chat.search", "chat.read", "chat.open", "chat.send", "fonts.installed", "fonts.search", "fonts.install", "photos.search", "photos.albums", "photos.open", "glimpse.search", "glimpse.show", "video.search", "video.play", "video.status", "video.control", "pdf.open", "pdf.read", "pdf.search", "pdf.go_to", "settings.pages", "settings.open", "store.search", "store.open", "tasks.top", "tasks.open", "torrents.list", "torrents.add", "torrents.pause", "torrents.resume", "contacts.find", "contacts.add", "contacts.update"]
 
 [[routes]]
 pattern = "^(?i:(?:open a )?new notepad tab)$"

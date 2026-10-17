@@ -171,9 +171,9 @@ Sources: [MCP tools](https://modelcontextprotocol.io/specification/2025-11-25/se
 [MPRIS Player interface](https://specifications.freedesktop.org/mpris/latest/Player_Interface.html),
 and [RFC 5545](https://www.rfc-editor.org/rfc/rfc5545).
 
-## Notepad, Write, Music and Contacts
+## The Nixe apps
 
-The `nixe-apps` ability works Notepad, Write, Music and Contacts directly, through the control interface each
+The `nixe-apps` ability works every Nixe app directly, through the control interface each
 app serves on the session bus, instead of typing into their windows. An app that isn't
 running is started first.
 
@@ -189,3 +189,10 @@ are never overwritten unless asked. "New notepad tab" and "new document in Write
 Music: **"In Music, play the album Blue"**, **"shuffle my Running playlist"**, **"what's playing
 in Music"**. Contacts: **"In Contacts, what's Anna's phone number"**, **"add Sam Lee with the
 email sam@example.com"**. Adding and changing contacts ask first; nothing is removed.
+
+The other apps: **"In Archive, extract ~/Downloads/photos.zip"**, **"In Chat, ask what a
+monad is"**, **"In Fonts, install JetBrains Mono"**, **"In Photos, find photos from
+2024"**, **"In Media Player, play Alien"**, **"In PDF, find the word invoice"**, **"In
+Store, look for an image editor"**, **"In Tasks, what's using the most memory"**, **"In
+Torrents, pause everything"**. Settings and Store only look and show; Tasks only reports.
+Extracting, packing, sending a chat, installing a font and adding a torrent ask first.

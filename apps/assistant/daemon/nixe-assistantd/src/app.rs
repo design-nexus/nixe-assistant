@@ -2106,7 +2106,7 @@ impl App {
                     let ok = r["result"]["isError"] != true;
                     // An app's own tools report what they did; computer use needs evidence.
                     (ACTIONS.contains(&tool) && ok && r.to_string().contains("\"verified\":true"))
-                        || (ok && ["notepad.", "write.", "music.", "contacts."].iter().any(|p| tool.starts_with(p)) && ![".read", ".tabs", ".search", ".status", ".find"].iter().any(|v| tool.ends_with(v)))
+                        || (ok && crate::session::APP_TOOL_PREFIXES.iter().any(|p| tool.starts_with(p)) && !assistant_policy::Capability::of(tool).passive(tool))
                 });
                 if classify(ask) == RequestKind::Computer && !acted && !results.iter().any(|r| r["tool"] == "finish_refused") {
                     results.push(json!({"tool":"finish_refused","arguments":{},"result":{"isError":true,"text":"Not done: nothing has been typed, pressed or clicked in the app yet. Do the action the request asks for."}}));

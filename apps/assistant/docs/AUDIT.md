@@ -115,8 +115,12 @@ plus `assistant-policy`.
 
 - [x] Phase 10: typed control of Music and Contacts (same interface and ability).
 
-**Recommended next milestone:** typed control for the remaining Nixe apps people talk to
-(Chat, PDF, Gallery), measured the same way.
+- [x] Phase 11: typed control of every other Nixe app (Archive, Chat, Fonts, Photos, Glimpse,
+      Media Player, PDF, Settings, Store, Tasks, Torrents); live checks still to run.
+
+**Recommended next milestone:** run the Phase 11 live checks (`bench planner` with the new
+apps' cases, and one live task per app), then measure the planner with all 55 app tools in
+the catalogue.
 
 ## Phase 1 as built
 
@@ -250,6 +254,35 @@ plus `assistant-policy`.
   - The planner (Gemma 4 E4B) sometimes stops early or picks the wrong key.
   - Qwen 3.5 9B was tried and wasn't better (see BENCHMARKS.md).
   - Vision grounding is weak.
+
+## Phase 11 as built
+
+Built and unit-tested on 2026-10-16 without opening windows or playing sound (the live
+checks are for the next session).
+
+- Through `nixe_core::control` in each app (`src/control.rs`):
+  - Archive: `archive.list`, `open`, `extract` (into a new folder beside it by default;
+    existing files kept unless `overwrite`), `create` (format by name). Jobs use the window's
+    progress card; refused while another job runs.
+  - Chat: `chat.list`, `search`, `read` (the shown branch, last 30 messages), `open`,
+    `send` (new chat or the open one; the answer is read later).
+  - Fonts: `fonts.installed`, `search` (Google Fonts and Nerd Fonts), `install`.
+  - Photos: `photos.search` (words, year, month, album, favourites), `albums`, `open`.
+  - Media Player: `video.search`, `play` (movie, show from where it was left, episode,
+    playlist), `status`, `control`.
+  - PDF: `pdf.open`, `read` (up to 5 pages of text), `search` (pages and counts), `go_to`.
+  - Settings: `settings.pages`, `open`: read-only, nothing is changed.
+  - Torrents: `torrents.list`, `add` (magnet, http(s) or info-hash only), `pause`, `resume`.
+- Headless, from the app's command line, no window: `glimpse.search` (`nixe-glimpse search`),
+  `store.search` (`nixe-store --find`, the local package databases), `tasks.top`
+  (`nixe-tasks --top cpu|memory`, two samples). `glimpse.show`, `store.open` and
+  `tasks.open` start the app on that search or page. Nothing installs, removes or kills.
+- Policy: extracting and packing archives are file writes (ask), sending a chat message is an
+  edit (asks), installing a font and adding a torrent are external (ask, and count as sending
+  out); opening files reads them; the rest is allowed, and their reads count as private.
+- Planner: an app named as the place ("In Store, …") or by a name nothing else has
+  (Contacts, Glimpse, Media Player, Torrents) gets its tools (`session::app_tool_prefixes`).
+  The early-finish guard counts any non-passive app tool.
 
 ## Phase 10 as built
 

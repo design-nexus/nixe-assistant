@@ -91,6 +91,12 @@ fn computer_request(s: &str) -> bool {
     let place = s.contains(" window") || s.starts_with("in ") || s.contains(" in the app") || s.starts_with("on the screen");
     place && ACTS.iter().any(|a| s.contains(a))
 }
+/// Every Nixe app's tool prefix (the nixe-apps ability).
+pub const APP_TOOL_PREFIXES: &[&str] = &[
+    "notepad.", "write.", "music.", "contacts.", "archive.", "chat.", "fonts.", "photos.", "glimpse.", "video.", "pdf.", "settings.",
+    "store.", "tasks.", "torrents.",
+];
+
 /// The tools of the Nixe apps a request names that have their own ("notepad.", "write."):
 /// an app request gets them next to the computer-use tools.
 pub fn app_tool_prefixes(text: &str) -> Vec<&'static str> {
@@ -104,11 +110,28 @@ pub fn app_tool_prefixes(text: &str) -> Vec<&'static str> {
     if window == "write" || window.starts_with("write ") || window == "nixe write" {
         out.push("write.");
     }
-    if window == "music" || window.starts_with("music ") || window == "nixe music" {
-        out.push("music.");
+    // The app named as the place ("In Store, …"): names that are also everyday words.
+    let place = |name: &str| window == name || window.starts_with(&format!("{name} ")) || window == format!("nixe {name}");
+    for (name, prefix) in [
+        ("music", "music."),
+        ("archive", "archive."),
+        ("chat", "chat."),
+        ("fonts", "fonts."),
+        ("photos", "photos."),
+        ("pdf", "pdf."),
+        ("settings", "settings."),
+        ("store", "store."),
+        ("tasks", "tasks."),
+    ] {
+        if place(name) {
+            out.push(prefix);
+        }
     }
-    if lower.contains("contacts") {
-        out.push("contacts.");
+    // Names nothing else is called.
+    for (name, prefix) in [("contacts", "contacts."), ("glimpse", "glimpse."), ("media player", "video."), ("torrents", "torrents.")] {
+        if lower.contains(name) && !out.contains(&prefix) {
+            out.push(prefix);
+        }
     }
     out
 }
@@ -301,6 +324,11 @@ mod tests {
         assert_eq!(app_tool_prefixes("In Music, play the album Blue"), ["music."]);
         assert_eq!(app_tool_prefixes("In Contacts, add Sam Lee"), ["contacts."]);
         assert!(app_tool_prefixes("play some music").is_empty());
+        assert_eq!(app_tool_prefixes("In Store, find an image editor"), ["store."]);
+        assert_eq!(app_tool_prefixes("In the PDF window, go to page 4"), ["pdf."]);
+        assert_eq!(app_tool_prefixes("In Media Player, play Alien"), ["video."]);
+        assert!(app_tool_prefixes("In Write, export it as a PDF").iter().all(|p| *p != "pdf."));
+        assert!(app_tool_prefixes("store this for later").is_empty());
     }
     #[test]
     fn session_expiry_and_controls() {
