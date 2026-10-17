@@ -24,6 +24,8 @@ pub struct CuratedModel {
     pub mmproj: Option<&'static str>,
     /// Model plus projector, roughly what it takes in VRAM before the context.
     pub vram_gb: f32,
+    /// Why it isn't offered (measured in the benches); `None` for a recommended model.
+    pub unsuitable: Option<&'static str>,
 }
 
 const HF: &str = "https://huggingface.co/";
@@ -38,6 +40,7 @@ pub const CURATED_MODELS: &[CuratedModel] = &[
         hf_repo: "lmstudio-community/gemma-4-E4B-it-GGUF",
         mmproj: Some("mmproj-gemma-4-E4B-it-BF16.gguf"),
         vram_gb: 6.3,
+        unsuitable: None,
     },
     CuratedModel {
         name: "Gemma 4 E2B (Q4_K_M)",
@@ -48,6 +51,7 @@ pub const CURATED_MODELS: &[CuratedModel] = &[
         hf_repo: "lmstudio-community/gemma-4-E2B-it-GGUF",
         mmproj: Some("mmproj-gemma-4-E2B-it-BF16.gguf"),
         vram_gb: 4.4,
+        unsuitable: None,
     },
     CuratedModel {
         name: "Qwen 3.5 9B (Q4_K_M)",
@@ -58,6 +62,7 @@ pub const CURATED_MODELS: &[CuratedModel] = &[
         hf_repo: "lmstudio-community/Qwen3.5-9B-GGUF",
         mmproj: Some("mmproj-Qwen3.5-9B-BF16.gguf"),
         vram_gb: 6.6,
+        unsuitable: None,
     },
     CuratedModel {
         name: "Gemma 4 12B QAT (Q4_0)",
@@ -68,6 +73,7 @@ pub const CURATED_MODELS: &[CuratedModel] = &[
         hf_repo: "lmstudio-community/gemma-4-12B-it-QAT-GGUF",
         mmproj: Some("mmproj-gemma-4-12B-it-QAT-BF16.gguf"),
         vram_gb: 7.2,
+        unsuitable: Some("Doesn't load at the assistant's 32k context on 16 GB, and plans at about 25 s a step."),
     },
     CuratedModel {
         name: "GLM-4.6V Flash (Q4_K_M)",
@@ -78,8 +84,23 @@ pub const CURATED_MODELS: &[CuratedModel] = &[
         hf_repo: "lmstudio-community/GLM-4.6V-Flash-GGUF",
         mmproj: Some("mmproj-GLM-4.6V-Flash-F16.gguf"),
         vram_gb: 8.0,
+        unsuitable: Some("Plans poorly as the assistant's model (9 of 21 computer-use steps)."),
     },
 ];
+
+/// Graphics memory the speech and voice models and the conversation's context take besides
+/// the model itself.
+const HEADROOM_GB: f32 = 4.0;
+
+/// The models to offer on a computer with `vram_gb` of graphics memory (all suitable ones
+/// when it isn't known).
+pub fn recommended(vram_gb: Option<f32>) -> Vec<&'static CuratedModel> {
+    CURATED_MODELS
+        .iter()
+        .filter(|m| m.unsuitable.is_none())
+        .filter(|m| vram_gb.is_none_or(|total| m.vram_gb + HEADROOM_GB <= total))
+        .collect()
+}
 
 impl CuratedModel {
     /// Where the image projector downloads from.

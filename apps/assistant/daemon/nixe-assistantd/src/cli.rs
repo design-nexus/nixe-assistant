@@ -947,18 +947,27 @@ async fn models_command(rest: &[String]) -> anyhow::Result<()> {
                     })
                 })
                 .collect();
-            let curated: Vec<serde_json::Value> = models::CURATED_MODELS
-                .iter()
-                .map(|m| {
-                    let mut v = serde_json::to_value(m).unwrap_or_default();
-                    v["installed"] = serde_json::json!(models::is_curated_installed(m, &installed));
-                    v["mmproj_url"] = serde_json::json!(m.mmproj_url());
-                    v
-                })
-                .collect();
+            let describe = |m: &models::CuratedModel| {
+                let mut v = serde_json::to_value(m).unwrap_or_default();
+                v["installed"] = serde_json::json!(models::is_curated_installed(m, &installed));
+                v["mmproj_url"] = serde_json::json!(m.mmproj_url());
+                // Where it is on this computer, if anywhere.
+                v["path"] = serde_json::json!(installed.iter().find(|p| p.file_name().is_some_and(|n| n == m.filename)));
+                v
+            };
+            let curated: Vec<serde_json::Value> = models::CURATED_MODELS.iter().map(describe).collect();
+            // The graphics card's memory decides which models are offered.
+            let vram_gb = std::process::Command::new("nvidia-smi")
+                .args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8_lossy(&o.stdout).lines().next()?.trim().parse::<f32>().ok())
+                .map(|mib| mib / 1024.0);
+            let recommended: Vec<serde_json::Value> = models::recommended(vram_gb).into_iter().map(describe).collect();
+            let current_curated = models::CURATED_MODELS.iter().find(|m| current.file_name().is_some_and(|n| n == m.filename)).map(describe);
             let asr = assistant_core::paths::models_dir().join(assistant_core::asr::MODEL_NAME);
             let asr = serde_json::json!({"name": assistant_core::asr::MODEL_NAME, "installed": asr.join(assistant_core::asr::ENCODER).is_file()});
-            println!("{}", serde_json::json!({"current": current, "projector": cfg.vision.resolve(&current), "installed": local, "curated": curated, "asr": asr, "models_dir": assistant_core::paths::models_dir()}));
+            println!("{}", serde_json::json!({"current": current, "projector": cfg.vision.resolve(&current), "installed": local, "curated": curated, "recommended": recommended, "current_model": current_curated, "vram_gb": vram_gb, "asr": asr, "models_dir": assistant_core::paths::models_dir()}));
         }
         ["search", query @ ..] if !query.is_empty() => {
             let found = models::search_huggingface(&query.join(" ")).await?;
