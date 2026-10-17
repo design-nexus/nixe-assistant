@@ -133,6 +133,55 @@ Live, through the planner and checked against the app:
 - "In the Firefox window titled Bench search, search the page for nixe": the title became
   "searched: nixe"
 
+## Computer use (Phase 8c, 2026-10-16)
+
+Planner (`bench planner`): the daemon's own planner prompt and grammar (`planner.rs`) on 21
+computer-use steps (Notepad, Write, a Firefox page, VS Code, Spotify, a confirmation, a window
+without a tree) and 5 with the app's own tools offered next to the computer tools. Each
+answer is the next call, scored automatically. Raw model output: the daemon's corrections
+(refusing an early finish once, filling in the window, skipping repeats) aren't applied. A
+detour is a harmless look-first step (`ui.find`, `ui.tree`, focusing a window). Every model at
+an 8192-token context; RTX 5080 Laptop, 16 GB.
+
+| Model | Computer use | App tools | Detours | Mistakes | Median step | p90 step | VRAM added |
+|---|---|---|---|---|---|---|---|
+| Gemma 4 E4B (Q4_K_M) | 18/21 | 5/5 | 2 | 1 early finish | 827 ms | 1016 ms | 4215 MiB |
+| Qwen 3.5 9B (Q4_K_M) | 18/21 | 4/5 | 2 | 1 wrong argument, 1 wrong tool | 1204 ms | 1491 ms | 5861 MiB |
+| Gemma 4 12B QAT (Q4_0) | 17/21 | 3/5 | 4 | 2 wrong tool | 25405 ms | 25737 ms | 10093 MiB |
+| Gemma 4 E2B (Q4_K_M) | 15/21 | 4/5 | 0 | 2 no finish, 2 wrong argument, 3 wrong tool | 837 ms | 1124 ms | 2449 MiB |
+| GLM-4.6V Flash (Q4_K_M) | 9/21 | 3/5 | 10 | 1 no finish, 1 wrong argument, 2 wrong tool | 491 ms | 836 ms | 6403 MiB |
+
+Gemma 4 E4B stays the planner: as accurate as Qwen 3.5 9B, faster, smaller, and it took the
+app's own tool every time one was offered. The 12B runs with the GPU near 45% and one CPU core
+full (cause not found); at the configured 32768-token context it doesn't load at all on 16 GB.
+
+Vision (`bench vision`): 15 labelled questions on Notepad, a Firefox form page and VS Code.
+
+| Model | How | Right | Median look | First look | VRAM added |
+|---|---|---|---|---|---|
+| GLM-4.6V Flash | pointing (box) | 7/15 | 1041 ms | 2704 ms | 8803 MiB |
+| Qwen 3.5 9B | reading tags | 6/15 | 760 ms | 7479 ms | 7135 MiB |
+| GLM-4.6V Flash | reading tags | 5/15 | 844 ms | 8626 ms | 8803 MiB |
+| Gemma 4 12B QAT | reading tags | 3/15 | 411 ms | 4932 ms | 12193 MiB |
+| Gemma 4 E4B | reading tags | 2/15 | 233 ms | 6062 ms | 5629 MiB |
+| Gemma 4 E2B | reading tags | 2/15 | 180 ms | 4017 ms | 3861 MiB |
+| Gemma 4 E2B | pointing (box) | 2/15 | 264 ms | 1431 ms | 3861 MiB |
+| Qwen 3.5 9B | pointing (box) | 2/15 | 1058 ms | 2631 ms | 7135 MiB |
+| Gemma 4 12B QAT | pointing (box) | 2/15 | 1053 ms | 2598 ms | 12183 MiB |
+| Gemma 4 E4B | pointing (box) | 1/15 | 384 ms | 1756 ms | 5629 MiB |
+
+Grounding stays weak for every model that fits; the accessibility tree remains the main path.
+The 12B's projector needs the whole image in one micro-batch (`n_ubatch` ≥ its image tokens);
+the bench sets `n_ubatch = n_batch`, and the daemon now refuses instead of aborting.
+
+Ternary Bonsai 2 9B (Q2_0, 2.6 GB) loads with the bundled llama.cpp (`llama-cpp-sys-2`
+0.1.158 and 0.1.160) but answers nonsense: its `prism.hadamard` activation transform is only
+in upstream llama.cpp master. Left out until the bindings bundle it.
+
+Live (`bench computer`): VS Code passes (ctrl+end, type, ctrl+s; the file checked exactly,
+14 s). Spotify fails when it plays with no window open: computer use has nothing to act on;
+`media.control` (MPRIS) does it.
+
 ## Under load (Phase 8b, 2026-10-15)
 
 `nixe-assistant bench load [--only idle|cpu|gpu|both] [--heat]`. Each scenario: one warm-up,

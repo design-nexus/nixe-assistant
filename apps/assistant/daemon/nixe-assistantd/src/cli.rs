@@ -1,5 +1,7 @@
 #[path = "bench.rs"]
 mod bench;
+#[path = "planner.rs"]
+mod planner;
 
 use anyhow::Context;
 use assistant_ipc::{
@@ -372,6 +374,12 @@ async fn main() -> anyhow::Result<()> {
         "bench" if std::env::args().nth(2).as_deref() == Some("load") => {
             let only = std::env::args().skip_while(|a| a != "--only").nth(1);
             bench::load(std::env::args().any(|a| a == "--heat"), only).await?;
+        }
+        "bench" if std::env::args().nth(2).as_deref() == Some("planner") => {
+            match (std::env::args().nth(3).as_deref(), std::env::args().nth(4)) {
+                (Some("--one"), Some(model)) => bench::planner::planner_one(std::path::Path::new(&model)).await?,
+                _ => bench::planner::planner().await?,
+            }
         }
         "bench" if std::env::args().nth(2).as_deref() == Some("crash") => {
             bench::crash().await?;

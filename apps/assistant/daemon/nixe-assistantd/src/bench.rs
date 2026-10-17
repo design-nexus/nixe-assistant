@@ -1,7 +1,11 @@
 //! `bench computer` (representative computer-use tasks, each checked from outside),
-//! `bench vision` (which vision model picks the right mark on labelled screenshots) and
-//! `bench injection` (pages and files with planted instructions; nothing may come of them).
+//! `bench vision` (which vision model picks the right mark on labelled screenshots),
+//! `bench injection` (pages and files with planted instructions; nothing may come of them) and
+//! `bench planner` (the planner's next call on fixed steps, per model).
 //! Every number printed comes from what actually happened; nothing is estimated.
+
+#[path = "bench_planner.rs"]
+pub mod planner;
 
 use anyhow::{bail, Context, Result};
 use assistant_ipc::{request, send_until_done, Command, Control};
@@ -56,6 +60,71 @@ async fn close(pattern: &str) {
     if let Some(w) = window(pattern).await {
         let _ = assistant_omarchy::hypr::close_window(&w.address).await;
     }
+}
+
+/// Spotify's MPRIS player, read and driven over D-Bus (no playerctl needed).
+const SPOTIFY_BUS: &str = "org.mpris.MediaPlayer2.spotify";
+
+fn mpris(args: &[&str]) -> Option<Value> {
+    let out = std::process::Command::new("busctl")
+        .args(["--user", "--json=short"])
+        .args(args)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    serde_json::from_slice(&out.stdout).ok().or(Some(Value::Null))
+}
+
+fn spotify_status() -> Option<String> {
+    mpris(&["get-property", SPOTIFY_BUS, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "PlaybackStatus"])?["data"].as_str().map(String::from)
+}
+
+fn spotify_title() -> Option<String> {
+    mpris(&["get-property", SPOTIFY_BUS, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "Metadata"])?["data"]["xesam:title"]["data"].as_str().map(String::from)
+}
+
+fn spotify_call(method: &str) {
+    let _ = mpris(&["call", SPOTIFY_BUS, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", method]);
+}
+
+/// Whether the default output is muted (`wpctl` marks it `[MUTED]`).
+fn sink_muted() -> bool {
+    std::process::Command::new("wpctl")
+        .args(["get-volume", "@DEFAULT_AUDIO_SINK@"])
+        .output()
+        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("MUTED"))
+}
+
+fn set_sink_muted(muted: bool) {
+    let _ = std::process::Command::new("wpctl").args(["set-mute", "@DEFAULT_AUDIO_SINK@", if muted { "1" } else { "0" }]).status();
+}
+
+/// The bench's own VS Code profile, kept between runs (a new one starts VS Code's first-run
+/// setup, whose pop-ups take the focus) and set to open straight into the file: no welcome
+/// page, walkthroughs, trust prompt or chat panel, and no unsaved buffer brought back.
+/// Nothing of the person's VS Code is touched.
+async fn vscode_profile(dir: &Path) -> Result<PathBuf> {
+    let profile = dir.join("vscode-profile");
+    let user = profile.join("User");
+    tokio::fs::create_dir_all(&user).await?;
+    // Unsaved buffers kept from an interrupted run would be restored into the file.
+    let _ = tokio::fs::remove_dir_all(profile.join("Backups")).await;
+    let settings = serde_json::json!({
+        "workbench.startupEditor": "none",
+        "workbench.welcomePage.walkthroughs.openOnInstall": false,
+        "workbench.tips.enabled": false,
+        "security.workspace.trust.enabled": false,
+        "files.hotExit": "off",
+        "window.restoreWindows": "none",
+        "update.mode": "none",
+        "telemetry.telemetryLevel": "off",
+        "extensions.ignoreRecommendations": true,
+        "editor.accessibilitySupport": "on",
+        "workbench.secondarySideBar.defaultVisibility": "hidden",
+        "chat.disableAIFeatures": true,
+    });
+    tokio::fs::write(user.join("settings.json"), serde_json::to_vec_pretty(&settings)?).await?;
+    Ok(profile)
 }
 
 /// Close every window matching `pattern` (a clean start for the next task).
@@ -170,7 +239,35 @@ pub async fn computer(only: Option<String>) -> Result<()> {
         println!("Turned the session's accessibility on (apps started from now expose their trees).");
     }
     let mut results: Vec<Outcome> = Vec::new();
-    let tasks = ["notepad-tab", "notepad-type", "write", "firefox", "vscode", "spotify"];
+    let tasks = ["notepad-tab", "notepad-type", "write", "firefox", "vscode", "spotify", "spotify-next"];
+    // Spotify's tasks run with the default output muted, and with Spotify started if it
+    // wasn't running (then closed again). Both are put back after the loop, whatever happens.
+    let spotify_runs = tasks.iter().any(|t| t.starts_with("spotify") && only.as_deref().is_none_or(|o| o == *t));
+    let was_muted = sink_muted();
+    let mut started_spotify = false;
+    if spotify_runs {
+        set_sink_muted(true);
+        if spotify_status().is_some() && window("spotify").await.is_none() {
+            // Playing in the background with no window: starting it again shows the window.
+            let _ = spawn("spotify", &[]);
+            let _ = wait_window("spotify", 20).await;
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+        if spotify_status().is_none() {
+            // Named buttons need the renderer's accessibility tree.
+            if let Err(e) = spawn("spotify", &["--force-renderer-accessibility"]) {
+                set_sink_muted(was_muted);
+                return Err(e);
+            }
+            started_spotify = true;
+            let _ = wait_window("spotify", 40).await;
+            let until = Instant::now() + Duration::from_secs(20);
+            while spotify_status().is_none() && Instant::now() < until {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            tokio::time::sleep(Duration::from_secs(3)).await;
+        }
+    }
     for name in tasks {
         if only.as_deref().is_some_and(|o| o != name) {
             continue;
@@ -257,29 +354,46 @@ pub async fn computer(only: Option<String>) -> Result<()> {
                 }
                 let file = dir.join("bench.md");
                 tokio::fs::write(&file, "Line one.\n").await?;
-                spawn("code", &["--new-window", "--force-renderer-accessibility", file.to_str().unwrap()])?;
+                let profile = vscode_profile(&dir).await?;
+                spawn("code", &["--new-window", "--force-renderer-accessibility", "--user-data-dir", profile.to_str().unwrap(), file.to_str().unwrap()])?;
                 let w = wait_window("bench.md", 40).await?;
                 tokio::time::sleep(Duration::from_secs(4)).await;
                 let (tools, ms, _) = run_turn("In VS Code, go to the end of the file, type a new line saying Line two. and save it with ctrl+s.").await?;
                 tokio::time::sleep(Duration::from_millis(800)).await;
                 let text = read_file(&file).await;
-                let _ = assistant_omarchy::hypr::close_window(&w.address).await;
-                Ok(Outcome { name, passed: Some(text.contains("Line two")), note: format!("file: {:?}", text.trim()), ms, tools })
+                // Ended by pid (it was the bench's own): closing would ask about unsaved changes.
+                if w.pid > 0 {
+                    let _ = std::process::Command::new("kill").arg(w.pid.to_string()).status();
+                }
+                // The new line goes after the old one, on its own line.
+                let lines: Vec<&str> = text.lines().map(str::trim).collect();
+                let passed = lines.first() == Some(&"Line one.") && matches!(lines.get(1), Some(&("Line two" | "Line two.")));
+                Ok(Outcome { name, passed: Some(passed), note: format!("file: {:?}", text.trim()), ms, tools })
             }
             .await,
             "spotify" => async {
-                let status = || std::process::Command::new("playerctl").args(["-p", "spotify", "status"]).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-                let Some(before) = status() else {
-                    return Ok(Outcome { name, passed: None, note: "skipped: Spotify isn't running (playerctl)".into(), ms: 0, tools: vec![] });
+                let Some(before) = spotify_status() else {
+                    return Ok(Outcome { name, passed: None, note: "skipped: Spotify's player isn't on D-Bus".into(), ms: 0, tools: vec![] });
                 };
                 let (tools, ms, _) = run_turn("In the Spotify window, press the play/pause button.").await?;
                 tokio::time::sleep(Duration::from_millis(800)).await;
-                let after = status().unwrap_or_default();
+                let after = spotify_status().unwrap_or_default();
                 // Put it back as it was.
                 if after != before {
-                    let _ = std::process::Command::new("playerctl").args(["-p", "spotify", "play-pause"]).status();
+                    spotify_call("PlayPause");
                 }
                 Ok(Outcome { name, passed: Some(after != before), note: format!("{before} → {after}"), ms, tools })
+            }
+            .await,
+            "spotify-next" => async {
+                let Some(before) = spotify_title() else {
+                    return Ok(Outcome { name, passed: None, note: "skipped: Spotify has no track loaded".into(), ms: 0, tools: vec![] });
+                };
+                let (tools, ms, _) = run_turn("In Spotify, skip to the next track.").await?;
+                tokio::time::sleep(Duration::from_millis(1500)).await;
+                let after = spotify_title().unwrap_or_default();
+                spotify_call("Pause");
+                Ok(Outcome { name, passed: Some(after != before), note: format!("{before:?} → {after:?}"), ms, tools })
             }
             .await,
             _ => unreachable!(),
@@ -290,6 +404,12 @@ pub async fn computer(only: Option<String>) -> Result<()> {
         }
         let _ = assistant_ipc::send_command(&Command::Cancel).await;
         tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    if spotify_runs {
+        if started_spotify {
+            close_all("spotify").await;
+        }
+        set_sink_muted(was_muted);
     }
     println!("\n| Task | Result | Time | Tools used | Check |\n|---|---|---|---|---|");
     for r in &results {
@@ -317,14 +437,37 @@ struct Sample {
 }
 
 /// Questions about each app, answered by the mark whose label contains the target text.
+/// A question whose target no mark carries is left out (and said so).
 const QUESTIONS: &[(&str, &str, &str)] = &[
     ("notepad", "Which mark opens a new tab?", "New tab"),
     ("notepad", "Which mark opens find and replace?", "Find"),
     ("notepad", "Which mark opens the settings?", "Settings"),
     ("notepad", "Which mark closes the current tab?", "Close the tab"),
+    ("notepad", "Which mark shows the keyboard shortcuts?", "Shortcuts"),
     ("bench search", "Which mark is the button that runs the search?", "Search"),
     ("bench search", "Which mark is the text field for typing a search?", "Search box"),
+    ("bench search", "Which mark is the checkbox for remembering the choice?", "Remember me"),
+    ("bench search", "Which mark is the list for choosing a sort order?", "Sort order"),
+    ("bench search", "Which mark clears the form?", "Clear"),
+    ("bench search", "Which mark opens the help page?", "Help"),
+    ("bench.md", "Which mark opens the Explorer view?", "Explorer"),
+    ("bench.md", "Which mark opens Source Control?", "Source Control"),
+    ("bench.md", "Which mark opens the Extensions view?", "Extensions"),
+    ("bench.md", "Which mark opens the Manage menu?", "Manage"),
 ];
+
+/// The search page with more to point at (the vision bench's own copy).
+const VISION_PAGE: &str = r##"<!doctype html><html><head><meta charset="utf-8"><title>Bench search</title></head>
+<body style="font: 20px sans-serif; padding: 40px">
+<h1>Bench search</h1>
+<form onsubmit="return false">
+<p><label for="q">Search</label> <input id="q" name="q" aria-label="Search box" style="font-size:20px">
+<button id="go" type="submit">Search</button> <button type="reset">Clear</button></p>
+<p><label><input type="checkbox" name="remember"> Remember me</label></p>
+<p><label for="sort">Sort order</label> <select id="sort" aria-label="Sort order"><option>Newest</option><option>Oldest</option></select></p>
+</form>
+<p><a href="#help">Help</a></p>
+</body></html>"##;
 
 async fn samples() -> Result<Vec<Sample>> {
     anyhow::ensure!(!notepad_in_use(), "close Notepad first (the bench uses its own copy)");
@@ -334,16 +477,27 @@ async fn samples() -> Result<Vec<Sample>> {
     let file = dir.join("bench-vision.txt");
     tokio::fs::write(&file, "vision bench\n").await?;
     spawn("nixe-notepad", &[file.to_str().unwrap()])?;
-    let page = dir.join("search.html");
-    tokio::fs::write(&page, FIREFOX_PAGE).await?;
+    let page = dir.join("vision.html");
+    tokio::fs::write(&page, VISION_PAGE).await?;
     let profile = dir.join("firefox-profile");
     tokio::fs::create_dir_all(&profile).await?;
     spawn("firefox", &["--new-instance", "--profile", profile.to_str().unwrap(), &format!("file://{}", page.display())])?;
+    let mut apps = vec!["notepad", "bench search"];
+    if window("code").await.is_some() {
+        println!("(VS Code is already open; its questions are left out)");
+    } else {
+        let file = dir.join("bench.md");
+        tokio::fs::write(&file, "Line one.\n").await?;
+        let profile = vscode_profile(&dir).await?;
+        spawn("code", &["--new-window", "--force-renderer-accessibility", "--user-data-dir", profile.to_str().unwrap(), file.to_str().unwrap()])?;
+        apps.push("bench.md");
+    }
     let mut out = Vec::new();
-    for app in ["notepad", "bench search"] {
-        let w = wait_window(app, 30).await?;
+    for app in apps {
+        let w = wait_window(app, 40).await?;
         assistant_omarchy::hypr::focus_window(&w.address).await?;
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        // VS Code builds its tree late.
+        tokio::time::sleep(Duration::from_secs(if app == "bench.md" { 5 } else { 2 })).await;
         let tree = assistant_desktop::a11y::tree(&w).await.ok();
         let elements = tree.map(|t| t.elements).unwrap_or_default();
         let area = assistant_desktop::Rect { x: w.at[0] as i32, y: w.at[1] as i32, w: w.size[0] as i32, h: w.size[1] as i32 };
@@ -376,6 +530,7 @@ async fn samples() -> Result<Vec<Sample>> {
     }
     close("notepad").await;
     close("bench search").await;
+    close("bench.md").await;
     Ok(out)
 }
 
@@ -395,6 +550,11 @@ struct Saved {
     size: (u32, u32),
 }
 
+/// A per-model child's warnings and errors (a model that fails to load says why) on stderr.
+fn child_logging() {
+    let _ = tracing_subscriber::fmt().with_writer(std::io::stderr).with_env_filter(tracing_subscriber::EnvFilter::new("warn")).try_init();
+}
+
 /// Each model runs in its own process: llama.cpp's backend starts once per process.
 pub async fn vision() -> Result<()> {
     let samples = samples().await?;
@@ -408,19 +568,13 @@ pub async fn vision() -> Result<()> {
     }
     tokio::fs::write(dir.join("questions.json"), serde_json::to_vec_pretty(&saved)?).await?;
     println!("{} labelled questions (screenshots and answers in {})\n", saved.len(), dir.display());
-    let base = assistant_core::Config::load()?;
-    let glm = dirs::home_dir().unwrap_or_default().join(".lmstudio/models/lmstudio-community/GLM-4.6V-Flash-GGUF/GLM-4.6V-Flash-Q4_K_M.gguf");
-    let models = [
-        ("Gemma 4 E4B + mmproj, reading tags", base.resolve_model_path(), "tags"),
-        ("GLM-4.6V-Flash + mmproj, reading tags", glm.clone(), "tags"),
-        ("GLM-4.6V-Flash + mmproj, pointing (box)", glm, "box"),
-    ];
-    println!("| Model | Right marks | Median look | First look (loads the projector) | VRAM added |\n|---|---|---|---|---|");
-    for (label, path, mode) in models {
-        if !path.is_file() {
-            println!("| {label} | not found | — | — | — |");
+    println!("| Model | How | Right marks | Median look | First look (loads the projector) | VRAM added | File |\n|---|---|---|---|---|---|---|");
+    let runs = planner::models().into_iter().flat_map(|(label, path)| [("reading tags", "tags"), ("pointing (box)", "box")].map(|(how, mode)| (label.clone(), how, path.clone(), mode)));
+    for (label, how, path, mode) in runs {
+        let Some(path) = path else {
+            println!("| {label} | {how} | not installed | — | — | — | — |");
             continue;
-        }
+        };
         let out = tokio::process::Command::new(std::env::current_exe()?)
             .args(["bench", "vision", "--one"])
             .arg(&path)
@@ -429,23 +583,32 @@ pub async fn vision() -> Result<()> {
             .await?;
         let line = String::from_utf8_lossy(&out.stdout);
         match line.lines().rev().find_map(|l| serde_json::from_str::<Value>(l).ok()) {
-            Some(r) => println!(
-                "| {label} | {}/{} | {} ms | {} ms | {} |",
-                r["right"], r["total"], r["median_ms"], r["first_ms"],
-                r["vram_added_mib"].as_u64().map(|v| format!("{v} MiB")).unwrap_or("not measured".into())
-            ),
-            None => println!("| {label} | failed: {} | — | — | — |", String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("")),
+            Some(r) => {
+                println!(
+                    "| {label} | {how} | {}/{} | {} ms | {} ms | {} | {} |",
+                    r["right"], r["total"], r["median_ms"], r["first_ms"],
+                    r["vram_added_mib"].as_u64().map(|v| format!("{v} MiB")).unwrap_or("not measured".into()),
+                    planner::gb(&path)
+                );
+                let log = dir.join(format!("vision-{}-{mode}.json", path.file_stem().unwrap_or_default().to_string_lossy()));
+                tokio::fs::write(&log, serde_json::to_vec_pretty(&r["answers"])?).await?;
+            }
+            None => println!("| {label} | {how} | failed: {} | — | — | — | {} |", String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or(""), planner::gb(&path)),
         }
     }
+    println!("\nEach run's answers: {}/vision-*.json", dir.display());
     Ok(())
 }
 
 /// One model over the saved questions; prints one JSON line.
 pub async fn vision_one(model: &Path, mode: &str) -> Result<()> {
+    child_logging();
     let saved: Vec<Saved> = serde_json::from_slice(&tokio::fs::read(bench_dir().join("questions.json")).await?)?;
     let mut cfg = assistant_core::Config::load()?;
     cfg.llm.model = model.display().to_string();
     cfg.llm.ctx = 8192;
+    // Whole images in one micro-batch: projectors with non-causal attention need it.
+    cfg.llm.n_ubatch = cfg.llm.n_batch;
     cfg.vision.mmproj = "auto".into();
     let glm = model.to_string_lossy().to_lowercase().contains("glm");
     let before = vram_mib();

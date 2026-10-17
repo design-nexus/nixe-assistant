@@ -48,7 +48,7 @@ concurrent load §4.6 asks for. Tests: 62 passed before this work (73 after) (`c
 | §6.3 files | **done in Phase 3** | One guard for every file tool (secret folders off limits, the assistant's own folders read-only); list, search, write, move, trash with backups and `files.undo`. |
 | §6.4 terminal | **mostly (Phase 3)** | Generated commands run in a bubblewrap workspace sandbox and still ask; configured commands run as the user. Admin work goes through the typed helper (Phase 4), never a root shell. |
 | §6.5 browser | mostly | Playwright worker with takeover. |
-| §6.6–6.7 computer use, vision | **mostly (Phase 6)** | Accessibility tree, numbered marks (tree + OCR), keyboard and pointer without root, evidence-checked actions, vision on demand through the LLM's image projector. The small planner model is the weak link; vision grounding is weak (Gemma 0/5, GLM-4.6V-Flash 3/5 when pointing). |
+| §6.6–6.7 computer use, vision | **mostly (Phase 6)** | Accessibility tree, numbered marks (tree + OCR), keyboard and pointer without root, evidence-checked actions, vision on demand through the LLM's image projector. Planner and vision compared across the curated models in Phase 8c (BENCHMARKS.md): Gemma 4 E4B stays the planner (18/21, 5/5 with app tools); grounding stays weak (best 7/15, GLM pointing). VS Code confirmed live; Spotify only through `media.*`. |
 | §7–8 permissions | **done in Phase 1** | See below. |
 | §9 sandboxing | partial | Bubblewrap for generated terminal commands (namespaces, read-only system, hidden home, no runtime sockets; a repository's `.git/hooks` and `.git/config` read-only since Phase 8a). No seccomp or cgroup limits yet, and plugins still run with the user's permissions. |
 | §10 privileged broker | **done in Phase 4** | `nixe-assistant-helper` behind polkit: install, remove and update repository packages, start, stop or restart system services. Typed and checked twice; no root shell. |
@@ -108,9 +108,16 @@ plus `assistant-policy`.
 - [x] Phase 8a: security tests (injection, path traversal and links, approval reuse, voice,
       sandbox escape, privilege escalation) and the fixes they called for; a global stop.
 - [x] Phase 8b: latency, graphics memory and heat under concurrent load; crash recovery.
-- [ ] Phase 8c: planner and vision benchmarks; the deferred Phase 6 work.
+- [x] Phase 8c: planner and vision benchmarks; the deferred Phase 6 work (VS Code confirmed;
+      Spotify only through `media.*`).
+- [ ] Phase 9: typed control of the Nixe apps. Each app gets a narrow D-Bus interface on its
+      GTK application id; one `nixe` plugin (an MCP worker) maps typed tools such as
+      `notepad.new_tab` and `write.insert_text` to it, through the usual policy, approvals and
+      audit. First Notepad, Write and Tasks; Settings and Store read-only at most. App requests
+      should then see the app's own tools next to the computer tools (today they see only the
+      computer tools). Measured with `bench planner`'s app-tool cases.
 
-**Recommended next milestone:** Phase 8c.
+**Recommended next milestone:** Phase 9.
 
 ## Phase 1 as built
 
@@ -239,12 +246,36 @@ plus `assistant-policy`.
   - Write: typing into a new document
   - Notepad: a new tab
   - a Firefox page: search box and Enter
-- Not yet confirmed: VS Code, Spotify.
+- VS Code confirmed in Phase 8c. Spotify isn't: playing with no window open, there's nothing to act on.
 - Known limits:
   - The planner (Gemma 4 E4B) sometimes stops early or picks the wrong key.
   - Qwen 3.5 9B was tried and wasn't better (see BENCHMARKS.md).
   - Vision grounding is weak.
-  - `bench computer` still needs work. Its Spotify task only runs if Spotify is already open.
+
+## Phase 8c as built
+
+- `planner.rs`: the planner's system prompt, worked examples, grammar and step prompt, shared by
+  `plan_tools` and the bench.
+- `bench planner [--one MODEL]`: 26 scored steps per curated model, one process per model,
+  answers in `~/.cache/nixe-assistant/bench-computer/planner-*.json`. `examples/gen.rs` keeps
+  only the chat check.
+- `bench vision`: 15 questions (Notepad, a Firefox form page, VS Code), every curated model
+  reading tags and pointing; answers in `vision-*.json`.
+- `bench computer`: VS Code runs in the bench's own profile (no first-run setup, trust prompt,
+  chat panel or restored buffers) and is checked line by line; Spotify is read over MPRIS
+  (`busctl`, no playerctl), runs with the default output muted and put back, and adds a
+  next-track task.
+- Fixes found on the way:
+  - Letter and digit shortcuts go to the window through Hyprland (`send_key_state`, down then
+    up): Electron drops a virtual keyboard's modifiers, so ctrl+s never saved in VS Code.
+  - `input.type` no longer refocuses a field that has focus (VS Code put the cursor back at the
+    start).
+  - `send_until_done` ends on a cancelled turn's wrapped Timing/Error instead of waiting out
+    its timeout.
+  - An image too large for the micro-batch on a non-causal projector is refused instead of
+    aborting the daemon (llama.cpp's assert).
+- Known: Gemma 4 12B QAT doesn't load at the configured 32768-token context on 16 GB and plans
+  at ~25 s a step; Ternary Bonsai 2 9B needs a newer bundled llama.cpp.
 
 ## Phase 7 as built
 

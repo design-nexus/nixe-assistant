@@ -206,6 +206,9 @@ pub async fn send_until_done(cmd: Command, timeout_ms: u64) -> anyhow::Result<Ve
     write.flush().await?;
     let mut lines = BufReader::new(read).lines();
     let mut out = Vec::new();
+    // This command's turn: the first turn event after sending it. A cancelled turn's own
+    // Timing/Error only arrives wrapped in Turn (the plain one is dropped as stale).
+    let mut turn = None;
     let deadline =
         tokio::time::Instant::now() + tokio::time::Duration::from_millis(timeout_ms.max(1_000));
     loop {
@@ -216,7 +219,14 @@ pub async fn send_until_done(cmd: Command, timeout_ms: u64) -> anyhow::Result<Ve
         match tokio::time::timeout(remain, lines.next_line()).await {
             Ok(Ok(Some(line))) => {
                 if let Ok(ev) = serde_json::from_str::<Event>(&line) {
-                    let done = matches!(ev, Event::Timing { .. } | Event::Error { .. });
+                    let wrapped_end = match &ev {
+                        Event::Turn { turn_id, event } => {
+                            let ours = *turn.get_or_insert(*turn_id) == *turn_id;
+                            ours && matches!(event["type"].as_str(), Some("timing" | "error"))
+                        }
+                        _ => false,
+                    };
+                    let done = wrapped_end || matches!(ev, Event::Timing { .. } | Event::Error { .. });
                     out.push(ev);
                     if done {
                         break;

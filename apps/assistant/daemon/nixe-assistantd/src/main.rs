@@ -1,4 +1,5 @@
 mod app;
+mod planner;
 mod session;
 
 use anyhow::Context;

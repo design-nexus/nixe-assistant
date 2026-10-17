@@ -206,6 +206,16 @@ pub async fn close_window(address: &str) -> Result<()> {
     dispatch(format!(r#"hl.dsp.window.close({{ window = "address:{address}" }})"#)).await
 }
 
+/// Press (`down`) or release a key with modifiers in one window, through Hyprland itself.
+/// `mods` are Hyprland's names ("CTRL SHIFT"), `key` an xkb keysym name ("s", "End").
+pub async fn send_key_state(address: &str, mods: &str, key: &str, down: bool) -> Result<()> {
+    ensure!(valid_address(address), "invalid window address");
+    ensure!(mods.chars().all(|c| c.is_ascii_uppercase() || c == ' '), "invalid modifiers");
+    ensure!(!key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'), "invalid key");
+    let state = if down { "down" } else { "up" };
+    dispatch(format!(r#"hl.dsp.send_key_state({{ mods = "{mods}", key = "{key}", state = "{state}", window = "address:{address}" }})"#)).await
+}
+
 /// Put the cursor at a layout (logical) position.
 pub async fn move_cursor(x: i32, y: i32) -> Result<()> {
     dispatch(format!("hl.dsp.cursor.move({{ x = {x}, y = {y} }})")).await

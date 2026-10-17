@@ -244,9 +244,52 @@ pub fn combo_args(combo: &str) -> Result<Vec<String>> {
     Ok(args)
 }
 
-/// Press a key combination in the focused window.
-pub async fn key(combo: &str) -> Result<()> {
-    wtype(&combo_args(combo)?).await
+/// `ctrl+s` as Hyprland's modifiers and keysym (`("CTRL", "s")`); `None` without a modifier.
+pub fn shortcut(combo: &str) -> Result<Option<(String, String)>> {
+    let parts: Vec<&str> = combo.split('+').map(str::trim).filter(|p| !p.is_empty()).collect();
+    let Some((key, mods)) = parts.split_last() else { bail!("no key given") };
+    if mods.is_empty() {
+        return Ok(None);
+    }
+    let mut names: Vec<&str> = Vec::new();
+    for m in mods {
+        let Some((_, name)) = MODIFIERS.iter().find(|(said, _)| said.eq_ignore_ascii_case(m)) else { bail!("unknown modifier “{m}”") };
+        let hypr = match *name {
+            "ctrl" => "CTRL",
+            "shift" => "SHIFT",
+            "alt" => "ALT",
+            _ => "SUPER",
+        };
+        if !names.contains(&hypr) {
+            names.push(hypr);
+        }
+    }
+    let sym = keysym(key).with_context(|| format!("unknown key “{key}”"))?;
+    Ok(Some((names.join(" "), sym)))
+}
+
+/// Press a key combination in the focused window. A letter or digit shortcut goes to `window`
+/// (a Hyprland address) through Hyprland: Electron apps such as VS Code drop a virtual
+/// keyboard's modifiers for those, so wtype's ctrl+s never saves there.
+pub async fn key(combo: &str, window: Option<&str>) -> Result<()> {
+    match (shortcut(combo)?, window) {
+        // Only letter and digit shortcuts: Electron drops wtype's modifiers there (its
+        // accelerators read the keymap), while ctrl+End and the like work through wtype and
+        // not through Hyprland.
+        (Some((mods, sym)), Some(address)) if sym.len() == 1 && sym.chars().all(|c| c.is_ascii_alphanumeric()) => {
+            let address = address.to_string();
+            // Down, then up shortly after (as Omarchy's own shortcuts do). The release runs on
+            // its own task, so a stop in between can't leave the key held.
+            hypr::send_key_state(&address, &mods, &sym, true).await?;
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                hypr::send_key_state(&address, &mods, &sym, false).await
+            })
+            .await
+            .context("release the key")?
+        }
+        _ => wtype(&combo_args(combo)?).await,
+    }
 }
 
 #[cfg(test)]
@@ -267,6 +310,15 @@ mod tests {
             let a = combo_args(c).unwrap();
             assert_eq!(a.iter().filter(|x| *x == "-M").count(), a.iter().filter(|x| *x == "-m").count(), "{c}");
         }
+    }
+
+    #[test]
+    fn shortcuts_name_hyprland_modifiers() {
+        assert_eq!(shortcut("ctrl+s").unwrap(), Some(("CTRL".into(), "s".into())));
+        assert_eq!(shortcut("Control+Shift+End").unwrap(), Some(("CTRL SHIFT".into(), "End".into())));
+        assert_eq!(shortcut("super+q").unwrap(), Some(("SUPER".into(), "q".into())));
+        assert_eq!(shortcut("enter").unwrap(), None);
+        assert!(shortcut("hyper+x").is_err());
     }
 
     #[test]

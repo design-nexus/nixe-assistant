@@ -418,7 +418,11 @@ pub async fn call(name: &str, args: &Value, cfg: &Config, looker: Option<&Looker
                             field = Some(e.name.clone());
                             let id = e.id.clone();
                             with_seen(|seen| seen.tree = Some(tree.clone()));
-                            let _ = a11y::act(&id, a11y::Act::Focus, None).await;
+                            // Focusing a field that has focus already can move its cursor
+                            // (VS Code puts it back at the start), undoing ctrl+end.
+                            if !e.states.contains(&"focused") {
+                                let _ = a11y::act(&id, a11y::Act::Focus, None).await;
+                            }
                             field_id = Some(id);
                         }
                         // No field in the tree: the app may draw its editor itself (Write's
@@ -448,7 +452,7 @@ pub async fn call(name: &str, args: &Value, cfg: &Config, looker: Option<&Looker
                 }
                 change
             } else {
-                input::key(s("combo").unwrap_or("")).await?;
+                input::key(s("combo").unwrap_or(""), Some(&w.address)).await?;
                 verify::after(before, 400).await
             };
             Ok(json!({"window": w.title, "field": field, "verified": change.verified, "evidence": change.evidence}))

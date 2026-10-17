@@ -8,7 +8,7 @@ use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{LlamaChatMessage, LlamaModel};
-use llama_cpp_2::mtmd::{mtmd_default_marker, MtmdBitmap, MtmdContext, MtmdContextParams, MtmdInputText};
+use llama_cpp_2::mtmd::{mtmd_default_marker, MtmdBitmap, MtmdContext, MtmdContextParams, MtmdInputChunkType, MtmdInputText};
 use llama_cpp_2::sampling::LlamaSampler;
 use llama_cpp_2::send_logs_to_tracing;
 use llama_cpp_2::LogOptions;
@@ -564,6 +564,16 @@ fn look_one(
     let chunks = vision
         .tokenize(MtmdInputText { text, add_special: true, parse_special: true }, &[&bitmap])
         .map_err(|e| anyhow::anyhow!("tokenize image prompt: {e}"))?;
+    // A projector with non-causal image attention (Gemma 4 12B) needs the whole image in one
+    // micro-batch; llama.cpp aborts the process otherwise, so refuse here instead.
+    if vision.decode_use_non_causal() {
+        let largest = (0..chunks.len()).filter_map(|i| chunks.get(i)).filter(|c| c.chunk_type() == MtmdInputChunkType::Image).map(|c| c.n_tokens()).max().unwrap_or(0);
+        anyhow::ensure!(
+            largest <= ctx.n_ubatch() as usize,
+            "this model's image takes {largest} tokens in one micro-batch; set llm.n_ubatch (now {}) and llm.n_batch to at least that",
+            ctx.n_ubatch()
+        );
+    }
     let mut n_cur = chunks
         .eval_chunks(vision, ctx, 0, 0, n_batch.max(1) as i32, true)
         .map_err(|e| anyhow::anyhow!("evaluate image: {e}"))?;
