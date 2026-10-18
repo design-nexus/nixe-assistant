@@ -27,6 +27,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 toml.workspace = true
 toml_edit = "0.22"
 assistant-models.workspace = true
+reqwest.workspace = true
 assistant-ipc.workspace = true
 assistant-omarchy.workspace = true
 assistant-tools.workspace = true

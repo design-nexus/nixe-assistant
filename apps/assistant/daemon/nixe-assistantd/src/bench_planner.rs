@@ -355,18 +355,47 @@ pub async fn planner() -> Result<()> {
     Ok(())
 }
 
-/// One model over every case; prints one JSON line.
-pub async fn planner_one(model: &Path) -> Result<()> {
-    super::child_logging();
-    let mut cfg = assistant_core::Config::load()?;
-    cfg.llm.model = model.display().to_string();
-    // The same context for every model (planner prompts are about 3k tokens, about 9k with
-    // every app tool offered); a larger model's KV cache at the configured size may not fit
-    // next to it.
-    cfg.llm.ctx = 12288;
-    let before = super::vram_mib();
-    let llm = assistant_inference::LlamaCppBackend::spawn(&cfg)?;
-    let (mut peak, mut times, mut all_times, mut answers) = (before, Vec::new(), Vec::new(), Vec::new());
+/// Where a case's next call comes from: the assistant's own llama.cpp, or a running
+/// llama-server (Prism's fork, for packings the bundled llama.cpp can't load).
+enum Generator {
+    Local(assistant_inference::LlamaCppBackend, i32),
+    Server(reqwest::Client, String),
+}
+
+impl Generator {
+    async fn next_call(&self, system: &str, user: &str) -> Result<String> {
+        match self {
+            Generator::Local(llm, n_predict) => {
+                let mut rx = llm
+                    .generate_with_grammar(system, &[], user, *n_predict, 0.0, Arc::new(AtomicBool::new(false)), Some(crate::planner::GRAMMAR.into()))
+                    .await?;
+                let mut out = String::new();
+                while let Some(tok) = rx.recv().await {
+                    out.push_str(&tok?);
+                }
+                Ok(out)
+            }
+            // The same prompt and grammar; the model's own chat template, with thinking off
+            // (the bundled path closes an empty think block the same way).
+            Generator::Server(client, url) => {
+                let body = json!({
+                    "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                    "grammar": crate::planner::GRAMMAR,
+                    "temperature": 0.0,
+                    "max_tokens": 768,
+                    "cache_prompt": true,
+                    "chat_template_kwargs": {"enable_thinking": false},
+                });
+                let reply: Value = client.post(format!("{url}/v1/chat/completions")).json(&body).send().await?.error_for_status()?.json().await?;
+                Ok(reply["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string())
+            }
+        }
+    }
+}
+
+/// Every case through `generator`: the counts, step times and answers, as one JSON object.
+async fn run_cases(generator: &Generator) -> Result<Value> {
+    let (mut times, mut all_times, mut answers) = (Vec::new(), Vec::new(), Vec::new());
     let (mut computer, mut typed, mut typed_all, mut detours) = (0, 0, 0, 0);
     let mut mistakes = serde_json::Map::new();
     // Detours and mistakes count the daemon's own catalogs; the all-tools pass only its rights.
@@ -382,15 +411,8 @@ pub async fn planner_one(model: &Path) -> Result<()> {
             .map(|(tool, args, result)| json!({"tool": tool, "arguments": serde_json::from_str::<Value>(args).unwrap_or_default(), "result": serde_json::from_str::<Value>(result).unwrap_or_default()}))
             .collect();
         let t = Instant::now();
-        let mut rx = llm
-            .generate_with_grammar(&system, &[], &crate::planner::step(case.ask, &[], &results), cfg.llm.n_predict, 0.0, Arc::new(AtomicBool::new(false)), Some(crate::planner::GRAMMAR.into()))
-            .await?;
-        let mut out = String::new();
-        while let Some(tok) = rx.recv().await {
-            out.push_str(&tok?);
-        }
+        let out = generator.next_call(&system, &crate::planner::step(case.ask, &[], &results)).await?;
         let ms = t.elapsed().as_millis() as u64;
-        peak = peak.max(super::vram_mib());
         let verdict = score(&out, case.expect);
         if apps == Apps::All {
             all_times.push(ms);
@@ -413,17 +435,64 @@ pub async fn planner_one(model: &Path) -> Result<()> {
         }
         answers.push(json!({"group": case.group, "ask": case.ask, "steps_done": case.done.len(), "answer": out, "verdict": verdict}));
     }
-    llm.unload().await?;
     let mut sorted = times.clone();
     sorted.sort();
     let pick = |q: f64| sorted[((sorted.len() - 1) as f64 * q).round() as usize];
     all_times.sort();
     let all_median = all_times.get(all_times.len() / 2).copied().unwrap_or(0);
-    let added = match (before, peak) {
+    Ok(json!({"computer": computer, "typed": typed, "typed_all": typed_all, "all_median_ms": all_median, "detours": detours, "mistakes": mistakes, "median_ms": pick(0.5), "p90_ms": pick(0.9), "answers": answers}))
+}
+
+/// One model over every case; prints one JSON line.
+pub async fn planner_one(model: &Path) -> Result<()> {
+    super::child_logging();
+    let mut cfg = assistant_core::Config::load()?;
+    cfg.llm.model = model.display().to_string();
+    // The same context for every model (planner prompts are about 3k tokens, about 9k with
+    // every app tool offered); a larger model's KV cache at the configured size may not fit
+    // next to it.
+    cfg.llm.ctx = 12288;
+    let before = super::vram_mib();
+    let generator = Generator::Local(assistant_inference::LlamaCppBackend::spawn(&cfg)?, cfg.llm.n_predict);
+    let mut r = run_cases(&generator).await?;
+    let peak = super::vram_mib();
+    if let Generator::Local(llm, _) = generator {
+        llm.unload().await?;
+    }
+    r["vram_added_mib"] = json!(match (before, peak) {
         (Some(b), Some(p)) => Some(p.saturating_sub(b)),
         _ => None,
-    };
-    println!("{}", json!({"computer": computer, "typed": typed, "typed_all": typed_all, "all_median_ms": all_median, "detours": detours, "mistakes": mistakes, "median_ms": pick(0.5), "p90_ms": pick(0.9), "vram_added_mib": added, "answers": answers}));
+    });
+    println!("{r}");
+    Ok(())
+}
+
+/// Every case against a running llama-server at `url` (`bench planner --server URL --label
+/// NAME`): one row of the same table, and its answers in planner-<label>.json. Graphics
+/// memory is the card's total in use, which is the server when the assistant is stopped.
+pub async fn planner_server(url: &str, label: &str) -> Result<()> {
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).build()?;
+    let url = url.trim_end_matches('/').to_string();
+    for _ in 0..120 {
+        if client.get(format!("{url}/health")).send().await.is_ok_and(|r| r.status().is_success()) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    let (computer, typed) = (CASES.iter().filter(|c| c.group == "computer").count(), CASES.iter().filter(|c| c.group == "typed").count());
+    let r = run_cases(&Generator::Server(client, url)).await?;
+    let mistakes = r["mistakes"].as_object().map(|m| m.iter().map(|(k, v)| format!("{v} {k}")).collect::<Vec<_>>().join(", ")).filter(|s| !s.is_empty()).unwrap_or("none".into());
+    println!("| Model | Computer use | App tools | All app tools | Detours | Mistakes | Median step | p90 step | Median, all tools | VRAM in use |\n|---|---|---|---|---|---|---|---|---|---|");
+    println!(
+        "| {label} | {}/{computer} | {}/{typed} | {}/{typed} | {} | {mistakes} | {} ms | {} ms | {} ms | {} |",
+        r["computer"], r["typed"], r["typed_all"], r["detours"], r["median_ms"], r["p90_ms"], r["all_median_ms"],
+        super::vram_mib().map(|v| format!("{v} MiB")).unwrap_or("not measured".into())
+    );
+    let safe: String = label.chars().map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '_' }).collect();
+    let log = super::bench_dir().join(format!("planner-{safe}.json"));
+    let _ = tokio::fs::create_dir_all(super::bench_dir()).await;
+    tokio::fs::write(&log, serde_json::to_vec_pretty(&r["answers"])?).await?;
+    println!("\nAnswers: {}", log.display());
     Ok(())
 }
 

@@ -387,6 +387,10 @@ async fn main() -> anyhow::Result<()> {
         "bench" if std::env::args().nth(2).as_deref() == Some("planner") => {
             match (std::env::args().nth(3).as_deref(), std::env::args().nth(4)) {
                 (Some("--one"), Some(model)) => bench::planner::planner_one(std::path::Path::new(&model)).await?,
+                (Some("--server"), Some(url)) => {
+                    let label = std::env::args().skip_while(|a| a != "--label").nth(1).unwrap_or_else(|| url.clone());
+                    bench::planner::planner_server(&url, &label).await?
+                }
                 _ => bench::planner::planner().await?,
             }
         }
@@ -1248,6 +1252,7 @@ fn print_help() {
            models fetch asr  download the streaming speech model (about 650 MB)\n\
            models list | search Q | files REPO | download URL | use PATH  (JSON)\n\
            bench duplex [--echo-only]  false interruptions and live interruption trials\n\
+           bench planner [--server URL --label NAME]  the planner on each model, or on a running llama-server\n\
            bench computer [TASK]  computer-use tasks in real apps, each checked\n\
            bench vision     which vision model picks the right mark (Gemma vs GLM)\n\
            bench injection  pages and files with planted instructions; nothing may come of them\n\
