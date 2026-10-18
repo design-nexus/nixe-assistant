@@ -133,45 +133,126 @@ const CASES: &[Case] = &[
     Case { group: "typed", ask: "In Contacts, add the email anna@work.example to Anna Berg.",
         done: &[("contacts.find", r#"{"query":"Anna Berg"}"#, r#"{"isError":false,"structuredContent":{"contacts":[{"id":"c-17","name":"Anna Berg","emails":[]}]}}"#)],
         expect: &[Some(("contacts.update", &[("id", M::Is("c-17")), ("add_email", M::Is("anna@work.example"))]))] },
+    // Archive
+    Case { group: "typed", ask: "In Archive, what's inside ~/Downloads/photos.zip?", done: &[],
+        expect: &[Some(("archive.list", &[("path", M::Has("photos.zip"))]))] },
+    Case { group: "typed", ask: "In Archive, extract ~/Downloads/photos.zip.", done: &[],
+        expect: &[Some(("archive.extract", &[("path", M::Has("photos.zip"))]))] },
+    Case { group: "typed", ask: "In Archive, extract ~/Downloads/photos.zip.",
+        done: &[("archive.extract", r#"{"path":"~/Downloads/photos.zip"}"#, r#"{"isError":false,"structuredContent":{"extracted":24,"to":"/home/me/Downloads/photos"}}"#)],
+        expect: &[None] },
+    Case { group: "typed", ask: "In Archive, pack ~/notes and ~/todo.txt into ~/backup.zip.", done: &[],
+        expect: &[Some(("archive.create", &[("path", M::Has("backup.zip"))]))] },
+    // Chat
+    Case { group: "typed", ask: "In Chat, find the conversation about the trip to Lisbon.", done: &[],
+        expect: &[Some(("chat.search", &[("query", M::Has("lisbon"))]))] },
+    Case { group: "typed", ask: "In Chat, read me the conversation about Lisbon.",
+        done: &[("chat.search", r#"{"query":"Lisbon"}"#, r#"{"isError":false,"structuredContent":{"conversations":[{"id":42,"title":"Lisbon trip","model":"gemma"}]}}"#)],
+        expect: &[Some(("chat.read", &[("id", M::Is("42"))]))] },
+    Case { group: "typed", ask: "In Chat, ask what the capital of Peru is.", done: &[],
+        expect: &[Some(("chat.send", &[("text", M::Has("peru"))]))] },
+    // Fonts
+    Case { group: "typed", ask: "In Fonts, install JetBrains Mono.", done: &[],
+        expect: &[Some(("fonts.install", &[("family", M::Has("jetbrains"))])), Some(("fonts.search", &[("query", M::Has("jetbrains"))]))] },
+    Case { group: "typed", ask: "In Fonts, is Inter installed?", done: &[],
+        expect: &[Some(("fonts.installed", &[]))] },
+    // Photos
+    Case { group: "typed", ask: "In Photos, show me my photos from 2023.", done: &[],
+        expect: &[Some(("photos.search", &[("year", M::Is("2023"))]))] },
+    Case { group: "typed", ask: "In Photos, which albums do I have?", done: &[],
+        expect: &[Some(("photos.albums", &[]))] },
+    // Glimpse
+    Case { group: "typed", ask: "Use Glimpse to find my tax return file.", done: &[],
+        expect: &[Some(("glimpse.search", &[("query", M::Has("tax"))]))] },
+    // Media Player
+    Case { group: "typed", ask: "In Media Player, play the next episode of Severance.", done: &[],
+        expect: &[Some(("video.play", &[("what", M::Is("show")), ("name", M::Has("severance"))])), Some(("video.play", &[("what", M::Is("episode")), ("name", M::Has("severance"))]))] },
+    Case { group: "typed", ask: "In Media Player, pause the video.", done: &[],
+        expect: &[Some(("video.control", &[("action", M::Is("pause"))])), Some(("video.control", &[("action", M::Is("toggle"))]))] },
+    // PDF
+    Case { group: "typed", ask: "In PDF, open ~/papers/attention.pdf at page 3.", done: &[],
+        expect: &[Some(("pdf.open", &[("path", M::Has("attention.pdf")), ("page", M::Is("3"))]))] },
+    Case { group: "typed", ask: "In the PDF window, go to page 12.", done: &[],
+        expect: &[Some(("pdf.go_to", &[("page", M::Is("12"))]))] },
+    Case { group: "typed", ask: "In PDF, find the word transformer.", done: &[],
+        expect: &[Some(("pdf.search", &[("text", M::Has("transformer"))]))] },
+    // Settings (shows a page; changes nothing)
+    Case { group: "typed", ask: "In Settings, open the display page.", done: &[],
+        expect: &[Some(("settings.open", &[("page", M::Has("display"))])), Some(("settings.pages", &[]))] },
+    // Store (looks and shows; installs nothing)
+    Case { group: "typed", ask: "In Store, is GIMP installed?", done: &[],
+        expect: &[Some(("store.search", &[("query", M::Has("gimp"))]))] },
+    Case { group: "typed", ask: "In Store, install GIMP.", done: &[],
+        expect: &[Some(("store.open", &[("query", M::Has("gimp"))])), Some(("store.search", &[("query", M::Has("gimp"))]))] },
+    // Tasks
+    Case { group: "typed", ask: "In Tasks, what's using the most memory?", done: &[],
+        expect: &[Some(("tasks.top", &[("by", M::Is("memory"))]))] },
+    Case { group: "typed", ask: "In Tasks, what's using the most memory?",
+        done: &[("tasks.top", r#"{"by":"memory"}"#, r#"{"isError":false,"structuredContent":{"processes":[{"name":"firefox","memory_mib":2310}],"memory_used_mib":11800}}"#)],
+        expect: &[None] },
+    // Torrents
+    Case { group: "typed", ask: "Pause all my torrents.", done: &[],
+        expect: &[Some(("torrents.pause", &[("all", M::Is("true"))]))] },
+    Case { group: "typed", ask: "Add this magnet link to Torrents: magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567", done: &[],
+        expect: &[Some(("torrents.add", &[("link", M::Has("magnet:?xt=urn:btih:0123456789abcdef"))]))] },
 ];
 
-/// App tools for the typed group: `media.*` as the media ability defines them, and Notepad's
-/// and Write's own tools as the nixe-apps ability defines them.
-const TYPED: &[(&str, &str, &str)] = &[
+/// `media.*` as the media ability defines them (offered with every typed case, for Spotify).
+/// The Nixe apps' own tools come from the nixe-apps ability itself (`app_tools`).
+const MEDIA: &[(&str, &str, &str)] = &[
     ("media.status", "Read current song and playback state", r#"{"type":"object","properties":{"player":{"type":"string"}}}"#),
     ("media.control", "Play, pause, toggle, next, previous, or stop a media player", r#"{"type":"object","properties":{"player":{"type":"string"},"action":{"type":"string","enum":["play","pause","toggle","next","previous","stop"]}},"required":["action"]}"#),
-    ("notepad.new_tab", "Open a new, empty Notepad tab.", r#"{"type":"object","properties":{}}"#),
-    ("notepad.open", "Open a text file (inside the home folder) in a Notepad tab.", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
-    ("notepad.read", "Read the current Notepad tab: name, file and text.", r#"{"type":"object","properties":{}}"#),
-    ("notepad.tabs", "List Notepad's tabs: name, file, unsaved changes.", r#"{"type":"object","properties":{}}"#),
-    ("notepad.insert_text", "Insert text into the current Notepad tab, at the cursor or at the end.", r#"{"type":"object","properties":{"text":{"type":"string"},"at":{"enum":["cursor","end"]}},"required":["text"]}"#),
-    ("notepad.save", "Save the current Notepad tab; give a path (inside the home folder) for an untitled tab or to save under a new name.", r#"{"type":"object","properties":{"path":{"type":"string"},"overwrite":{"type":"boolean"}}}"#),
-    ("write.new_document", "Start a new, empty Write document.", r#"{"type":"object","properties":{}}"#),
-    ("write.open", "Open a document (inside the home folder) in Write.", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
-    ("write.read", "Read the open Write document: title, file and text (as Markdown).", r#"{"type":"object","properties":{}}"#),
-    ("write.insert_text", "Insert text into the Write document at the cursor or the end; each line is a paragraph in the given style.", r#"{"type":"object","properties":{"text":{"type":"string"},"style":{"enum":["body","title","heading1","heading2","heading3","quote"]},"at":{"enum":["cursor","end"]}},"required":["text"]}"#),
-    ("write.save", "Save the Write document; give a path (inside the home folder; .nwrite, .odt, .docx, .md...) for a new document or to save under a new name.", r#"{"type":"object","properties":{"path":{"type":"string"},"overwrite":{"type":"boolean"}}}"#),
-    ("music.search", "Search the music library: tracks, albums, artists and playlists matching the words.", r#"{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}"#),
-    ("music.play", "Play a track, album, artist or playlist from the library (by name), optionally shuffled.", r#"{"type":"object","properties":{"what":{"enum":["track","album","artist","playlist"]},"name":{"type":"string"},"shuffle":{"type":"boolean"}},"required":["what","name"]}"#),
-    ("music.queue", "Add a track, album, artist or playlist to the queue: next, or at the end.", r#"{"type":"object","properties":{"what":{"enum":["track","album","artist","playlist"]},"name":{"type":"string"},"next":{"type":"boolean"}},"required":["what","name"]}"#),
-    ("music.status", "What Music is playing: track, artist, album, playing or paused, shuffle, repeat, what's next.", r#"{"type":"object","properties":{}}"#),
-    ("music.control", "Play, pause, toggle, next, previous or stop in Music; or set shuffle on/off.", r#"{"type":"object","properties":{"action":{"enum":["play","pause","toggle","next","previous","stop","shuffle_on","shuffle_off"]}},"required":["action"]}"#),
-    ("contacts.find", "Find contacts by name, company, email or phone: their details.", r#"{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}"#),
-    ("contacts.add", "Add a new contact.", r#"{"type":"object","properties":{"first":{"type":"string"},"last":{"type":"string"},"company":{"type":"string"},"emails":{"type":"array"},"phones":{"type":"array"}},"required":["first"]}"#),
-    ("contacts.update", "Change a contact's details (by id from contacts.find) or add an email or phone; nothing is removed.", r#"{"type":"object","properties":{"id":{"type":"string"},"company":{"type":"string"},"add_email":{"type":"string"},"add_phone":{"type":"string"}},"required":["id"]}"#),
-    ("write.export_pdf", "Export the Write document as a PDF (a path inside the home folder ending in .pdf).", r#"{"type":"object","properties":{"path":{"type":"string"},"overwrite":{"type":"boolean"}},"required":["path"]}"#),
 ];
 
+/// The Nixe apps' tools exactly as the nixe-apps ability in this checkout lists them (all 55),
+/// read from its own table so the bench can't drift from what the daemon is offered.
+fn app_tools() -> &'static [Value] {
+    static TOOLS: std::sync::OnceLock<Vec<Value>> = std::sync::OnceLock::new();
+    TOOLS.get_or_init(|| {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let script = "import json, sys\nsys.path[:0] = sys.argv[1:3]\nimport main\nprint(json.dumps(main.request_tools(main.TOOLS)))";
+        let out = std::process::Command::new("python3")
+            .args(["-I", "-c", script])
+            .arg(root.join("abilities/nixe-apps"))
+            .arg(root.join("plugin-sdk"))
+            .output()
+            .expect("python3 runs the nixe-apps ability's tool table");
+        assert!(out.status.success(), "nixe-apps tool table: {}", String::from_utf8_lossy(&out.stderr));
+        serde_json::from_slice(&out.stdout).expect("nixe-apps tools are JSON")
+    })
+}
+
+/// Which app tools a typed case offers: the ones the daemon offers for this request (the app it
+/// names), or every one of them.
+#[derive(Clone, Copy, PartialEq)]
+enum Apps {
+    None,
+    Named,
+    All,
+}
+
 /// The catalog an app request sees in the daemon: computer and window tools (computer use
-/// asks first; window tools are allowed by default). The typed group adds the app tools.
-fn catalog(typed: bool) -> Value {
+/// asks first; window tools are allowed by default), and for typed cases `media.*` and the app
+/// tools.
+fn catalog(ask: &str, apps: Apps) -> Value {
     let entry = |(name, description, schema): &(&str, &str, &str), permission: &str| {
         json!({"name": name, "description": description, "inputSchema": serde_json::from_str::<Value>(schema).unwrap_or(json!({})), "permission": permission})
     };
     let mut tools: Vec<Value> = assistant_tools::system::TOOLS.iter().filter(|t| t.0.starts_with("windows.")).map(|t| entry(t, "allow")).collect();
     tools.extend(assistant_tools::computer::TOOLS.iter().map(|t| entry(t, "ask")));
-    if typed {
-        tools.extend(TYPED.iter().map(|t| entry(t, "allow")));
+    if apps != Apps::None {
+        tools.extend(MEDIA.iter().map(|t| entry(t, "allow")));
+        let named = crate::session::app_tool_prefixes(ask);
+        tools.extend(
+            app_tools()
+                .iter()
+                .filter(|t| apps == Apps::All || named.iter().any(|p| t["name"].as_str().unwrap_or("").starts_with(p)))
+                .map(|t| {
+                    let mut t = t.clone();
+                    t["permission"] = json!("allow");
+                    t
+                }),
+        );
     }
     Value::Array(tools)
 }
@@ -203,7 +284,12 @@ fn score(out: &str, expect: &[Alt]) -> &'static str {
         }
         tool_seen = true;
         let fits = needs.iter().all(|(key, m)| {
-            let v = args[*key].as_str().unwrap_or("");
+            let v = match &args[*key] {
+                Value::String(s) => s.clone(),
+                Value::Null => String::new(),
+                other => other.to_string(),
+            };
+            let v = v.as_str();
             match m {
                 M::Is(want) => norm(v) == norm(want),
                 M::Has(want) => v.to_lowercase().contains(&want.to_lowercase()),
@@ -240,23 +326,24 @@ pub(crate) fn gb(path: &Path) -> String {
 /// Each model runs in its own process: llama.cpp's backend starts once per process.
 pub async fn planner() -> Result<()> {
     let (computer, typed) = (CASES.iter().filter(|c| c.group == "computer").count(), CASES.iter().filter(|c| c.group == "typed").count());
-    println!("{computer} computer-use steps, {typed} with the app's own tools offered\n");
-    println!("| Model | Computer use | App tools | Detours | Mistakes | Median step | p90 step | VRAM added | File |\n|---|---|---|---|---|---|---|---|---|");
+    let all = format!("{} app tools + media", app_tools().len());
+    println!("{computer} computer-use steps, {typed} with the app's own tools offered: the named app's (as the daemon does), then all {all}\n");
+    println!("| Model | Computer use | App tools | All {all} | Detours | Mistakes | Median step | p90 step | Median, all tools | VRAM added | File |\n|---|---|---|---|---|---|---|---|---|---|---|");
     for (label, path) in models() {
         let Some(path) = path else {
-            println!("| {label} | not installed | — | — | — | — | — | — | — |");
+            println!("| {label} | not installed | — | — | — | — | — | — | — | — | — |");
             continue;
         };
         let out = tokio::process::Command::new(std::env::current_exe()?).args(["bench", "planner", "--one"]).arg(&path).output().await?;
         let stdout = String::from_utf8_lossy(&out.stdout);
         let Some(r) = stdout.lines().rev().find_map(|l| serde_json::from_str::<Value>(l).ok()) else {
-            println!("| {label} | failed: {} | — | — | — | — | — | — | {} |", String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or(""), gb(&path));
+            println!("| {label} | failed: {} | — | — | — | — | — | — | — | — | {} |", String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or(""), gb(&path));
             continue;
         };
         let mistakes = r["mistakes"].as_object().map(|m| m.iter().map(|(k, v)| format!("{v} {k}")).collect::<Vec<_>>().join(", ")).filter(|s| !s.is_empty()).unwrap_or("none".into());
         println!(
-            "| {label} | {}/{computer} | {}/{typed} | {} | {mistakes} | {} ms | {} ms | {} | {} |",
-            r["computer"], r["typed"], r["detours"], r["median_ms"], r["p90_ms"],
+            "| {label} | {}/{computer} | {}/{typed} | {}/{typed} | {} | {mistakes} | {} ms | {} ms | {} ms | {} | {} |",
+            r["computer"], r["typed"], r["typed_all"], r["detours"], r["median_ms"], r["p90_ms"], r["all_median_ms"],
             r["vram_added_mib"].as_u64().map(|v| format!("{v} MiB")).unwrap_or("not measured".into()),
             gb(&path)
         );
@@ -273,16 +360,22 @@ pub async fn planner_one(model: &Path) -> Result<()> {
     super::child_logging();
     let mut cfg = assistant_core::Config::load()?;
     cfg.llm.model = model.display().to_string();
-    // The same context for every model (planner prompts are about 3k tokens); a larger
-    // model's KV cache at the configured size may not fit next to it.
-    cfg.llm.ctx = 8192;
+    // The same context for every model (planner prompts are about 3k tokens, about 9k with
+    // every app tool offered); a larger model's KV cache at the configured size may not fit
+    // next to it.
+    cfg.llm.ctx = 12288;
     let before = super::vram_mib();
     let llm = assistant_inference::LlamaCppBackend::spawn(&cfg)?;
-    let (mut peak, mut times, mut answers) = (before, Vec::new(), Vec::new());
-    let (mut computer, mut typed, mut detours) = (0, 0, 0);
+    let (mut peak, mut times, mut all_times, mut answers) = (before, Vec::new(), Vec::new(), Vec::new());
+    let (mut computer, mut typed, mut typed_all, mut detours) = (0, 0, 0, 0);
     let mut mistakes = serde_json::Map::new();
-    for case in CASES {
-        let system = crate::planner::system(&catalog(case.group == "typed"), "", "", "", true);
+    // Detours and mistakes count the daemon's own catalogs; the all-tools pass only its rights.
+    let runs = CASES
+        .iter()
+        .map(|c| (c, if c.group == "typed" { Apps::Named } else { Apps::None }))
+        .chain(CASES.iter().filter(|c| c.group == "typed").map(|c| (c, Apps::All)));
+    for (case, apps) in runs {
+        let system = crate::planner::system(&catalog(case.ask, apps), "", "", "", true);
         let results: Vec<Value> = case
             .done
             .iter()
@@ -296,9 +389,16 @@ pub async fn planner_one(model: &Path) -> Result<()> {
         while let Some(tok) = rx.recv().await {
             out.push_str(&tok?);
         }
-        times.push(t.elapsed().as_millis() as u64);
+        let ms = t.elapsed().as_millis() as u64;
         peak = peak.max(super::vram_mib());
         let verdict = score(&out, case.expect);
+        if apps == Apps::All {
+            all_times.push(ms);
+            typed_all += usize::from(verdict == "right");
+            answers.push(json!({"group": "all app tools", "ask": case.ask, "steps_done": case.done.len(), "answer": out, "verdict": verdict}));
+            continue;
+        }
+        times.push(ms);
         if verdict == "right" {
             if case.group == "typed" {
                 typed += 1;
@@ -317,11 +417,13 @@ pub async fn planner_one(model: &Path) -> Result<()> {
     let mut sorted = times.clone();
     sorted.sort();
     let pick = |q: f64| sorted[((sorted.len() - 1) as f64 * q).round() as usize];
+    all_times.sort();
+    let all_median = all_times.get(all_times.len() / 2).copied().unwrap_or(0);
     let added = match (before, peak) {
         (Some(b), Some(p)) => Some(p.saturating_sub(b)),
         _ => None,
     };
-    println!("{}", json!({"computer": computer, "typed": typed, "detours": detours, "mistakes": mistakes, "median_ms": pick(0.5), "p90_ms": pick(0.9), "vram_added_mib": added, "answers": answers}));
+    println!("{}", json!({"computer": computer, "typed": typed, "typed_all": typed_all, "all_median_ms": all_median, "detours": detours, "mistakes": mistakes, "median_ms": pick(0.5), "p90_ms": pick(0.9), "vram_added_mib": added, "answers": answers}));
     Ok(())
 }
 
@@ -349,16 +451,32 @@ mod tests {
 
     #[test]
     fn typed_tools_only_in_the_typed_catalog() {
-        let names = |v: Value| v.as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect::<Vec<_>>();
-        assert!(!names(catalog(false)).iter().any(|n| n.starts_with("media.")));
-        assert!(names(catalog(true)).iter().any(|n| n == "media.control"));
-        assert!(names(catalog(false)).iter().any(|n| n == "input.key"));
+        let ask = "In Notepad, type hello";
+        assert!(!names_in(&catalog(ask, Apps::None)).iter().any(|n| n.starts_with("media.") || n.starts_with("notepad.")));
+        assert!(names_in(&catalog(ask, Apps::Named)).iter().any(|n| n == "media.control"));
+        assert!(names_in(&catalog(ask, Apps::None)).iter().any(|n| n == "input.key"));
+    }
+
+    #[test]
+    fn named_offers_one_app_and_all_offers_every_one() {
+        let named = names_in(&catalog("In PDF, go to page 4", Apps::Named));
+        assert!(named.iter().any(|n| n == "pdf.go_to") && !named.iter().any(|n| n.starts_with("write.")));
+        let all = names_in(&catalog("In PDF, go to page 4", Apps::All));
+        assert_eq!(all.iter().filter(|n| !n.starts_with("media.") && n.contains('.') && app_tools().iter().any(|t| t["name"] == n.as_str())).count(), 55);
+    }
+
+    #[test]
+    fn numbers_and_flags_score_as_text() {
+        let page: &[Alt] = &[Some(("pdf.go_to", &[("page", M::Is("12"))]))];
+        assert_eq!(score(r#"{"tool":"pdf.go_to","arguments":{"page":12}}"#, page), "right");
+        let all: &[Alt] = &[Some(("torrents.pause", &[("all", M::Is("true"))]))];
+        assert_eq!(score(r#"{"tool":"torrents.pause","arguments":{"all":true}}"#, all), "right");
     }
 
     #[test]
     fn every_expected_tool_is_offered() {
         for case in CASES {
-            let offered = names_in(&catalog(case.group == "typed"));
+            let offered = names_in(&catalog(case.ask, if case.group == "typed" { Apps::Named } else { Apps::None }));
             for (tool, _) in case.expect.iter().flatten() {
                 assert!(offered.contains(&tool.to_string()), "{tool} isn't in the catalog for {:?}", case.ask);
             }

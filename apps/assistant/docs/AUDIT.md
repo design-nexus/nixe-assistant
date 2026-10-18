@@ -118,9 +118,10 @@ plus `assistant-policy`.
 - [x] Phase 11: typed control of every other Nixe app (Archive, Chat, Fonts, Photos, Glimpse,
       Media Player, PDF, Settings, Store, Tasks, Torrents); live checks still to run.
 
-**Recommended next milestone:** run the Phase 11 live checks (`bench planner` with the new
-apps' cases, and one live task per app), then measure the planner with all 55 app tools in
-the catalogue.
+**Recommended next milestone:** one live task per Phase 11 app (`bench computer`, test
+data, sending and installing steps approved or denied, not carried out). The planner checks
+are done (2026-10-17, BENCHMARKS.md): Gemma 4 E4B gets 23 of the 24 new steps, and offering
+all 55 app tools costs it one step and no time.
 
 ## Phase 1 as built
 
@@ -257,8 +258,8 @@ the catalogue.
 
 ## Phase 11 as built
 
-Built and unit-tested on 2026-10-16 without opening windows or playing sound (the live
-checks are for the next session).
+Built and unit-tested on 2026-10-16 without opening windows or playing sound. Planner
+checked on 2026-10-17 (24 new steps; see BENCHMARKS.md); the live tasks are still to run.
 
 - Through `nixe_core::control` in each app (`src/control.rs`):
   - Archive: `archive.list`, `open`, `extract` (into a new folder beside it by default;

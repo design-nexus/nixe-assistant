@@ -133,6 +133,25 @@ Live, through the planner and checked against the app:
 - "In the Firefox window titled Bench search, search the page for nixe": the title became
   "searched: nixe"
 
+## Every Nixe app's tools (Phase 11, 2026-10-17)
+
+`bench planner` with 42 app-tool steps (24 new: Archive, Chat, Fonts, Photos, Glimpse, Media
+Player, PDF, Settings, Store, Tasks, Torrents). The app tools are read from the nixe-apps
+ability itself. Each step runs twice: with the named app's tools (as the daemon offers them),
+then with all 55 app tools and `media.*`:
+
+| Model | Computer use | App tools | All 55 + media | Median step | Median, all tools | VRAM added |
+|---|---|---|---|---|---|---|
+| Gemma 4 E4B (Q4_K_M) | 19/21 | 39/42 | 38/42 | 792 ms | 721 ms | 4457 MiB |
+| Qwen 3.5 9B (Q4_K_M) | 16/21 | 38/42 | 40/42 | 1245 ms | 2847 ms | 5989 MiB |
+| Gemma 4 E2B (Q4_K_M) | 13/21 | 32/42 | 33/42 | 729 ms | 642 ms | 2535 MiB |
+
+Gemma E4B gets 23 of the 24 new steps. Its miss: "In Media Player, pause the video" calls
+`media.control` (the media ability) instead of `video.control`. Its other misses are older:
+"type hello and save it" starts with a new tab, and "play Hey Jude next" uses `music.play`.
+With every app tool offered it also answers "In Music, what's playing?" with `media.status`.
+Offering all 55 tools doesn't slow Gemma down; Qwen's median step more than doubles.
+
 ## Music and Contacts tools (Phase 10, 2026-10-16)
 
 `bench planner` with 18 app-tool steps (Notepad, Write, Music, Contacts, media):

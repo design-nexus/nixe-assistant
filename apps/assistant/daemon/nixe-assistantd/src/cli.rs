@@ -2,6 +2,9 @@
 mod bench;
 #[path = "planner.rs"]
 mod planner;
+#[path = "session.rs"]
+#[allow(dead_code)]
+mod session;
 
 use anyhow::Context;
 use assistant_ipc::{
