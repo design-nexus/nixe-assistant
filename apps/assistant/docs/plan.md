@@ -17,8 +17,12 @@ power-off refusal.
 stay loaded), `intent_allowed` via `assistant-tools`, capture-start and
 playback-cancel traces.
 
-First-phrase audio still waits on Kokoro for that phrase; later phrases already
-overlap LLM tokens. Streaming Kokoro PCM is Phase 2+ polish if needed.
+First-phrase audio still waits on Kokoro for that phrase (Kokoro synthesizes a whole
+phrase per call; it can't stream inside one); later phrases already overlap LLM tokens.
+Since 2026-10-17 the first phrase ends at a comma after two words or after five words, so
+Kokoro starts sooner and has less to say; the second may run to ten words and later ones
+to twenty. Cuts happen only between whole words, and "3.5" or "10:30" never split.
+Not yet measured live (`perf`, `bench duplex`).
 
 ## Phase 2 — AEC (done)
 
