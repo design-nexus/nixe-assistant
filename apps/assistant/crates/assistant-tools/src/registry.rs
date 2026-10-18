@@ -686,6 +686,7 @@ mod lifecycle_tests {
                     "FIXTURE_LOG".into(),
                     log.display().to_string(),
                 )]),
+                sandbox: None,
             },
         );
         let registry = Registry::load_worker(&cfg).await;

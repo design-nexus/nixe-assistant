@@ -1,6 +1,6 @@
 manifest_version = 1
 id = "media"
-version = "1.0.0"
+version = "1.1.0"
 description = "MPRIS playback and application volume"
 executable = "python3"
 args = ["./main.py"]
@@ -20,3 +20,8 @@ template = true
 pattern = "^(?i:(?P<action>play|pause|stop|next|previous|toggle) (?:music|media|track))$"
 tool = "media.control"
 template = true
+
+# What it may reach (see docs/PLUGINS.md). Empty: no network, no home folder.
+[sandbox]
+sockets = ["session-bus", "pipewire"]
+talk = ["org.mpris.MediaPlayer2.*"]

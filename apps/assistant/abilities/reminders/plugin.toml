@@ -1,6 +1,6 @@
 manifest_version = 1
 id = "reminders"
-version = "1.0.0"
+version = "1.1.0"
 description = "Persistent local reminders"
 executable = "python3"
 args = ["./main.py"]
@@ -20,3 +20,6 @@ template = true
 pattern = "^(?i:(?P<request>a ?m|p ?m))$"
 tool = "reminders.voice"
 template = true
+
+# What it may reach (see docs/PLUGINS.md). Empty: no network, no home folder.
+[sandbox]

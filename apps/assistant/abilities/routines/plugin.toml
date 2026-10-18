@@ -1,6 +1,6 @@
 manifest_version = 1
 id = "routines"
-version = "1.0.0"
+version = "1.1.0"
 description = "Named routines with reviewed host dispatch"
 executable = "python3"
 args = ["./main.py"]
@@ -30,3 +30,6 @@ template = true
 pattern = "^(?i:start (?P<name>coding|work|writing))$"
 tool = "routines.run"
 template = true
+
+# What it may reach (see docs/PLUGINS.md). Empty: no network, no home folder.
+[sandbox]

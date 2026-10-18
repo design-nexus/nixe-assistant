@@ -40,6 +40,7 @@ fn manifest(id: &str, tools: Vec<String>, args: Vec<String>) -> Manifest {
         routes: vec![],
         providers: vec![],
         settings_schema: json!({"type":"object","additionalProperties":false}),
+        sandbox: None,
     }
 }
 fn package(m: &Manifest) {
@@ -81,6 +82,7 @@ async fn manifest_dispatch_reload_disable_and_extraction() {
                 "FIXTURE_LOG".into(),
                 temp.path().join("log").display().to_string(),
             )]),
+            sandbox: None,
         },
     );
     let manager = PluginManager::new();

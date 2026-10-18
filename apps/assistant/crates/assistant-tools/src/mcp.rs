@@ -32,6 +32,8 @@ pub struct McpClient {
     pending: Pending,
     reader: tokio::task::JoinHandle<()>,
     child: Mutex<Child>,
+    /// The plugin's session-bus proxy, if it has one; stopped with it.
+    proxy: Mutex<Option<Child>>,
     alive: Arc<AtomicBool>,
     events: Arc<Mutex<Vec<Value>>>,
 }
@@ -100,9 +102,15 @@ impl McpClient {
         args: &[String],
         env: &HashMap<String, String>,
     ) -> Result<Self> {
-        let mut child = Command::new(command)
-            .args(args)
-            .envs(env)
+        let mut cmd = Command::new(command);
+        cmd.args(args).envs(env);
+        Self::spawn_prepared(name, crate::plugin_sandbox::Prepared { command: cmd, proxy: None, fds: Vec::new() }).await
+    }
+
+    /// Starts a command made by `plugin_sandbox::prepare`.
+    pub async fn spawn_prepared(name: &str, prepared: crate::plugin_sandbox::Prepared) -> Result<Self> {
+        let crate::plugin_sandbox::Prepared { command: mut cmd, proxy, fds } = prepared;
+        let mut child = cmd
             .process_group(0)
             .kill_on_drop(true)
             .stdin(std::process::Stdio::piped())
@@ -110,6 +118,8 @@ impl McpClient {
             .stderr(std::process::Stdio::inherit())
             .spawn()
             .with_context(|| format!("spawn MCP server {name}"))?;
+        // The child has its copies; the proxy must stop when the sandbox does.
+        drop(fds);
         let stdin = Arc::new(AsyncMutex::new(child.stdin.take().context("MCP stdin")?));
         let stdout = child.stdout.take().context("MCP stdout")?;
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
@@ -174,6 +184,7 @@ impl McpClient {
             pending,
             reader,
             child: Mutex::new(child),
+            proxy: Mutex::new(proxy),
             alive,
             events,
         };
@@ -212,6 +223,9 @@ impl McpClient {
                 }
             }
             let _ = child.start_kill();
+        }
+        if let Some(proxy) = self.proxy.lock().ok().as_mut().and_then(|p| p.as_mut()) {
+            let _ = proxy.start_kill();
         }
     }
     pub async fn extension(

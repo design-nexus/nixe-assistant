@@ -50,7 +50,7 @@ concurrent load §4.6 asks for. Tests: 62 passed before this work (73 after) (`c
 | §6.5 browser | mostly | Playwright worker with takeover. |
 | §6.6–6.7 computer use, vision | **mostly (Phase 6)** | Accessibility tree, numbered marks (tree + OCR), keyboard and pointer without root, evidence-checked actions, vision on demand through the LLM's image projector. Planner and vision compared across the curated models in Phase 8c (BENCHMARKS.md): Gemma 4 E4B stays the planner (18/21, 5/5 with app tools); grounding stays weak (best 7/15, GLM pointing). VS Code confirmed live; Spotify only through `media.*`. |
 | §7–8 permissions | **done in Phase 1** | See below. |
-| §9 sandboxing | partial | Bubblewrap for generated terminal commands (namespaces, read-only system, hidden home, no runtime sockets; a repository's `.git/hooks` and `.git/config` read-only since Phase 8a). No seccomp or cgroup limits yet, and plugins still run with the user's permissions. |
+| §9 sandboxing | **done (2026-10-17)** | Every plugin runs in bubblewrap with what its manifest's `[sandbox]` declares (default: no network, no home), a seccomp filter, and a systemd scope with memory, task and CPU limits; session-bus access through `xdg-dbus-proxy` with declared names. Generated terminal commands also get the filter and limits. Seven first-party plugins that start desktop programs are unconfined (limits only). See PLUGINS.md "Sandbox". |
 | §10 privileged broker | **done in Phase 4** | `nixe-assistant-helper` behind polkit: install, remove and update repository packages, start, stop or restart system services. Typed and checked twice; no root shell. |
 | §11.1 voice authorization | partial | Wake word and AEC exist. High-impact tools, and since Phase 8a writes to files that run code later, refuse a spoken approve; only the exact phrases count. The rest accept it. No speaker recognition. |
 | §11.2 prompt injection | **mostly (Phase 8a)** | Tool results are untrusted data; the grammar admits only registered tools. Computer use can't reach Settings or the Store; sending out after reading private data and untrusted content asks; task-wide approvals are bound to one window or folder. `bench injection` passes. |
@@ -72,9 +72,10 @@ plus `assistant-policy`.
 - **Voice approvals.** A spoken "approve" from a video or another person counted. Since
   Phase 1, generated commands, shutdown and captures need a key press; other tools still
   take a spoken approval (§11.1).
-- **Plugin trust.** Plugins share the daemon's uid. The worker's grant check (Phase 1) stops
-  accidental unchecked calls from the host, not a hostile process with the same uid; that
-  needs the sandbox (§9).
+- **Plugin trust.** Plugins run in the sandbox their manifest declares (§9). The unconfined
+  first-party plugins (apps, desktop commands, terminal, coding agents, admin, Nixe apps,
+  browser) still share the daemon's uid, and a plugin given the `hyprland` or `systemd`
+  socket can start programs outside its sandbox.
 - **Wayland.** Synthetic input and screen capture depend on compositor and portal support;
   computer use (§6.6) will cover fewer apps than X11 automation would.
 - **GPU.** ORT ships no sm_120 kernels, so ONNX models (Kokoro, a vision model) run on CPU

@@ -7,6 +7,7 @@ pub mod computer;
 pub mod fs;
 pub mod jobs;
 pub mod mcp;
+pub mod plugin_sandbox;
 pub mod plugins;
 pub mod registry;
 pub mod relevance;

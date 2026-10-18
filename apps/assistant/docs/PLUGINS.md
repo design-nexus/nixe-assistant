@@ -6,9 +6,10 @@ processes. Updating `nixe-assistant-plugin-worker` does not require rebuilding
 the daemon or TUI. Processes are started only for enabled packages; no crash
 restart loop is used. Use `plugins reload ID` to retry.
 
-**Plugin programs run with your account permissions. MCP confirmation is not an
-operating-system sandbox.** Review executable code and dependencies before
-installing. The installer does not execute installation hooks. Native dynamic
+**Each plugin runs in an operating-system sandbox that its manifest declares**
+(see "Sandbox" below). A plugin that declares nothing gets no network and none of
+your home folder. Still review executable code and dependencies before installing:
+what a plugin declares, it can use. The installer does not execute installation hooks. Native dynamic
 libraries are not a plugin interface; scripts and compiled executables are.
 
 Packages live in `$XDG_DATA_HOME/nixe-assistant/abilities/ID` (normally
@@ -72,6 +73,9 @@ providers = []
 [settings_schema]
 type = "object"
 additionalProperties = false
+
+[sandbox]
+network = true
 ```
 
 `executable` and `args` are argument arrays, never a shell string. Arguments
@@ -79,6 +83,44 @@ beginning `./` resolve within the installed package. Do not depend on the daemon
 working directory. The host provides `ASSISTANT_PLUGIN_ID`,
 `ASSISTANT_PLUGIN_DATA`, `ASSISTANT_PLUGIN_SETTINGS` (JSON) and
 `ASSISTANT_CONFIG` (compatibility settings for bundled workers).
+
+### Sandbox
+
+Every plugin runs in bubblewrap, under a seccomp filter, in its own systemd scope
+(`nixe-assistant-plugin-ID-…`) with memory, process and CPU limits. `[sandbox]`
+declares what it may reach; without one it gets the strictest sandbox. Inside:
+
+- the system (`/usr`, `/etc`, `/opt`, `/sys`) read-only, its own `/proc`, `/dev` and
+  `/tmp`;
+- an empty home folder holding only its package (read-only) and its data folder
+  (`ASSISTANT_PLUGIN_DATA`, writable), plus the folder its program lives in when that is
+  under home (a bare command name is looked up first, and a one-line `exec` wrapper is
+  followed to the program it runs);
+- no network, no desktop sockets and a cleared environment (the variables above, `PATH`,
+  `HOME`, `LANG`).
+
+| Key | Grants |
+|---|---|
+| `network = true` | The network and DNS. |
+| `home = "read"` / `"write"` | Your home folder. Secret folders (`.ssh`, `.gnupg`, keyrings, browser profiles) are always hidden; with `write`, the assistant's own folders stay read-only. |
+| `read = ["~/Music"]`, `write = [...]` | Those folders or files only. Never secret folders; never the assistant's own folders for writing. |
+| `sockets = [...]` | `wayland`, `pipewire`, `hyprland` (its control socket can start programs), `system-bus`, `session-bus` (filtered, below), `systemd` (the user service manager; needs `host_processes`). |
+| `talk = ["org.mpris.MediaPlayer2.*"]` | With `session-bus`: the only names it may call, through `xdg-dbus-proxy`. A trailing `*` covers a prefix. |
+| `devices = ["gpu"]` | NVIDIA and DRI device nodes. |
+| `host_processes = true` | The computer's processes in `/proc`, not only its own. |
+| `memory_mb`, `tasks`, `cpu_percent` | Limits (defaults 1024 MB, 256 tasks, 200%). |
+| `unconfined = "reason"` | No bubblewrap or seccomp (limits still apply; defaults 8192 MB and 4096 tasks, no CPU limit). Only for plugins bundled with the assistant. |
+
+The seccomp filter refuses calls a plugin has no use for: debugging other processes,
+kernel modules and keyrings, BPF, perf, mounts and new namespaces, clock changes, and
+typing into the terminal (TIOCSTI). `nixe-assistant plugins` shows each manifest's
+sandbox. Configured MCP servers get `network = true` unless `[mcp.servers.ID.sandbox]`
+says otherwise.
+
+Bundled plugins that start programs on the desktop are unconfined: apps, desktop
+commands, terminal, coding agents, admin (pkexec), the Nixe apps and the browser.
+Generated terminal commands still run in their own sandbox, which now also has the
+seccomp filter and limits (8 GB, 2048 tasks).
 
 Tools must be declared in the manifest and discovered using MCP `tools/list`.
 Input schemas must be valid JSON Schema objects. Results use MCP `content`;

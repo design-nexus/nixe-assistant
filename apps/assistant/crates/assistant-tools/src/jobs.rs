@@ -44,6 +44,8 @@ impl Jobs {
         let mut cwd = crate::typed::home_path(cwd)?;
         anyhow::ensure!(cwd.is_dir(), "working directory is not a directory");
         let shown = argv.clone();
+        // The seccomp program for a sandboxed job; bwrap reads it, the daemon closes it.
+        let mut seccomp = None;
         let argv = match sandbox {
             None => argv,
             Some(sandbox) => {
@@ -59,7 +61,17 @@ impl Jobs {
                     crate::fs::sandbox_dir_ok(&home, &cwd),
                     "a sandboxed command needs a project folder; HOME itself and private folders can't be shared"
                 );
-                crate::sandbox::wrap(sandbox, &home, &cwd, argv)
+                let mut argv = crate::sandbox::wrap(sandbox, &home, &cwd, argv);
+                let fd = crate::plugin_sandbox::seccomp_fd()?;
+                argv.splice(1..1, ["--seccomp".to_string(), std::os::fd::AsRawFd::as_raw_fd(&fd).to_string()]);
+                seccomp = Some(fd);
+                // A build may use every core; memory and processes stay bounded.
+                let cores = std::thread::available_parallelism().map(|n| n.get() as u64).unwrap_or(4);
+                let limits = assistant_core::config::SandboxProfile { memory_mb: Some(8192), tasks: Some(2048), cpu_percent: Some((cores * 100).min(3200)), ..Default::default() };
+                let unit = format!("nixe-assistant-job-{}-{}.scope", std::process::id(), self.next.load(Ordering::Relaxed));
+                let mut limited = crate::plugin_sandbox::limits(&limits, &unit);
+                limited.extend(argv);
+                limited
             }
         };
         let mut entries = self.entries.lock().await;
@@ -91,7 +103,11 @@ impl Jobs {
                 Ok(())
             });
         }
+        if let Some(fd) = &seccomp {
+            crate::plugin_sandbox::inherit(&mut cmd, vec![std::os::fd::AsRawFd::as_raw_fd(fd)]);
+        }
         let mut child = cmd.spawn().context("start terminal job")?;
+        drop(seccomp);
         let pid = child.id().context("missing child PID")?;
         let id = format!(
             "{}-{}",
@@ -239,5 +255,37 @@ mod tests {
             jobs.status(v["job_id"].as_str().unwrap()).await.unwrap()["status"],
             "cancelled"
         );
+    }
+
+    /// A sandboxed job runs under the seccomp filter and in a limited scope: it writes its
+    /// project folder, and can't make new namespaces.
+    #[tokio::test]
+    async fn sandboxed_jobs_are_filtered() {
+        if std::process::Command::new("bwrap").args(["--ro-bind", "/", "/", "true"]).status().map(|s| !s.success()).unwrap_or(true) {
+            return;
+        }
+        let home = crate::fs::home().unwrap();
+        let cache = home.join(".cache");
+        std::fs::create_dir_all(&cache).unwrap();
+        let project = tempfile::tempdir_in(&cache).unwrap();
+        let sandbox = crate::sandbox::Sandbox { network: false, read_only: vec![] };
+        let jobs = Jobs::default();
+        let script = "echo made > out.txt; if unshare -r true 2>/dev/null; then echo escaped; else echo refused; fi";
+        let v = jobs
+            .start_in(vec!["sh".into(), "-c".into(), script.into()], &project.path().display().to_string(), 20, Some(&sandbox))
+            .await
+            .unwrap();
+        let id = v["job_id"].as_str().unwrap().to_string();
+        let mut status = Value::Null;
+        for _ in 0..100 {
+            status = jobs.status(&id).await.unwrap();
+            if status["status"] != "running" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(status["status"], "finished", "{status}");
+        assert_eq!(status["output"].as_str().map(str::trim), Some("refused"));
+        assert_eq!(std::fs::read_to_string(project.path().join("out.txt")).unwrap().trim(), "made");
     }
 }

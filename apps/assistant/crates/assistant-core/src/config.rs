@@ -755,6 +755,89 @@ pub struct McpServerCfg {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: std::collections::HashMap<String, String>,
+    /// What the server may reach. Without one it gets the network and nothing of HOME but
+    /// the folders its command and script live in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<SandboxProfile>,
+}
+
+/// What a plugin may reach (a manifest's `[sandbox]`). The default is the strictest: no
+/// network, nothing of HOME but its own package (read-only) and data folder, no desktop
+/// sockets. Enforced with bubblewrap, a seccomp filter and a systemd scope's limits.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SandboxProfile {
+    #[serde(skip_serializing_if = "is_false")]
+    pub network: bool,
+    #[serde(skip_serializing_if = "HomeAccess::is_none")]
+    pub home: HomeAccess,
+    /// Folders or files it may read, beyond `home` ("~/..." or absolute).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub read: Vec<String>,
+    /// Folders it may write, beyond `home`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub write: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sockets: Vec<SandboxSocket>,
+    /// Session-bus names it may call (with `sockets = ["session-bus"]`), through a filtering
+    /// proxy; "org.mpris.MediaPlayer2.*" covers a prefix.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub talk: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub devices: Vec<SandboxDevice>,
+    /// Sees the computer's processes (`/proc` of the host), not only its own.
+    #[serde(skip_serializing_if = "is_false")]
+    pub host_processes: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_mb: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tasks: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu_percent: Option<u64>,
+    /// Runs without bubblewrap or seccomp (still under the limits), for the reason given.
+    /// Honoured for first-party plugins only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unconfined: Option<String>,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HomeAccess {
+    #[default]
+    None,
+    Read,
+    Write,
+}
+
+impl HomeAccess {
+    fn is_none(&self) -> bool {
+        *self == HomeAccess::None
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SandboxSocket {
+    Wayland,
+    Pipewire,
+    /// Hyprland's control sockets. `hyprctl dispatch exec` runs programs outside the sandbox.
+    Hyprland,
+    SessionBus,
+    SystemBus,
+    /// The user service manager's own socket (what `systemctl --user` uses); it needs
+    /// `host_processes`. Can start and stop the user's services.
+    Systemd,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SandboxDevice {
+    /// NVIDIA and DRI device nodes.
+    Gpu,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -173,6 +173,7 @@ async fn main() -> anyhow::Result<()> {
                         command: cfg.browser.node.clone(),
                         args: vec![path.to_string_lossy().into()],
                         env: Default::default(),
+                        sandbox: None,
                     };
                     if let Some(existing) = cfg.mcp.servers.get("duckduckgo") {
                         anyhow::ensure!(existing.command==server.command && existing.args==server.args, "an existing duckduckgo server has a different command; configure browser.search_tool manually");

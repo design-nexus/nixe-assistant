@@ -1,6 +1,8 @@
-//! Versioned local MCP packages. Package code has the user's OS permissions.
+//! Versioned local MCP packages, each run in the sandbox its manifest declares
+//! (`plugin_sandbox`).
 use crate::mcp::{McpClient, McpTool};
 use anyhow::{Context, Result};
+use assistant_core::config::{HomeAccess, SandboxProfile, SandboxSocket};
 use assistant_core::{paths, Config};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -33,6 +35,9 @@ pub struct Manifest {
     pub providers: Vec<String>,
     #[serde(default = "empty_schema")]
     pub settings_schema: Value,
+    /// What the plugin may reach; none is the strictest sandbox.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<SandboxProfile>,
 }
 fn empty_schema() -> Value {
     json!({"type":"object","additionalProperties":false})
@@ -127,6 +132,9 @@ impl Manifest {
             "settings schema must be an object"
         );
         jsonschema::validator_for(&self.settings_schema)?;
+        if let Some(sandbox) = &self.sandbox {
+            crate::plugin_sandbox::validate(sandbox)?;
+        }
         let mut names = HashSet::new();
         for name in &self.tools {
             anyhow::ensure!(
@@ -560,7 +568,8 @@ impl PluginManager {
             m.executable.clone()
         };
         let attempt = async {
-            let client = Arc::new(McpClient::spawn(id, &executable, &args, &env).await?);
+            let first_party = ["bundled", "migrated"].contains(&settings.source.as_str());
+            let client = Arc::new(start(id, m.sandbox.as_ref(), &executable, &args, &env, first_party).await?);
             let mut tools = client.list_tools().await?;
             if id == "browser" || id == "web-search" {
                 tools.retain(|t| {
@@ -878,6 +887,7 @@ pub async fn migrate(cfg: &Config, worker: &Path, checkout: &Path) -> Result<()>
                 vec![]
             },
             settings_schema: empty_schema(),
+            sandbox: Some(worker_sandbox(id)),
         };
         write_migrated(
             &m,
@@ -924,6 +934,7 @@ pub async fn migrate(cfg: &Config, worker: &Path, checkout: &Path) -> Result<()>
                 routes: vec![],
                 providers: vec![],
                 settings_schema: empty_schema(),
+                sandbox: Some(SandboxProfile { unconfined: Some("runs Chromium on the desktop".into()), ..Default::default() }),
             };
             if !m.tools.is_empty() {
                 write_migrated(&m, &mut state, true)?;
@@ -931,7 +942,8 @@ pub async fn migrate(cfg: &Config, worker: &Path, checkout: &Path) -> Result<()>
         }
     }
     for (id, server) in &cfg.mcp.servers {
-        let client = McpClient::spawn(id, &server.command, &server.args, &server.env).await?;
+        let sandbox = server.sandbox.clone().unwrap_or(SandboxProfile { network: true, ..Default::default() });
+        let client = start(id, Some(&sandbox), &server.command, &server.args, &server.env, true).await?;
         let m = Manifest {
             manifest_version: 1,
             id: id.clone(),
@@ -950,6 +962,7 @@ pub async fn migrate(cfg: &Config, worker: &Path, checkout: &Path) -> Result<()>
             routes: vec![],
             providers: vec![],
             settings_schema: empty_schema(),
+            sandbox: Some(sandbox),
         };
         write_migrated(&m, &mut state, cfg.mcp.enabled)?;
     }
@@ -987,6 +1000,37 @@ pub async fn migrate(cfg: &Config, worker: &Path, checkout: &Path) -> Result<()>
         });
     }
     save(&state)
+}
+/// What each of the worker's groups reaches. Each reads the assistant's configuration
+/// (apps, commands, location).
+fn worker_sandbox(id: &str) -> SandboxProfile {
+    let unconfined = |reason: &str| SandboxProfile { unconfined: Some(reason.into()), ..Default::default() };
+    let base = SandboxProfile { read: vec!["~/.config/nixe-assistant".into()], ..Default::default() };
+    match id {
+        "desktop-controls" => unconfined("runs the configured desktop commands"),
+        "apps" => unconfined("starts apps"),
+        "terminal" => unconfined("runs the configured commands as the user; generated commands get their own sandbox"),
+        "coding-agents" => unconfined("starts coding agents in a terminal"),
+        "admin" => unconfined("asks for a password through pkexec"),
+        "location" | "weather" => SandboxProfile { network: true, ..base },
+        "files" => SandboxProfile { home: HomeAccess::Write, ..base },
+        "git" => SandboxProfile { home: HomeAccess::Read, ..base },
+        "windows" => SandboxProfile { sockets: vec![SandboxSocket::Hyprland], ..base },
+        "services" => SandboxProfile { sockets: vec![SandboxSocket::Systemd], host_processes: true, ..base },
+        "network" => SandboxProfile { sockets: vec![SandboxSocket::SystemBus], ..base },
+        _ => base,
+    }
+}
+/// Starts a plugin in its sandbox.
+async fn start(id: &str, sandbox: Option<&SandboxProfile>, executable: &str, args: &[String], env: &HashMap<String, String>, first_party: bool) -> Result<McpClient> {
+    let strict = SandboxProfile::default();
+    let package = package_dir().join(id);
+    let data = data_dir(id);
+    std::fs::create_dir_all(&package)?;
+    std::fs::create_dir_all(&data)?;
+    let launch = crate::plugin_sandbox::Launch { id, executable, args, env, package: &package, data: &data, first_party };
+    let prepared = crate::plugin_sandbox::prepare(sandbox.unwrap_or(&strict), &launch).await?;
+    McpClient::spawn_prepared(id, prepared).await
 }
 fn write_migrated(m: &Manifest, state: &mut BTreeMap<String, Saved>, enabled: bool) -> Result<()> {
     m.validate()?;

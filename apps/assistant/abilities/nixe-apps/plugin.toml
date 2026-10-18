@@ -1,6 +1,6 @@
 manifest_version = 1
 id = "nixe-apps"
-version = "1.2.0"
+version = "1.3.0"
 description = "The Nixe apps, worked directly (their control interface)"
 executable = "python3"
 args = ["./main.py"]
@@ -20,3 +20,7 @@ template = true
 pattern = "^(?i:what(?:'s| is) playing in music)$"
 tool = "music.status"
 template = true
+
+# What it may reach (see docs/PLUGINS.md). Empty: no network, no home folder.
+[sandbox]
+unconfined = "starts the Nixe apps on the desktop"

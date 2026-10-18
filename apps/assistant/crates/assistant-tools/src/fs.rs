@@ -11,7 +11,7 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 /// Never read or written: keys, keyrings, password stores, browser profiles.
-const SECRET: &[&str] = &[
+pub(crate) const SECRET: &[&str] = &[
     ".ssh",
     ".gnupg",
     ".password-store",
@@ -23,7 +23,7 @@ const SECRET: &[&str] = &[
     ".config/BraveSoftware",
 ];
 /// Read-only to tools: the assistant's own configuration, journal and data.
-const SELF: &[&str] = &[".config/nixe-assistant", ".local/state/nixe-assistant", ".local/share/nixe-assistant"];
+pub(crate) const SELF: &[&str] = &[".config/nixe-assistant", ".local/state/nixe-assistant", ".local/share/nixe-assistant"];
 /// Run as the user later, outside any sandbox: shell startup, `~/.local/bin`, session and
 /// autostart services, launchers, Hyprland and Omarchy hooks, git configuration. Writing
 /// them needs a key press each time.

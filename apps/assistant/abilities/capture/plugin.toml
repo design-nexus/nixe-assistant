@@ -1,6 +1,6 @@
 manifest_version = 1
 id = "capture"
-version = "1.0.0"
+version = "1.1.0"
 description = "Explicit clipboard capture and screen OCR"
 executable = "python3"
 args = ["./main.py"]
@@ -15,3 +15,7 @@ template = true
 pattern = "^(?i:(?:read|capture|explain) (?:my |the )?screen)$"
 tool = "capture.screen"
 template = true
+
+# What it may reach (see docs/PLUGINS.md). Empty: no network, no home folder.
+[sandbox]
+sockets = ["wayland"]
