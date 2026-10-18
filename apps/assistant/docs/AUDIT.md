@@ -52,7 +52,7 @@ concurrent load §4.6 asks for. Tests: 62 passed before this work (73 after) (`c
 | §7–8 permissions | **done in Phase 1** | See below. |
 | §9 sandboxing | **done (2026-10-17)** | Every plugin runs in bubblewrap with what its manifest's `[sandbox]` declares (default: no network, no home), a seccomp filter, and a systemd scope with memory, task and CPU limits; session-bus access through `xdg-dbus-proxy` with declared names. Generated terminal commands also get the filter and limits. Seven first-party plugins that start desktop programs are unconfined (limits only). See PLUGINS.md "Sandbox". |
 | §10 privileged broker | **done in Phase 4** | `nixe-assistant-helper` behind polkit: install, remove and update repository packages, start, stop or restart system services. Typed and checked twice; no root shell. |
-| §11.1 voice authorization | partial | Wake word and AEC exist. High-impact tools, and since Phase 8a writes to files that run code later, refuse a spoken approve; only the exact phrases count. The rest accept it. No speaker recognition. |
+| §11.1 voice authorization | mostly (2026-10-17) | Wake word and AEC exist. A spoken approve doesn't count for high-impact tools, writes to files that run code later, external tools (they send their arguments away), or a call the leak guard stopped; nor for any call while a media player is playing. Only the exact phrases count; a spoken deny always does. No speaker recognition. |
 | §11.2 prompt injection | **mostly (Phase 8a)** | Tool results are untrusted data; the grammar admits only registered tools. Computer use can't reach Settings or the Store; sending out after reading private data and untrusted content asks; task-wide approvals are bound to one window or folder. `bench injection` passes. |
 | §11.3 emergency stop | **done in Phase 8a** | Super+Shift+Escape (`nixe-assistant cancel`) anywhere, Escape on the HUD, voice "stop", Stop in Settings, job cancel. It never waits on the model, and releases held modifiers after a cut-off keyboard action. |
 | §12 audit and recovery | **audit done in Phase 1**; crash recovery **Phase 8b** | Abilities keep their own undo (`history.undo`, `*.undo`). Crashed plugins restart (3 per 5 min); the recognizer restarts on the next utterance; systemd restarts the daemon, stops after 5 crashes in 2 min and says so. `bench crash` 4/4. |
@@ -69,9 +69,10 @@ plus `assistant-policy`.
 
 ## Risks
 
-- **Voice approvals.** A spoken "approve" from a video or another person counted. Since
-  Phase 1, generated commands, shutdown and captures need a key press; other tools still
-  take a spoken approval (§11.1).
+- **Voice approvals.** A spoken "approve" from a video or another person counted. Now
+  anything high-impact or that sends data away needs a key press, and nothing takes a
+  spoken approve while media plays; local, reversible tools still do, from anyone nearby
+  (§11.1).
 - **Plugin trust.** Plugins run in the sandbox their manifest declares (§9). The unconfined
   first-party plugins (apps, desktop commands, terminal, coding agents, admin, Nixe apps,
   browser) still share the daemon's uid, and a plugin given the `hyprland` or `systemd`
@@ -431,9 +432,10 @@ carrying planted instructions, denies every approval but window reads, and check
 collector, `~/.bashrc` and a marker file.
 
 Accepted limits:
-- Plugins and external MCP servers run as Ken and can reach the assistant's socket, so a
-  hostile one could approve its own request. That needs the plugin sandbox (§9).
-- Tools that aren't high-impact still take a spoken "approve" (exact phrase only).
+- Sandboxed plugins can't reach the assistant's socket (§9); the unconfined first-party ones
+  run as Ken and can, so a hostile one could approve its own request.
+- Local tools that aren't high-impact still take a spoken "approve" (exact phrase only),
+  unless media is playing.
 - With `sandbox_network = true`, generated commands share the network namespace, so abstract
   Unix sockets are reachable.
 - The guard resolves a path, then the tool opens it: a parent folder swapped for a link in

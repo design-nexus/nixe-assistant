@@ -145,13 +145,15 @@ impl Verdict {
         !self.single && !self.key_press && self.capability.task_approvable()
     }
     /// For a call that could carry private data out of the machine after the task read
-    /// untrusted content: an allowed call asks, by itself. A deny stays a deny.
+    /// untrusted content: an allowed call asks, by itself, and only a key press approves it
+    /// (the untrusted content could be read aloud saying "approve"). A deny stays a deny.
     pub fn ask_before_sending(mut self) -> Self {
         if self.decision < Decision::Ask {
             self.decision = Decision::Ask;
             self.rule = "may send private data";
         }
         self.single = true;
+        self.key_press = true;
         self
     }
 }
@@ -349,8 +351,12 @@ mod tests {
         for t in ["terminal.shell", "terminal.run", "system.shutdown", "capture.screen", "capture.clipboard"] {
             assert!(!Capability::of(t).voice_approvable(), "{t}");
         }
-        for t in ["notes.delete", "calendar.create", "ext.unknown", "routines.run"] {
+        for t in ["notes.delete", "calendar.create", "routines.run", "chat.send"] {
             assert!(Capability::of(t).voice_approvable(), "{t}");
+        }
+        // External tools send their arguments away: a key press, once per task at most.
+        for t in ["ext.unknown", "fonts.install", "torrents.add"] {
+            assert!(!Capability::of(t).voice_approvable() && Capability::of(t).task_approvable(), "{t}");
         }
     }
 
@@ -451,7 +457,7 @@ mod tests {
         assert_eq!(v.decision(), Decision::Allow);
         let v = v.ask_before_sending();
         assert_eq!((v.decision(), v.rule()), (Decision::Ask, "may send private data"));
-        assert!(!v.task_approvable() && !v.key_press());
+        assert!(!v.task_approvable() && v.key_press(), "a key press, each time");
         let mut c = cx(&rules);
         c.tool_rule = Some(Decision::Deny);
         assert_eq!(decide("web.search", &c).ask_before_sending().decision(), Decision::Deny);
@@ -488,6 +494,7 @@ mod tests {
         assert!(t.may_leak("browser.navigate", &serde_json::json!({"url": "https://x.test/?d=key"})));
         let v = decide("browser.navigate", &c).ask_before_sending();
         assert_eq!(v.decision(), Decision::Ask);
+        assert!(v.key_press(), "the page itself could say approve");
         assert!(!t.approve_for_task(&v, None) && !t.approved_for_task(&v, None));
         // "Allow for this task" while typing into one window doesn't cover another.
         let typing = decide("input.type", &c);

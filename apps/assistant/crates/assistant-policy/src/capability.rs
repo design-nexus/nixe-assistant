@@ -180,16 +180,17 @@ impl Capability {
     }
 
     /// Whether a spoken "approve" counts. A voice nearby, a video or a web page read aloud
-    /// can say it, so generated commands, shutdown, captures and admin actions need a key
-    /// press (HUD, TUI or `nixe-assistant approve`). A spoken "deny" always counts.
+    /// can say it, so generated commands, shutdown, captures, admin actions, computer use and
+    /// external tools (which send their arguments to another machine) need a key press (HUD,
+    /// TUI or `nixe-assistant approve`). A spoken "deny" always counts.
     pub fn voice_approvable(self) -> bool {
-        !matches!(self, Self::TerminalGenerated | Self::Shutdown | Self::Capture | Self::Privileged | Self::ComputerUse)
+        !matches!(self, Self::TerminalGenerated | Self::Shutdown | Self::Capture | Self::Privileged | Self::ComputerUse | Self::External)
     }
 
     /// Whether one approval may cover the rest of a task. The same tools that need a key
     /// press each time are approved one call at a time.
     pub fn task_approvable(self) -> bool {
-        (self.voice_approvable() || self == Self::ComputerUse) && self != Self::Disabled
+        (self.voice_approvable() || matches!(self, Self::ComputerUse | Self::External)) && self != Self::Disabled
     }
 
     pub(crate) fn low_risk(self) -> bool {

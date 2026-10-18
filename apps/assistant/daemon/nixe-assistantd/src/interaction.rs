@@ -312,6 +312,7 @@ impl App {
         &self,
         id: &str,
         by_voice: bool,
+        media_playing: bool,
         summary: &str,
         task_scope: bool,
         cancel: &CancellationToken,
@@ -324,6 +325,8 @@ impl App {
                 "Say approve, approve for this task, or deny."
             } else if by_voice {
                 "Say approve or deny."
+            } else if media_playing {
+                "Something is playing, so approve it on screen, or say deny."
             } else {
                 "Approve it on screen, or say deny."
             }
@@ -379,10 +382,12 @@ impl App {
         let task_scope = task_id.is_some() && verdict.task_approvable();
         let expires = now_ms() + 60_000;
         let summary = assistant_policy::summary::describe(tool, args);
-        let voice_allowed = !verdict.key_press();
+        // A video or song could say "approve": while something plays, only a key press does.
+        let media_playing = !verdict.key_press() && media_playing().await;
+        let voice_allowed = !verdict.key_press() && !media_playing;
         let rx = self.pending.ask(
             &id,
-            json!({"tool":tool,"arguments":args,"expires_at_ms":expires,"task_id":task_id,"task_scope_allowed":task_scope,"summary":summary,"voice_allowed":voice_allowed,"rule":verdict.rule()}),
+            json!({"tool":tool,"arguments":args,"expires_at_ms":expires,"task_id":task_id,"task_scope_allowed":task_scope,"summary":summary,"voice_allowed":voice_allowed,"voice_blocked_by_media":media_playing,"rule":verdict.rule()}),
         );
         self.emit(Event::ToolApproval {
             approval_id: id.clone(),
@@ -401,7 +406,7 @@ impl App {
             .as_ref()
             .map(|p| p.token(tool))
             .unwrap_or_default();
-        let (approved, for_task) = tokio::select! {_=plugin_cancel.cancelled()=>(false,false),_=cancel.cancelled()=>(false,false),r=tokio::time::timeout(Duration::from_secs(60),rx)=>r.ok().and_then(|r|r.ok()).unwrap_or((false,false)),r=async {match self.voice_approval(&id,voice_allowed,&summary,task_scope,cancel).await {Ok(v)=>v,Err(err)=>{tracing::warn!(%err,"voice approval unavailable; keyboard approval remains available");std::future::pending::<(bool,bool)>().await}}}=>r};
+        let (approved, for_task) = tokio::select! {_=plugin_cancel.cancelled()=>(false,false),_=cancel.cancelled()=>(false,false),r=tokio::time::timeout(Duration::from_secs(60),rx)=>r.ok().and_then(|r|r.ok()).unwrap_or((false,false)),r=async {match self.voice_approval(&id,voice_allowed,media_playing,&summary,task_scope,cancel).await {Ok(v)=>v,Err(err)=>{tracing::warn!(%err,"voice approval unavailable; keyboard approval remains available");std::future::pending::<(bool,bool)>().await}}}=>r};
         let _ = self.audio.stop_capture();
         let _ = self.audio.cancel_playback();
         self.pending.remove(&id);
@@ -1133,6 +1138,41 @@ pub(super) fn approval_phrase(text: &str, by_voice: bool, task_scope: bool) -> O
     }
 }
 
+/// Whether any media player on the session bus (MPRIS: music apps, browsers playing video)
+/// is playing. Asked over `busctl` with a short deadline; if the bus can't be asked, nothing
+/// counts as playing (and the key press stays available).
+async fn media_playing() -> bool {
+    async fn busctl(args: &[&str]) -> Option<Value> {
+        let out = tokio::process::Command::new("busctl").args(["--user", "--json=short"]).args(args).kill_on_drop(true).output().await.ok()?;
+        out.status.success().then(|| serde_json::from_slice(&out.stdout).ok()).flatten()
+    }
+    let check = async {
+        let names = busctl(&["call", "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListNames"]).await?;
+        for name in mpris_players(&names) {
+            let status = busctl(&["get-property", &name, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "PlaybackStatus"]).await;
+            if status.is_some_and(|s| s["data"] == "Playing") {
+                return Some(true);
+            }
+        }
+        Some(false)
+    };
+    match tokio::time::timeout(Duration::from_millis(800), check).await {
+        Ok(Some(playing)) => playing,
+        _ => {
+            tracing::warn!("couldn't ask the session bus whether media is playing");
+            false
+        }
+    }
+}
+
+/// The MPRIS player names in a `ListNames` reply (`{"type":"as","data":[[...]]}`).
+fn mpris_players(reply: &Value) -> Vec<String> {
+    reply["data"][0]
+        .as_array()
+        .map(|names| names.iter().filter_map(Value::as_str).filter(|n| n.starts_with("org.mpris.MediaPlayer2.")).map(String::from).collect())
+        .unwrap_or_default()
+}
+
 fn lowercase_first(s: &str) -> String {
     let mut c = s.chars();
     c.next().map(|f| f.to_lowercase().collect::<String>() + c.as_str()).unwrap_or_default()
@@ -1140,7 +1180,14 @@ fn lowercase_first(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::approval_phrase;
+    use super::{approval_phrase, mpris_players};
+
+    #[test]
+    fn finds_media_players_on_the_bus() {
+        let reply = serde_json::json!({"type":"as","data":[["org.freedesktop.DBus",":1.4","org.mpris.MediaPlayer2.spotify","org.mpris.MediaPlayer2.firefox.instance_1_9","org.mpris.Other"]]});
+        assert_eq!(mpris_players(&reply), ["org.mpris.MediaPlayer2.spotify", "org.mpris.MediaPlayer2.firefox.instance_1_9"]);
+        assert!(mpris_players(&serde_json::json!({})).is_empty());
+    }
 
     #[test]
     fn only_exact_spoken_phrases_count() {

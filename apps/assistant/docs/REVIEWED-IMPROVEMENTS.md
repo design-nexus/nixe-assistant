@@ -67,8 +67,10 @@ External tools require confirmation by default. The TUI and HUD display exact
 arguments; `y` allows once, `n` denies. Approvals expire after 60 seconds.
 Cancellation and denial prevent dispatch. CLI equivalents are `approve ID` and
 `deny ID`. A spoken "deny" always counts; a spoken "approve" does not for
-generated terminal commands, shutdown or screen and clipboard captures, which
-need the HUD, TUI or CLI, since a voice nearby or a video can say it.
+generated terminal commands, shutdown, screen and clipboard captures, admin
+actions, computer use, external tools, or a call that may send private data
+away, which need the HUD, TUI or CLI, since a voice nearby or a video can say
+it. While any media player is playing, no call takes a spoken "approve".
 
 Every call goes through one decision point (`assistant-policy`). An explicit deny,
 per tool or in `[permissions]`, beats any allow. Generated terminal commands and
