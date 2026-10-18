@@ -133,6 +133,42 @@ Live, through the planner and checked against the app:
 - "In the Firefox window titled Bench search, search the page for nixe": the title became
   "searched: nixe"
 
+## Speech synthesis alternatives (2026-10-18)
+
+`nixe-assistant bench tts` (Kokoro, as configured) and `benchmarks/trials/run.sh qwen|gepard|vibevoice`
+on the same phrases: a short first phrase, a typical one and a long one, median of three after a
+warm-up, one phrase per call (how the assistant feeds Kokoro), assistant stopped. Audio in
+`benchmarks/trials/results/`.
+
+| Model | Runs on | First phrase | Typical (~4–5 s) | Long (~10 s) | RTF typical / long | GPU memory |
+|---|---|---|---|---|---|---|
+| Kokoro (af_heart) | CPU | 465 ms | 824 ms | 1894 ms | 0.20 / 0.19 | none |
+| Gepard 1.1 | GPU | 445 ms | 1068 ms | 2189 ms | 0.21 / 0.23 | 1.7 GB |
+| VibeVoice Realtime 0.5B (SDPA) | GPU | 475 ms | 1047 ms | 2174 ms | 0.21 / 0.18 | 2.7 GB |
+| Qwen3-TTS 0.6B CustomVoice | GPU | 1243–1671 ms | 2781–3282 ms | 5595–7872 ms | ~0.6 | 2.4 GB |
+| Qwen3-TTS 1.7B CustomVoice | GPU | 962–1274 ms | 3022–3363 ms | 6029–6855 ms | ~0.6 | 4.3 GB |
+
+Kokoro stays: as fast as the best, on the CPU, leaving the GPU to the language model. Gepard
+and VibeVoice can stream (not measured here; Gepard's needs its vLLM build). Qwen3-TTS has no
+English-native female voice (Serena and Vivian were tried).
+
+## Ternary Bonsai 2 as the planner (2026-10-18)
+
+`bench planner --server` through Prism's `llama-server` (build 10777; the bundled llama.cpp can't
+load ternary packings), 12k context, all on the GPU; speed from `llama-bench` (prompt 512,
+generate 128).
+
+| Model | Computer use | App tools | All 55 app tools | Mistakes | Median step | p90 step | Generate | GPU memory |
+|---|---|---|---|---|---|---|---|---|
+| Gemma 4 E4B Q4_K_M (in use) | 19/21 | 39/42 | 38/42 | 4 | 792 ms | 1100 ms | — | ~4.5 GB |
+| Bonsai 2 27B PTQ1_0 | 18/21 | 39/42 | 36/42 | 6 wrong tool | 574 ms | 2725 ms | 52 tok/s | 7.3 GB |
+| Bonsai 2 27B PQ2_0 | 18/21 | 39/42 | 36/42 | 6 wrong tool | 639 ms | 2680 ms | 44 tok/s | 8.4 GB |
+| Bonsai 2 9B PQ2_0 | 14/21 | 31/42 | 32/42 | 6 wrong argument, 10 wrong tool | 202 ms | 826 ms | 134 tok/s | 3.1 GB |
+
+The 27B packings score the same (the same weights). Gemma stays: the 27B is about as accurate
+but its slow steps are slower, it needs ~3 GB more, and it would run as a second process on a
+fork. Worth another look if upstream llama.cpp gains PTQ1_0/PQ2_0.
+
 ## Every Nixe app's tools (Phase 11, 2026-10-17)
 
 `bench planner` with 42 app-tool steps (24 new: Archive, Chat, Fonts, Photos, Glimpse, Media
