@@ -123,7 +123,17 @@ pub fn code_folder(home: &Path, path: &Path) -> Option<PathBuf> {
         .skip(1)
         .take_while(|d| d.starts_with(home) && *d != home)
         .find(|d| markers.iter().any(|m| d.join(m).is_file()));
-    found.map(Path::to_path_buf).or_else(|| path.parent().filter(|p| *p != home).map(Path::to_path_buf))
+    if let Some(found) = found {
+        return Some(found.to_path_buf());
+    }
+    let dir = path.parent().filter(|p| *p != home)?;
+    // A program in an install's bin folder (mise, fnm, pyenv) needs the rest of the install
+    // (Python's standard library): bind the prefix, unless it holds secrets (~/.local does).
+    let prefix = dir.parent().filter(|p| dir.file_name().is_some_and(|n| n == "bin") && p.starts_with(home) && *p != home);
+    match prefix {
+        Some(prefix) if !SECRET.iter().any(|s| home.join(s).starts_with(prefix)) => Some(prefix.to_path_buf()),
+        _ => Some(dir.to_path_buf()),
+    }
 }
 
 /// The bubblewrap arguments, without the seccomp and sync descriptors. `runtime` is
@@ -634,6 +644,27 @@ mod tests {
         assert!(triple(&a, "--bind-try", "/run/user/1000/pipewire-0", "/run/user/1000/pipewire-0"));
         assert!(triple(&a, "--setenv", "DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus"));
         assert!(!a.iter().any(|x| x.contains("wayland")));
+    }
+
+    #[test]
+    fn programs_bring_their_install() {
+        let home = tempfile::tempdir().unwrap();
+        let h = home.path().canonicalize().unwrap();
+        let mise = h.join(".local/share/mise/installs/python/3.15.0/bin");
+        std::fs::create_dir_all(&mise).unwrap();
+        std::fs::write(mise.join("python3"), "").unwrap();
+        assert_eq!(code_folder(&h, &mise.join("python3")), Some(h.join(".local/share/mise/installs/python/3.15.0")), "the whole install");
+        // ~/.local holds keyrings: only its bin folder.
+        std::fs::create_dir_all(h.join(".local/bin")).unwrap();
+        std::fs::write(h.join(".local/bin/tool"), "").unwrap();
+        assert_eq!(code_folder(&h, &h.join(".local/bin/tool")), Some(h.join(".local/bin")));
+        // A package marker wins.
+        let pkg = h.join("srv/server");
+        std::fs::create_dir_all(pkg.join("dist")).unwrap();
+        std::fs::write(pkg.join("package.json"), "{}").unwrap();
+        std::fs::write(pkg.join("dist/index.js"), "").unwrap();
+        assert_eq!(code_folder(&h, &pkg.join("dist/index.js")), Some(pkg));
+        assert_eq!(code_folder(&h, Path::new("/usr/bin/env")), None, "outside home: the system is already there");
     }
 
     #[test]

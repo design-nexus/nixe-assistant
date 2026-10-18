@@ -824,6 +824,7 @@ pub async fn migrate(cfg: &Config, worker: &Path, checkout: &Path) -> Result<()>
         "windows",
         "services",
         "network",
+        "devices",
         "admin",
     ];
     for id in groups {
@@ -842,6 +843,7 @@ pub async fn migrate(cfg: &Config, worker: &Path, checkout: &Path) -> Result<()>
                 "windows" => ["windows.", "workspaces.", "monitors."].iter().any(|p| name.starts_with(p)),
                 "services" => name.starts_with("services."),
                 "network" => name.starts_with("network."),
+                "devices" => (name.starts_with("bluetooth.") && name.as_str() != "bluetooth.toggle") || name.starts_with("battery."),
                 "admin" => name.starts_with("admin.") || name.starts_with("packages."),
                 "desktop-controls" => name.starts_with("audio.") || name.as_str() == "system.power_profile",
                 _ => false,
@@ -1018,6 +1020,8 @@ fn worker_sandbox(id: &str) -> SandboxProfile {
         "windows" => SandboxProfile { sockets: vec![SandboxSocket::Hyprland], ..base },
         "services" => SandboxProfile { sockets: vec![SandboxSocket::Systemd], host_processes: true, ..base },
         "network" => SandboxProfile { sockets: vec![SandboxSocket::SystemBus], ..base },
+        // bluetoothctl scans and pairs over the system bus too.
+        "devices" => SandboxProfile { sockets: vec![SandboxSocket::SystemBus], ..base },
         _ => base,
     }
 }

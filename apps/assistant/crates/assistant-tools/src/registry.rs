@@ -102,7 +102,7 @@ impl Registry {
         for (name, description, schema) in file_tools {
             registry.tools.insert(name.into(), McpTool { name: name.into(), description: Some(description.into()), input_schema: schema, output_schema: None, execution: Value::Null });
         }
-        for (name, description, schema) in crate::system::TOOLS.iter().chain(crate::admin::TOOLS) {
+        for (name, description, schema) in crate::system::TOOLS.iter().chain(crate::admin::TOOLS).chain(crate::devices::TOOLS) {
             let input_schema = serde_json::from_str(schema).expect("system tool schema");
             registry.tools.insert((*name).into(), McpTool { name: (*name).into(), description: Some((*description).into()), input_schema, output_schema: None, execution: Value::Null });
         }
@@ -489,6 +489,12 @@ impl Registry {
             let value = tokio::select! {
                 _ = cancel.cancelled() => anyhow::bail!("cancelled"),
                 r = crate::system::call(name, &args) => r.context("unknown system tool")??,
+            };
+            json!({"content":[{"type":"text","text":value.to_string()}],"structuredContent":value,"isError":false})
+        } else if crate::devices::TOOLS.iter().any(|(tool, ..)| *tool == name) {
+            let value = tokio::select! {
+                _ = cancel.cancelled() => anyhow::bail!("cancelled"),
+                r = crate::devices::call(name, &args) => r.context("unknown device tool")??,
             };
             json!({"content":[{"type":"text","text":value.to_string()}],"structuredContent":value,"isError":false})
         } else if crate::admin::TOOLS.iter().any(|(tool, ..)| *tool == name) {

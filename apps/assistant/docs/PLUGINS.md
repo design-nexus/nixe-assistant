@@ -94,8 +94,10 @@ declares what it may reach; without one it gets the strictest sandbox. Inside:
   `/tmp`;
 - an empty home folder holding only its package (read-only) and its data folder
   (`ASSISTANT_PLUGIN_DATA`, writable), plus the folder its program lives in when that is
-  under home (a bare command name is looked up first, and a one-line `exec` wrapper is
-  followed to the program it runs);
+  under home: the package with a `package.json`, `pyproject.toml` or `Cargo.toml`, or the
+  whole install for a program in a `bin` folder (mise, fnm, pyenv), never one holding
+  secrets. A bare command name is looked up first, and a one-line `exec` wrapper is
+  followed to the program it runs;
 - no network, no desktop sockets and a cleared environment (the variables above, `PATH`,
   `HOME`, `LANG`).
 

@@ -121,6 +121,8 @@ pub fn describe(tool: &str, args: &Value) -> String {
             format!("Open {app}")
         }
         "network.wifi" => format!("Turn Wi-Fi {}", if args["on"] == true { "on" } else { "off" }),
+        "bluetooth.pair" => format!("Pair and trust the Bluetooth device {}", s(args, "device")),
+        "bluetooth.forget" => format!("Forget the Bluetooth device {}", s(args, "device")),
         "routines.run" => {
             let steps = args["steps"].as_array().map(|a| format!(" ({} steps)", a.len())).unwrap_or_default();
             format!("Run the routine “{}”{steps}", s(args, "name"))

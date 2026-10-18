@@ -93,7 +93,7 @@ pub const TOOLS: &[(&str, &str, &str)] = &[
     ),
 ];
 
-async fn run(program: &str, args: &[&str]) -> Result<String> {
+pub(crate) async fn run(program: &str, args: &[&str]) -> Result<String> {
     let out = tokio::time::timeout(
         Duration::from_secs(30),
         tokio::process::Command::new(program).args(args).kill_on_drop(true).output(),
@@ -106,7 +106,7 @@ async fn run(program: &str, args: &[&str]) -> Result<String> {
 }
 
 /// Wait up to `ms` for `check` to hold, polling.
-async fn settle<F, Fut>(ms: u64, mut check: F) -> bool
+pub(crate) async fn settle<F, Fut>(ms: u64, mut check: F) -> bool
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = bool>,

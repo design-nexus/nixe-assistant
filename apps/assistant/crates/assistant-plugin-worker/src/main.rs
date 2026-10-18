@@ -27,6 +27,8 @@ fn group(name: &str) -> &str {
         "windows" | "workspaces" | "monitors" => "windows",
         "services" => "services",
         "network" => "network",
+        "bluetooth" if name != "bluetooth.toggle" => "devices",
+        "battery" => "devices",
         "admin" | "packages" => "admin",
         _ => "desktop-controls",
     }
