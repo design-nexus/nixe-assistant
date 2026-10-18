@@ -8,6 +8,7 @@ pub mod event;
 pub mod location;
 pub mod paths;
 pub mod persona;
+pub mod presets;
 pub mod state;
 pub mod telemetry;
 pub mod timing;

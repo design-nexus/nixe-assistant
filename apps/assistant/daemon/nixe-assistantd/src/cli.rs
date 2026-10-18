@@ -373,6 +373,10 @@ async fn main() -> anyhow::Result<()> {
             let rest: Vec<String> = args.collect();
             config_command(&rest).await?;
         }
+        "preset" => {
+            let rest: Vec<String> = args.collect();
+            preset_command(&rest).await?;
+        }
         "bench" if std::env::args().nth(2).as_deref() == Some("computer") => {
             bench::computer(std::env::args().nth(3)).await?;
         }
@@ -924,6 +928,77 @@ async fn config_command(rest: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The graphics card's memory, if there's an NVIDIA card.
+fn vram_gb() -> Option<f32> {
+    std::process::Command::new("nvidia-smi")
+        .args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8_lossy(&o.stdout).lines().next()?.trim().parse::<f32>().ok())
+        .map(|mib| mib / 1024.0)
+}
+
+/// `preset [show] [--json]` or `preset lite|balanced|advanced`.
+async fn preset_command(rest: &[String]) -> anyhow::Result<()> {
+    use assistant_core::presets::{self, Preset};
+    let words: Vec<&str> = rest.iter().map(String::as_str).filter(|a| *a != "--json").collect();
+    let json = rest.iter().any(|a| a == "--json");
+    let vram = vram_gb();
+    let gpu = vram.is_some();
+    let power_path = assistant_core::paths::config_dir().join("power.json");
+    let mut power: serde_json::Value = std::fs::read(&power_path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_else(|| serde_json::json!({"profile": "normal", "idle_seconds": 300, "battery_idle_seconds": 0}));
+    let idle = (power["idle_seconds"].as_u64().unwrap_or(300), power["battery_idle_seconds"].as_u64().unwrap_or(0));
+    let cfg = assistant_core::Config::load()?;
+    let installed = assistant_core::Config::scan_local_models();
+    let find = |file: &str| installed.iter().find(|p| p.file_name().is_some_and(|n| n == file)).cloned();
+    match words.as_slice() {
+        [] | ["show"] => {
+            let current = presets::matching(&cfg, idle, gpu);
+            let (recommended, why) = presets::recommend(vram);
+            if json {
+                let all: Vec<serde_json::Value> = Preset::ALL
+                    .iter()
+                    .map(|p| {
+                        let v = p.values(gpu);
+                        serde_json::json!({"name": p.name(), "description": p.describe(), "model": v.model_name, "model_installed": find(v.model_file).is_some(), "ctx": v.ctx, "speech_device": v.tts_device, "idle_seconds": v.idle_seconds, "battery_idle_seconds": v.battery_idle_seconds, "max_calls": v.agent_max_calls})
+                    })
+                    .collect();
+                println!("{}", serde_json::json!({"current": current.map(Preset::name).unwrap_or("custom"), "recommended": recommended.name(), "why": why, "vram_gb": vram, "presets": all}));
+            } else {
+                println!("Current: {}", current.map(Preset::name).unwrap_or("custom"));
+                println!("Recommended for this computer: {} ({why})\n", recommended.name());
+                for p in Preset::ALL {
+                    let v = p.values(gpu);
+                    println!("{:<9} {} {}k context, speech on the {}, {}.\n          {}", p.name(), v.model_name, v.ctx / 1024, if v.tts_device == "cuda" { "graphics card" } else { "processor" }, if v.idle_seconds == 0 { "stays loaded".to_string() } else { format!("unloads after {} s idle", v.idle_seconds) }, p.describe());
+                }
+            }
+        }
+        [name] => {
+            let preset = Preset::parse(name).with_context(|| format!("no preset “{name}”: lite, balanced or advanced"))?;
+            let v = preset.values(gpu);
+            let model = find(v.model_file);
+            let keys = presets::config_keys(&v, model.as_deref());
+            let mut next = cfg.clone();
+            for (key, value) in &keys {
+                next = next.with_key(key, value.clone())?;
+            }
+            next.save_to(&assistant_core::paths::config_path())?;
+            power["idle_seconds"] = serde_json::json!(v.idle_seconds);
+            power["battery_idle_seconds"] = serde_json::json!(v.battery_idle_seconds);
+            assistant_core::config::atomic_write(&power_path, &serde_json::to_vec_pretty(&power)?)?;
+            println!("Applied the {} preset.", preset.name());
+            if model.is_none() {
+                let url = assistant_models::CURATED_MODELS.iter().find(|m| m.filename == v.model_file).map(|m| m.download_url).unwrap_or("");
+                println!("{} isn't downloaded, so the model stays as it is. Download it with:\n  nixe-assistant models download {url}\nthen apply the preset again.", v.model_name);
+            }
+            let changed: Vec<&str> = keys.iter().map(|(k, _)| *k).collect();
+            apply_change(&changed).await;
+        }
+        _ => anyhow::bail!("usage: nixe-assistant preset [show] [--json] | preset lite|balanced|advanced"),
+    }
+    Ok(())
+}
+
 async fn reload_if_running() {
     if let Err(e) = request(Control::Reload, 30_000).await {
         eprintln!("saved; the assistant isn't running ({e})");
@@ -976,12 +1051,7 @@ async fn models_command(rest: &[String]) -> anyhow::Result<()> {
             };
             let curated: Vec<serde_json::Value> = models::CURATED_MODELS.iter().map(describe).collect();
             // The graphics card's memory decides which models are offered.
-            let vram_gb = std::process::Command::new("nvidia-smi")
-                .args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
-                .output()
-                .ok()
-                .and_then(|o| String::from_utf8_lossy(&o.stdout).lines().next()?.trim().parse::<f32>().ok())
-                .map(|mib| mib / 1024.0);
+            let vram_gb = vram_gb();
             let recommended: Vec<serde_json::Value> = models::recommended(vram_gb).into_iter().map(describe).collect();
             let current_curated = models::CURATED_MODELS.iter().find(|m| current.file_name().is_some_and(|n| n == m.filename)).map(describe);
             let asr = assistant_core::paths::models_dir().join(assistant_core::asr::MODEL_NAME);
@@ -1173,6 +1243,7 @@ fn print_help() {
            admin-log [--limit N] packages and system services changed through the helper\n\
            install-helper  (as root) install the polkit helper for admin tools\n\
            config get [KEY] [--json] | set KEY VALUE | unset mcp.permissions.TOOL\n\
+           preset [show] [--json] | preset lite|balanced|advanced  hardware presets\n\
            perf [--json]   last turn's timings, what is loaded, VRAM\n\
            models fetch asr  download the streaming speech model (about 650 MB)\n\
            models list | search Q | files REPO | download URL | use PATH  (JSON)\n\

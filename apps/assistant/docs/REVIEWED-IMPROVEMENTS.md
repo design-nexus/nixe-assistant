@@ -61,6 +61,19 @@ task; "resume browser" continues it with its steps and remaining budget. Cancel
 (`cancel`, Escape, `tasks cancel ID`) stops the task and its terminal jobs. A
 restart marks tasks it interrupted as failed; nothing resumes on its own.
 
+**Hardware presets.** `nixe-assistant preset` shows which preset the settings match
+and the one recommended for this computer's graphics memory; `preset lite|balanced|
+advanced` applies one (Settings › Assistant › Performance has the same choice):
+
+| Preset | Model | Context | Speech | Unloads | Task steps |
+|---|---|---|---|---|---|
+| Lite | Gemma 4 E2B | 8k | processor | after 2 min idle, 1 min on battery | 4 |
+| Balanced | Gemma 4 E4B | 16k | graphics card | after 5 min idle | 4 |
+| Advanced | Gemma 4 E4B | 32k | graphics card | never | 8 |
+
+Without an NVIDIA card everything runs on the processor. A preset's model that isn't
+downloaded is named with its download command; the rest still applies.
+
 Tasks and steps are kept in `agent.db`: `nixe-assistant tasks`, `tasks show ID`.
 
 A request with several steps ("open the PDF, find taxes and go to that page") gets a

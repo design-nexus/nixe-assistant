@@ -537,6 +537,8 @@ impl App {
             }
         }
         self.tts.set_voice(&next.tts.voice, next.tts.speed);
+        // A preset (or an edit) may have changed when the models unload.
+        *self.power.lock().unwrap() = PowerSettings::load();
         *self.apps.lock().await = apps;
         *self.commands.lock().await = commands;
         *self.cfg.lock().unwrap_or_else(|e| e.into_inner()) = next.clone();

@@ -57,7 +57,7 @@ concurrent load §4.6 asks for. Tests: 62 passed before this work (73 after) (`c
 | §11.3 emergency stop | **done in Phase 8a** | Super+Shift+Escape (`nixe-assistant cancel`) anywhere, Escape on the HUD, voice "stop", Stop in Settings, job cancel. It never waits on the model, and releases held modifiers after a cut-off keyboard action. |
 | §12 audit and recovery | **audit done in Phase 1**; crash recovery **Phase 8b** | Abilities keep their own undo (`history.undo`, `*.undo`). Crashed plugins restart (3 per 5 min); the recognizer restarts on the next utterance; systemd restarts the daemon, stops after 5 crashes in 2 min and says so. `bench crash` 4/4. |
 | §13 GTK settings | **done in Phase 7** | An Assistant group in Nixe Settings (General, Voice, Permissions, Activity, Performance, Models), through `nixe-assistant config/perf/models` so the assistant still checks every value. The TUI stays for personas. |
-| §14 hardware profiles | partial (Phase 8b) | One configuration. Measured under load on the RTX 5080 (BENCHMARKS.md); temperatures, power and the power source in `perf` and Settings. On battery the card can't sleep while Hyprland holds it, so early unloading is off by default. No Lite/Balanced/Advanced presets. |
+| §14 hardware profiles | **done** (Phase 8b; presets 2026-10-17) | Measured under load on the RTX 5080 (BENCHMARKS.md); temperatures, power and the power source in `perf` and Settings. On battery the card can't sleep while Hyprland holds it, so early unloading is off by default. Lite, Balanced and Advanced presets (2026-10-17): model, context, speech device, vision and model unloading, task steps; recommended from graphics memory; `nixe-assistant preset` and Settings › Assistant › Performance. |
 
 ## Reusable as is
 
