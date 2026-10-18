@@ -68,7 +68,7 @@ case $what in
         # The planner bench's context (12k: about 9k with every app tool offered), all on the GPU.
         "$bin/llama-server" -m "$model" -ngl 99 -c 12288 -fa on --jinja --port 8089 --host 127.0.0.1 >"$log" 2>&1 &
         server=$!
-        trap 'kill $server 2>/dev/null; restore' EXIT
+        trap 'kill $server 2>/dev/null || true; restore' EXIT
         nixe-assistant bench planner --server http://127.0.0.1:8089 --label "Ternary Bonsai 2 $size $pack" | tee "$here/results/bonsai-$size-$pack-planner.md"
         kill $server; wait $server 2>/dev/null || true
         echo; echo "Speed (prompt 512, generate 128):"
