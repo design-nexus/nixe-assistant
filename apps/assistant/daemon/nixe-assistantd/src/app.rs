@@ -1992,7 +1992,15 @@ impl App {
                     old.detail = Some("replaced by a new request".into());
                     self.task_changed(&old);
                 }
-                let task = Task::new(self.turn_id().to_string(), ask, cfg.agent.budget());
+                let mut task = Task::new(self.turn_id().to_string(), ask, cfg.agent.budget());
+                let plan = match cfg.agent.plan {
+                    assistant_core::config::PlanMode::Always => true,
+                    assistant_core::config::PlanMode::Auto => crate::planner::wants_plan(ask),
+                    assistant_core::config::PlanMode::Off => false,
+                };
+                if plan {
+                    task.set_plan(&self.write_plan(ask, &cancel).await);
+                }
                 self.task_changed(&task);
                 (task, Vec::new())
             }
@@ -2046,6 +2054,33 @@ impl App {
         }))
     }
 
+    /// A short plan for a multi-step request, written before its first call. Not a tool
+    /// call (it doesn't count against the budget); none when the model can't make one in time.
+    async fn write_plan(&self, ask: &str, cancel: &CancellationToken) -> Vec<String> {
+        let gc = Arc::new(AtomicBool::new(false));
+        let text = async {
+            let mut tokens = self
+                .llm
+                .generate_with_grammar(crate::planner::PLAN_SYSTEM, &[], ask, 512, 0.0, gc.clone(), Some(crate::planner::PLAN_GRAMMAR.into()))
+                .await?;
+            let mut text = String::new();
+            while let Some(token) = tokens.recv().await {
+                text.push_str(&token?);
+            }
+            Ok::<_, anyhow::Error>(text)
+        };
+        let text = tokio::select! {
+            r = tokio::time::timeout(Duration::from_secs(10), text) => r.ok().and_then(Result::ok),
+            _ = cancel.cancelled() => None,
+        };
+        gc.store(true, Ordering::Relaxed);
+        let steps = text.as_deref().map(crate::planner::parse_plan).unwrap_or_default();
+        if steps.is_empty() {
+            tracing::warn!("no plan for a multi-step request; planning one call at a time");
+        }
+        steps
+    }
+
     /// The task's planning loop: plan one call, run it, verify it, until the model finishes,
     /// a budget runs out, the browser needs a person, or the task is cancelled.
     #[allow(clippy::too_many_arguments)]
@@ -2067,7 +2102,8 @@ impl App {
             if cancel.is_cancelled() {
                 anyhow::bail!("tool request cancelled");
             }
-            let prompt = crate::planner::step(ask, results);
+            let plan = task.lock().unwrap().plan.clone();
+            let prompt = crate::planner::step(ask, &plan, results);
             let gc = Arc::new(AtomicBool::new(false));
             let mut tokens = self
                 .llm
@@ -2243,6 +2279,7 @@ fn task_json(task: &Task) -> Value {
         "max_calls": task.budget.max_calls,
         "active_ms": task.active_ms,
         "detail": task.detail,
+        "plan": task.plan,
         "steps": task.steps.iter().map(|s| json!({"tool": s.tool, "verification": s.verification.as_str()})).collect::<Vec<_>>(),
     })
 }

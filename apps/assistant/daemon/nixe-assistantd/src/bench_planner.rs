@@ -383,7 +383,7 @@ pub async fn planner_one(model: &Path) -> Result<()> {
             .collect();
         let t = Instant::now();
         let mut rx = llm
-            .generate_with_grammar(&system, &[], &crate::planner::step(case.ask, &results), cfg.llm.n_predict, 0.0, Arc::new(AtomicBool::new(false)), Some(crate::planner::GRAMMAR.into()))
+            .generate_with_grammar(&system, &[], &crate::planner::step(case.ask, &[], &results), cfg.llm.n_predict, 0.0, Arc::new(AtomicBool::new(false)), Some(crate::planner::GRAMMAR.into()))
             .await?;
         let mut out = String::new();
         while let Some(tok) = rx.recv().await {

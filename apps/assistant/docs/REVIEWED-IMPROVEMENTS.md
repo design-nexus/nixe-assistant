@@ -63,6 +63,14 @@ restart marks tasks it interrupted as failed; nothing resumes on its own.
 
 Tasks and steps are kept in `agent.db`: `nixe-assistant tasks`, `tasks show ID`.
 
+A request with several steps ("open the PDF, find taxes and go to that page") gets a
+short plan before its first call (`[agent] plan = "auto"`; `always` or `off`). The HUD
+shows it under the task, `tasks show` prints it, and every planning step is given it.
+Each change a task makes is recorded with the task: **undo that task** (or
+`nixe-assistant tasks undo [ID]`, the `history.undo_task` tool) undoes its reversible
+changes newest first, each asked like any call, stops at the first one that fails, and
+says which can't be undone (keystrokes and clicks in other apps, sent messages).
+
 External tools require confirmation by default. The TUI and HUD display exact
 arguments; `y` allows once, `n` denies. Approvals expire after 60 seconds.
 Cancellation and denial prevent dispatch. CLI equivalents are `approve ID` and

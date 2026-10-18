@@ -110,7 +110,7 @@ impl Capability {
             "app.launch" | "apps.launch" | "agent.handoff" => return Self::AppLaunch,
             "system.shutdown" => return Self::Shutdown,
             "capture.screen" | "capture.clipboard" => return Self::Capture,
-            "history.undo" => return Self::PluginData,
+            "history.undo" | "history.undo_task" => return Self::PluginData,
             // Nixe apps worked directly: reading a file in, typing into a document, saving.
             "notepad.open" | "write.open" | "archive.list" | "archive.open" | "photos.open" | "pdf.open" => return Self::FileRead,
             "notepad.insert_text" | "write.insert_text" | "contacts.add" | "contacts.update" | "chat.send" => return Self::PluginEdit,

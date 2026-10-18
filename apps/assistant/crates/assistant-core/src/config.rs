@@ -716,6 +716,18 @@ pub struct AgentCfg {
     pub max_calls: usize,
     /// Active seconds one task may spend, not counting approval waits (10–1800).
     pub max_active_secs: u64,
+    /// Whether a task writes a short plan before its first call: `auto` (requests with
+    /// several steps), `always` or `off`.
+    pub plan: PlanMode,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PlanMode {
+    #[default]
+    Auto,
+    Always,
+    Off,
 }
 
 impl AgentCfg {
@@ -736,6 +748,7 @@ impl Default for AgentCfg {
             mode: Default::default(),
             max_calls: 4,
             max_active_secs: 180,
+            plan: PlanMode::Auto,
         }
     }
 }

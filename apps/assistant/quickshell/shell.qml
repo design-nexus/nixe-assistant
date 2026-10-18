@@ -34,6 +34,7 @@ ShellRoot {
     property bool approvalDetailsOpen: false
     // "Type a note in Write · step 2 of 4", while a task runs.
     property string taskLine: ""
+    property string taskPlan: ""
     property bool connected: false
     property bool holdVisible: false
     property var theme: ({})
@@ -168,6 +169,7 @@ ShellRoot {
                 const running = ["queued", "planning", "running", "waiting_for_approval", "paused"].indexOf(t.state) >= 0;
                 const request = t.request.length > 60 ? t.request.substring(0, 60) + "…" : t.request;
                 root.taskLine = running ? request + " · step " + Math.min(t.calls + 1, t.max_calls) + " of " + t.max_calls + (t.state === "waiting_for_approval" ? " · waiting for you" : "") : "";
+                root.taskPlan = running && t.plan && t.plan.length > 0 ? t.plan.map((s, i) => (i + 1) + ". " + s).join("\n") : "";
             }
             if (obj.event && obj.event.type === "calibration") {
                 root.errorText = "Calibration: " + obj.event.phase + " for five seconds";
@@ -191,6 +193,7 @@ ShellRoot {
             }
             if (obj.state === "listening") {
                 root.taskLine = "";
+                root.taskPlan = "";
                 root.toolProgress = "";
                 root.transcript = "";
                 root.assistant = "";
@@ -443,6 +446,7 @@ ShellRoot {
                 Text { visible: root.toolProgress.length > 0 && root.daemonState !== "idle"; width: body.width; text: root.toolProgress; color: root.cMuted; font.family: root.hudFont; wrapMode: Text.WrapAnywhere }
                 Text { visible: root.dictationDraft.length > 0; width: body.width; text: "Draft for " + root.dictationTarget + ": " + root.dictationDraft; color: root.cFg; font.family: root.hudFont; wrapMode: Text.WrapAnywhere }
                 Text { visible: root.taskLine.length > 0 && root.daemonState !== "idle"; width: body.width; text: root.taskLine; color: root.cMuted; font.family: root.hudFont; wrapMode: Text.Wrap }
+                Text { visible: root.taskPlan.length > 0 && root.daemonState !== "idle"; width: body.width; text: root.taskPlan; color: root.cMuted; font.family: root.hudFont; wrapMode: Text.Wrap }
                 Column {
                     visible: root.approvalId.length > 0
                     width: body.width

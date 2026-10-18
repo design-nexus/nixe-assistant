@@ -14,7 +14,7 @@ use std::sync::{mpsc, Mutex};
 
 use crate::task::{Step, Task, TaskState};
 
-const SCHEMA_VERSION: i32 = 2;
+const SCHEMA_VERSION: i32 = 3;
 const MAX_VALUE: usize = 256;
 /// Keys whose values are always secret, anywhere in the name.
 const SECRET_WORDS: &[&str] = &["password", "passwd", "secret", "token", "cookie", "credential"];
@@ -76,6 +76,7 @@ pub struct TaskRow {
     pub created_ms: u64,
     pub updated_ms: u64,
     pub detail: Option<String>,
+    pub plan: Vec<String>,
 }
 
 impl From<&Task> for TaskRow {
@@ -92,6 +93,7 @@ impl From<&Task> for TaskRow {
             created_ms: t.created_ms,
             updated_ms: t.updated_ms,
             detail: t.detail.clone(),
+            plan: t.plan.clone(),
         }
     }
 }
@@ -238,6 +240,9 @@ fn migrate(conn: &Connection) -> Result<()> {
             );",
         )?;
     }
+    if version < 3 {
+        conn.execute_batch("ALTER TABLE tasks ADD COLUMN plan TEXT;")?;
+    }
     anyhow::ensure!(version <= SCHEMA_VERSION, "audit journal is from a newer assistant (schema {version})");
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     Ok(())
@@ -268,8 +273,8 @@ fn insert(conn: &Connection, r: &Record) -> rusqlite::Result<usize> {
 fn upsert_task(conn: &Connection, t: &TaskRow) -> rusqlite::Result<usize> {
     conn.execute(
         "INSERT OR REPLACE INTO tasks (id, turn, request, state, calls, max_calls, active_ms,
-            max_active_ms, created_ms, updated_ms, detail)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            max_active_ms, created_ms, updated_ms, detail, plan)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             t.id,
             t.turn,
@@ -282,6 +287,7 @@ fn upsert_task(conn: &Connection, t: &TaskRow) -> rusqlite::Result<usize> {
             t.created_ms as i64,
             t.updated_ms as i64,
             t.detail.as_deref().map(|d| truncate(d, 1024)),
+            (!t.plan.is_empty()).then(|| serde_json::to_string(&t.plan).unwrap_or_default()),
         ],
     )
 }
@@ -312,7 +318,17 @@ fn interrupt_live(conn: &Connection) -> rusqlite::Result<usize> {
 }
 
 const TASK_COLUMNS: &str = "id, turn, request, state, calls, max_calls, active_ms, max_active_ms,
-    created_ms, updated_ms, detail";
+    created_ms, updated_ms, detail, plan";
+
+/// The columns to read: a journal from before plans (read-only, not migrated) has none.
+fn task_columns(conn: &Connection) -> String {
+    let version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap_or(0);
+    if version >= 3 {
+        TASK_COLUMNS.into()
+    } else {
+        TASK_COLUMNS.replace("plan", "NULL AS plan")
+    }
+}
 
 fn task_row(r: &rusqlite::Row) -> rusqlite::Result<TaskRow> {
     Ok(TaskRow {
@@ -327,6 +343,7 @@ fn task_row(r: &rusqlite::Row) -> rusqlite::Result<TaskRow> {
         created_ms: r.get::<_, i64>(8)? as u64,
         updated_ms: r.get::<_, i64>(9)? as u64,
         detail: r.get(10)?,
+        plan: r.get::<_, Option<String>>(11)?.and_then(|p| serde_json::from_str(&p).ok()).unwrap_or_default(),
     })
 }
 
@@ -344,7 +361,7 @@ pub fn tasks(path: &Path, limit: usize) -> Result<Vec<TaskRow>> {
     let Some(conn) = read_only(path)? else {
         return Ok(Vec::new());
     };
-    let mut stmt = conn.prepare(&format!("SELECT {TASK_COLUMNS} FROM tasks ORDER BY created_ms DESC LIMIT ?1"))?;
+    let mut stmt = conn.prepare(&format!("SELECT {} FROM tasks ORDER BY created_ms DESC LIMIT ?1", task_columns(&conn)))?;
     let rows = stmt.query_map([limit as i64], task_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
 }
@@ -354,7 +371,7 @@ pub fn task(path: &Path, id: &str) -> Result<Option<(TaskRow, Vec<StepRow>)>> {
     let Some(conn) = read_only(path)? else {
         return Ok(None);
     };
-    let mut stmt = conn.prepare(&format!("SELECT {TASK_COLUMNS} FROM tasks WHERE id = ?1"))?;
+    let mut stmt = conn.prepare(&format!("SELECT {} FROM tasks WHERE id = ?1", task_columns(&conn)))?;
     let Some(task) = stmt.query_map([id], task_row)?.next().transpose()? else {
         return Ok(None);
     };
@@ -511,8 +528,12 @@ mod tests {
         drop(AuditLog::open(&path).unwrap());
         let conn = Connection::open(&path).unwrap();
         let version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
         assert_eq!(recent(&path, 5).unwrap().len(), 1, "audit rows kept");
+    }
+
+    fn state_of(path: &Path, id: &str) -> TaskRow {
+        task(path, id).unwrap().unwrap().0
     }
 
     #[test]
@@ -524,6 +545,7 @@ mod tests {
         let budget = Budget { max_calls: 4, max_active_ms: 180_000 };
         let mut done = Task::new("1", "make a note", budget);
         done.move_to(TaskState::Planning).unwrap();
+        done.set_plan(&["Find the meeting".into(), "  ".into(), "Write   the note".into()]);
         done.push_step("notes.create", "d".into(), Verification::Verified, "created".into());
         log.step(&done, &done.steps[0].clone());
         done.move_to(TaskState::Completed).unwrap();
@@ -540,6 +562,8 @@ mod tests {
         wait_for(|| (tasks(&path, 10).unwrap().len() == 3).then_some(()));
         let (row, steps) = task(&path, &done.id).unwrap().unwrap();
         assert_eq!(row.state, "completed");
+        assert_eq!(row.plan, ["Find the meeting", "Write the note"], "blank steps dropped, spaces tidied");
+        assert!(state_of(&path, &live.id).plan.is_empty());
         assert_eq!((steps.len(), steps[0].verification.as_str()), (1, "verified"));
         assert!(task(&path, "t-missing").unwrap().is_none());
         // A restart: the running task can't be trusted to have finished; paused stays paused.

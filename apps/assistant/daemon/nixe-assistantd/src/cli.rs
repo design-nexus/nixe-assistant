@@ -1,6 +1,7 @@
 #[path = "bench.rs"]
 mod bench;
 #[path = "planner.rs"]
+#[allow(dead_code)]
 mod planner;
 #[path = "session.rs"]
 #[allow(dead_code)]
@@ -467,6 +468,14 @@ async fn main() -> anyhow::Result<()> {
                     let task_id = rest.get(1).context("task ID required")?.clone();
                     println!("{}", request(Control::TaskCancel { task_id }, 5000).await?);
                 }
+                Some("undo") => {
+                    // The task given, or the last one with changes left.
+                    let arguments = match rest.get(1) {
+                        Some(id) => serde_json::json!({"task": id}),
+                        None => serde_json::json!({}),
+                    };
+                    println!("{}", request(Control::ToolCall { name: "history.undo_task".into(), arguments }, 90_000).await?);
+                }
                 Some("show") => {
                     let id = rest.get(1).context("task ID required")?;
                     let (task, steps) = assistant_policy::store::task(&path, id)?
@@ -484,6 +493,12 @@ async fn main() -> anyhow::Result<()> {
                             task.request,
                             task.detail.map(|d| format!("\n  {d}")).unwrap_or_default()
                         );
+                        if !task.plan.is_empty() {
+                            println!("Plan:");
+                            for (i, s) in task.plan.iter().enumerate() {
+                                println!("  {}. {s}", i + 1);
+                            }
+                        }
                         for s in steps {
                             println!(
                                 "  {}  {:<28} {:<11} {}",
@@ -1174,7 +1189,7 @@ fn print_help() {
            conversation start|stop, dictation start|pause|resume|stop|insert\n\
            browser-takeover, browser-resume, jobs status|follow|cancel ID\n\
            tool-mode on|off, approve ID [--task], deny ID\n\
-           tasks [--limit N] [--json], tasks show ID, tasks cancel ID\n\
+           tasks [--limit N] [--json], tasks show ID, tasks cancel ID, tasks undo [ID]\n\
          Commands:\n\
            persona [set/new/aliases/add-alias]  manage saved assistant personas\n\
            ptt-start      start push-to-talk capture\n\

@@ -11,6 +11,9 @@ pub(super) struct ActionRecord {
     owner: Option<String>,
     undo: Option<Value>,
     undone: bool,
+    /// The task that made the change, so the whole task can be undone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    task: Option<String>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct PowerSettings {
@@ -53,6 +56,16 @@ impl PowerSettings {
             .unwrap_or_default()
     }
 }
+/// The changes one task made that aren't undone yet, newest first: the task asked for, or
+/// the latest one with any.
+fn task_actions(records: &[ActionRecord], task: Option<&str>) -> Option<(String, Vec<ActionRecord>)> {
+    let task = match task {
+        Some(t) => t.to_string(),
+        None => records.iter().rev().find(|r| !r.undone && r.task.is_some())?.task.clone()?,
+    };
+    let actions: Vec<_> = records.iter().rev().filter(|r| !r.undone && r.task.as_deref() == Some(task.as_str())).cloned().collect();
+    (!actions.is_empty()).then_some((task, actions))
+}
 pub(super) fn load_actions() -> Vec<ActionRecord> {
     std::fs::read(assistant_core::paths::data_dir().join("actions.json"))
         .ok()
@@ -72,7 +85,7 @@ fn forward_cancel(owner: CancellationToken, target: CancellationToken) -> Forwar
     }))
 }
 impl App {
-    pub(super) fn remember_action(&self, name: &str, args: &Value, result: &Value) -> Result<()> {
+    pub(super) fn remember_action(&self, name: &str, args: &Value, result: &Value, task: Option<String>) -> Result<()> {
         if result["isError"] == true
             || is_read_only(name)
             || name.ends_with(".undo")
@@ -98,9 +111,43 @@ impl App {
             owner,
             undo: (!undo.is_null()).then_some(undo),
             undone: false,
+            task,
         });
         let excess = records.len().saturating_sub(100);
         records.drain(..excess);
+        assistant_core::config::atomic_write(
+            &assistant_core::paths::data_dir().join("actions.json"),
+            &serde_json::to_vec_pretty(&*records)?,
+        )?;
+        Ok(())
+    }
+    /// Undo one recorded change through its owner's undo tool (asked like any call), and
+    /// mark it undone.
+    async fn undo_action(&self, action: &ActionRecord, cancel: &CancellationToken, depth: usize) -> Result<()> {
+        let undo = action.undo.as_ref().context("this change can't be undone")?;
+        anyhow::ensure!(valid_undo(&action.tool, undo), "invalid saved undo");
+        let undo_owner = self
+            .registry
+            .plugins
+            .as_ref()
+            .and_then(|p| p.owner(undo["tool"].as_str().unwrap()));
+        anyhow::ensure!(
+            action.owner.is_some() && action.owner == undo_owner,
+            "original undo owner is unavailable or changed; enable the original plugin"
+        );
+        let value = Box::pin(self.dispatch_plugin_depth(
+            undo["tool"].as_str().unwrap(),
+            undo["arguments"].clone(),
+            cancel,
+            depth + 1,
+            1,
+        ))
+        .await?;
+        anyhow::ensure!(value["isError"] != true, "undo failed: {value}");
+        let mut records = self.actions.lock().unwrap();
+        if let Some(record) = records.iter_mut().find(|r| r.id == action.id) {
+            record.undone = true;
+        }
         assistant_core::config::atomic_write(
             &assistant_core::paths::data_dir().join("actions.json"),
             &serde_json::to_vec_pretty(&*records)?,
@@ -143,7 +190,7 @@ impl App {
             for step in &steps {
                 let tool = step["tool"].as_str().context("missing action tool")?;
                 anyhow::ensure!(
-                    !matches!(tool, "routines.run" | "projects.action" | "history.undo")
+                    !matches!(tool, "routines.run" | "projects.action" | "history.undo" | "history.undo_task")
                         && !tool.starts_with("power."),
                     "nested host actions are unsupported"
                 );
@@ -240,38 +287,49 @@ impl App {
                 .find(|r| !r.undone)
                 .cloned()
                 .context("no reversible action to undo")?;
-            let undo = action.undo.as_ref().context(
-                "the most recent recorded change cannot be undone; inspect action history",
-            )?;
-            anyhow::ensure!(valid_undo(&action.tool, undo), "invalid saved undo");
-            let undo_owner = self
-                .registry
-                .plugins
-                .as_ref()
-                .and_then(|p| p.owner(undo["tool"].as_str().unwrap()));
             anyhow::ensure!(
-                action.owner.is_some() && action.owner == undo_owner,
-                "original undo owner is unavailable or changed; enable the original plugin"
+                action.undo.is_some(),
+                "the most recent recorded change cannot be undone; inspect action history"
             );
-            let value = Box::pin(self.dispatch_plugin_depth(
-                undo["tool"].as_str().unwrap(),
-                undo["arguments"].clone(),
-                cancel,
-                depth + 1,
-                1,
-            ))
-            .await?;
-            anyhow::ensure!(value["isError"] != true, "undo failed: {value}");
-            let mut records = self.actions.lock().unwrap();
-            if let Some(record) = records.iter_mut().find(|r| r.id == action.id) {
-                record.undone = true;
-            }
-            assistant_core::config::atomic_write(
-                &assistant_core::paths::data_dir().join("actions.json"),
-                &serde_json::to_vec_pretty(&*records)?,
-            )?;
+            self.undo_action(&action, cancel, depth).await?;
             result["structuredContent"] =
                 json!({"undone":action.id,"tool":action.tool,"acknowledgement":"Action undone."});
+        } else if name == "history.undo_task" {
+            let _guard = self.undo_lock.lock().await;
+            let asked = result["structuredContent"]["host_history"]["task"].as_str().map(String::from);
+            let (task, actions) = task_actions(&self.actions.lock().unwrap(), asked.as_deref())
+                .context("no task with changes to undo")?;
+            let (mut undone, mut kept) = (Vec::new(), Vec::new());
+            let mut failed = None;
+            for action in &actions {
+                if action.undo.is_none() {
+                    kept.push(action.tool.clone());
+                    continue;
+                }
+                match self.undo_action(action, cancel, depth).await {
+                    Ok(()) => undone.push(action.tool.clone()),
+                    // Later changes may depend on this one: stop here.
+                    Err(err) => {
+                        failed = Some(json!({"tool": action.tool, "error": format!("{err:#}")}));
+                        break;
+                    }
+                }
+            }
+            let mut said = match undone.len() {
+                0 => "Nothing from that task could be undone.".to_string(),
+                1 => "Undid 1 change from that task.".to_string(),
+                n => format!("Undid {n} changes from that task."),
+            };
+            if !kept.is_empty() {
+                said.push_str(&format!(" These can't be undone: {}.", kept.join(", ")));
+            }
+            if let Some(f) = &failed {
+                said.push_str(&format!(" Stopped at {}, which failed.", f["tool"].as_str().unwrap_or("a step")));
+            }
+            result["structuredContent"] = json!({"task": task, "undone": undone, "not_reversible": kept, "failed": failed, "acknowledgement": said});
+            if failed.is_some() {
+                result["isError"] = json!(true);
+            }
         }
         // Keep text and structured content consistent after host processing. Tools that
         // return only text (system.status, files.read) keep it.
@@ -347,6 +405,35 @@ fn valid_undo(source: &str, value: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn record(id: &str, task: Option<&str>, undone: bool, undo: bool) -> ActionRecord {
+        ActionRecord {
+            id: id.into(),
+            tool: "files.write".into(),
+            arguments: json!({}),
+            owner: Some("files".into()),
+            undo: undo.then(|| json!({"version":1,"tool":"files.undo","arguments":{"backup":id}})),
+            undone,
+            task: task.map(String::from),
+        }
+    }
+    #[test]
+    fn a_task_is_undone_newest_first() {
+        let records = vec![
+            record("1", Some("t-a"), false, true),
+            record("2", Some("t-b"), false, true),
+            record("3", Some("t-b"), false, false),
+            record("4", Some("t-b"), true, true),
+            record("5", None, false, true),
+        ];
+        let (task, actions) = task_actions(&records, None).unwrap();
+        assert_eq!(task, "t-b", "the latest task with changes left");
+        assert_eq!(actions.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), ["3", "2"], "newest first, undone ones skipped");
+        let (_, actions) = task_actions(&records, Some("t-a")).unwrap();
+        assert_eq!(actions.len(), 1);
+        assert!(task_actions(&records, Some("t-none")).is_none());
+        let old: ActionRecord = serde_json::from_value(json!({"id":"9","tool":"notes.create","arguments":{},"undo":null,"undone":false})).unwrap();
+        assert!(old.task.is_none(), "journals from before tasks were recorded still load");
+    }
     #[test]
     fn undo_cannot_dispatch_another_ability() {
         assert!(valid_undo(

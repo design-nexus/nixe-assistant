@@ -1019,7 +1019,7 @@ impl App {
                         .sum::<u64>()
                 });
         result["assistant_approval_ms"] = json!(approval_ms + child_approval_ms);
-        self.remember_action(name, &args, &result)?;
+        self.remember_action(name, &args, &result, task.map(|t| t.lock().unwrap().id.clone()))?;
         self.emit_tool(name, &args, &result);
         Ok(result)
     }

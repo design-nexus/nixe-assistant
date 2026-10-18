@@ -126,6 +126,9 @@ pub struct Task {
     pub created_ms: u64,
     pub updated_ms: u64,
     pub detail: Option<String>,
+    /// The steps the planner meant to take, written before the first call (empty for a
+    /// one-step request). Shown to the person and given to each planning step.
+    pub plan: Vec<String>,
     pub steps: Vec<Step>,
     /// Task-wide approvals: tool, resource (see `resource_of`), expiry.
     #[serde(skip)]
@@ -156,6 +159,9 @@ pub fn resource_of(tool: &str, args: &Value) -> Option<String> {
 
 static NEXT: AtomicU64 = AtomicU64::new(1);
 
+/// Most steps a plan keeps.
+pub const MAX_PLAN: usize = 6;
+
 impl Task {
     pub fn new(turn: impl Into<String>, request: impl Into<String>, budget: Budget) -> Self {
         let now = now_ms();
@@ -170,11 +176,24 @@ impl Task {
             created_ms: now,
             updated_ms: now,
             detail: None,
+            plan: Vec::new(),
             steps: Vec::new(),
             approvals: Vec::new(),
             read_private: false,
             read_untrusted: false,
         }
+    }
+
+    /// Keep a plan: up to `MAX_PLAN` non-empty steps of up to 160 characters.
+    pub fn set_plan(&mut self, steps: &[String]) {
+        self.plan = steps
+            .iter()
+            .map(|s| s.split_whitespace().collect::<Vec<_>>().join(" "))
+            .filter(|s| !s.is_empty())
+            .map(|s| if s.chars().count() > 160 { s.chars().take(159).collect::<String>() + "…" } else { s })
+            .take(MAX_PLAN)
+            .collect();
+        self.updated_ms = now_ms();
     }
 
     /// Move to `next`, or refuse an illegal transition (the state stays as it was).
