@@ -6,7 +6,6 @@
 #   run.sh qwen [0.6B|1.7B]          per-phrase synthesis, Qwen3-TTS CustomVoice (default 0.6B)
 #   run.sh gepard [REFERENCE.wav]    per-phrase synthesis, Gepard 1.1 (voice from the clip)
 #   run.sh tyger NAME                TYGER on the take results/takes/NAME-{mic,playback}.wav
-#   run.sh moshi                     Moshi (q8) web demo on https://localhost:8998
 #   run.sh bonsai 9B|27B [PQ2_0|PTQ1_0]  Ternary Bonsai 2 on Prism's llama.cpp: the planner bench and speed
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -17,7 +16,7 @@ for a in "$@"; do
     if [[ $a == --with-assistant ]]; then keep=1; else args+=("$a"); fi
 done
 set -- "${args[@]}"
-what=${1:?usage: run.sh qwen|gepard|tyger|moshi …}
+what=${1:?usage: run.sh qwen|gepard|tyger …}
 shift
 
 need() { [[ -f $1/.done || -d $1 ]] || { echo "not set up: $1 (run setup.sh)"; exit 1; }; }
@@ -48,14 +47,6 @@ case $what in
         name=${1:?run.sh tyger NAME (a take from record_pair.sh)}
         need "$TRIALS/tyger/.venv"
         "$TRIALS/tyger/.venv/bin/python" "$here/tyger_offline.py" "$here/results/takes/$name-mic.wav" "$here/results/takes/$name-playback.wav"
-        ;;
-    moshi)
-        need "$TRIALS/moshi/.venv"
-        w=$TRIALS/moshi/weights/moshiko-pytorch-q8
-        echo "Open https://localhost:8998 (accept the temporary certificate). Ctrl+C stops."
-        "$TRIALS/moshi/.venv/bin/python" -m moshi.server --hf-repo kyutai/moshiko-pytorch-q8 \
-            --moshi-weight "$w/model.q8.safetensors" --mimi-weight "$w/$(ls "$w" | grep -m1 '^tokenizer-.*safetensors$')" \
-            --tokenizer "$w/$(ls "$w" | grep -m1 '\.model$')" --config-path "$w/config.json" --ssl "$(mktemp -d)"
         ;;
     bonsai)
         size=${1:?run.sh bonsai 9B|27B [PQ2_0|PTQ1_0]}

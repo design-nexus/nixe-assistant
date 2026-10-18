@@ -48,7 +48,6 @@ weights() {
     echo "Weights"
     fetch Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice qwen3-tts/weights/0.6B-CustomVoice
     fetch Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice qwen3-tts/weights/1.7B-CustomVoice
-    fetch kyutai/moshiko-pytorch-q8 moshi/weights/moshiko-pytorch-q8
     fetch nineninesix/tyger tyger/weights/tyger
     fetch nineninesix/gepard-1.1 gepard/weights/gepard-1.1
     # Gepard's checkpoint names its codec by repo id; NeMo looks for it in the Hugging Face cache.
@@ -89,7 +88,6 @@ envs() {
     # cu128 wheels carry sm_120 (Blackwell) kernels; torch comes with each package so a
     # package's own torch requirement can't pull a CPU build.
     venv qwen3-tts/.venv --torch-backend cu128 torch torchaudio qwen-tts soundfile
-    venv moshi/.venv --torch-backend cu128 torch moshi soundfile
     venv tyger/.venv --torch-backend auto -r "$TRIALS/tyger/tyger-s2s/requirements.txt"
     # Gepard: its scripts/setup.sh picks a CPU torch on CUDA 13.4 and needs a torchcodec that
     # can't load Arch's FFmpeg 9, so the same stack in one resolve: CUDA torch, NeMo's codec,

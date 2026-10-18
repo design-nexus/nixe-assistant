@@ -8,7 +8,6 @@ so they can be measured on this computer before anything is wired in.
 | Qwen3-TTS 0.6B / 1.7B CustomVoice | Speech synthesis, nine built-in voices | Kokoro | 2.5 / 4.5 GB | Apache 2.0 |
 | Gepard 1.1 | Speech synthesis made for live dialogue; clones a voice from a clip | Kokoro | 1.1 GB + 0.5 GB codec | Apache 2.0 |
 | TYGER | Turn-taking: when to answer, stop, or say "mm-hm" (Nemotron ASR + a small GRU) | the rules in `duplex.rs` | 2.6 GB | OpenMDW 1.1 |
-| Moshi (q8) | Full-duplex speech-to-speech model | the assistant's whole loop | 8.4 GB | CC-BY 4.0 |
 | Ternary Bonsai 2 9B / 27B | Ternary language models, only on Prism's llama.cpp fork | Gemma 4 E4B as the planner | 9B: 2.4 (PQ2_0) or 2.0 GB (PTQ1_0); 27B: LM Studio's PTQ1_0 (5.9 GB) | Apache 2.0 |
 
 ## Set up
@@ -29,7 +28,6 @@ benchmarks/trials/run.sh qwen 0.6B       # then: run.sh qwen 1.7B
 benchmarks/trials/run.sh gepard          # a reference clip from gepard-inference/ref_audio, or give one
 benchmarks/trials/record_pair.sh stop1   # talk over a long reply: "stop", "mm-hm", a new request
 benchmarks/trials/run.sh tyger stop1
-benchmarks/trials/run.sh moshi           # https://localhost:8998
 benchmarks/trials/run.sh bonsai 9B PQ2_0 # or PTQ1_0; and: run.sh bonsai 27B PTQ1_0
 ```
 
@@ -48,11 +46,4 @@ Results land in `results/` (JSON, and each phrase's audio for listening).
   as for the bundled models, through Prism's `llama-server` because the assistant's own
   llama.cpp can't load ternary packings) and `llama-bench` speed. Prism's build is its latest
   release (`setup.sh` pins the tag); LM Studio's Bonsai runtime has an older one.
-- **Moshi**: its own web page, to talk to; watch `nvidia-smi` for memory. Note how soon it
-  answers, whether it handles interruptions and "mm-hm", and that it can't use the
-  assistant's tools.
 
-## Limits on this computer (RTX 5080 Laptop, 16 GB)
-
-Moshi q8 needs about 9 GB, so it runs with the assistant stopped (as every trial does by
-default).
