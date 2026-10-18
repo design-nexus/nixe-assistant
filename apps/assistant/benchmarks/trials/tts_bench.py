@@ -2,6 +2,7 @@
 
     <env>/bin/python tts_bench.py qwen   WEIGHTS [--speaker NAME]
     <env>/bin/python tts_bench.py gepard WEIGHTS [--reference CLIP.wav]
+    <env>/bin/python tts_bench.py vibevoice WEIGHTS [--speaker NAME]
 
 Times a short first phrase (what decides when the first word is heard), a typical phrase
 and a long one, three times each after a warm-up, and writes the median time, real-time
@@ -58,9 +59,37 @@ def gepard(weights: str, reference: str | None):
     return speak, {"reference": cfg.reference_audio}
 
 
+def vibevoice(weights: str, speaker: str | None):
+    import copy
+
+    import torch
+    from transformers.cache_utils import DynamicCache
+    from transformers.modeling_outputs import BaseModelOutputWithPast
+    from vibevoice.modular.modeling_vibevoice_streaming_inference import VibeVoiceStreamingForConditionalGenerationInference
+    from vibevoice.processor.vibevoice_streaming_processor import VibeVoiceStreamingProcessor
+
+    voices = Path.home() / ".cache/nixe-assistant/trials/vibevoice/VibeVoice/demo/voices/streaming_model"
+    name = speaker or "en-Emma_woman"
+    processor = VibeVoiceStreamingProcessor.from_pretrained(weights)
+    # Microsoft's demo prefers FlashAttention 2 (not installed here); SDPA is its fallback.
+    model = VibeVoiceStreamingForConditionalGenerationInference.from_pretrained(weights, torch_dtype=torch.bfloat16, device_map="cuda", attn_implementation="sdpa")
+    model.eval()
+    model.set_ddpm_inference_steps(num_steps=5)
+    with torch.serialization.safe_globals([BaseModelOutputWithPast, DynamicCache]):
+        prompt = torch.load(voices / f"{name}.pt", map_location="cuda", weights_only=True)
+
+    def speak(text):
+        inputs = processor.process_input_with_cached_prompt(text=text, cached_prompt=prompt, padding=True, return_tensors="pt", return_attention_mask=True)
+        inputs = {k: v.to("cuda") if torch.is_tensor(v) else v for k, v in inputs.items()}
+        out = model.generate(**inputs, max_new_tokens=None, cfg_scale=1.5, tokenizer=processor.tokenizer, generation_config={"do_sample": False}, verbose=False, all_prefilled_outputs=copy.deepcopy(prompt))
+        return out.speech_outputs[0].float().cpu().numpy(), 24000
+
+    return speak, {"speaker": name, "attention": "sdpa", "voices": sorted(p.stem for p in voices.glob("en-*.pt"))}
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("backend", choices=["qwen", "gepard"])
+    ap.add_argument("backend", choices=["qwen", "gepard", "vibevoice"])
     ap.add_argument("weights")
     ap.add_argument("--speaker")
     ap.add_argument("--reference")
@@ -75,7 +104,8 @@ def main():
     name = f"{a.backend}-{Path(a.weights.rstrip('/')).name}"
     torch.cuda.reset_peak_memory_stats()
     t = time.perf_counter()
-    speak, info = qwen(a.weights, a.speaker) if a.backend == "qwen" else gepard(a.weights, a.reference)
+    loaders = {"qwen": lambda: qwen(a.weights, a.speaker), "gepard": lambda: gepard(a.weights, a.reference), "vibevoice": lambda: vibevoice(a.weights, a.speaker)}
+    speak, info = loaders[a.backend]()
     load_s = time.perf_counter() - t
     speak("Warming up.")
     rows = {}

@@ -5,6 +5,7 @@
 #
 #   run.sh qwen [0.6B|1.7B]          per-phrase synthesis, Qwen3-TTS CustomVoice (default 0.6B)
 #   run.sh gepard [REFERENCE.wav]    per-phrase synthesis, Gepard 1.1 (voice from the clip)
+#   run.sh vibevoice [VOICE]         per-phrase synthesis, VibeVoice Realtime 0.5B (default en-Emma_woman)
 #   run.sh tyger NAME                TYGER on the take results/takes/NAME-{mic,playback}.wav
 #   run.sh bonsai 9B|27B [PQ2_0|PTQ1_0]  Ternary Bonsai 2 on Prism's llama.cpp: the planner bench and speed
 set -euo pipefail
@@ -16,7 +17,7 @@ for a in "$@"; do
     if [[ $a == --with-assistant ]]; then keep=1; else args+=("$a"); fi
 done
 set -- "${args[@]}"
-what=${1:?usage: run.sh qwen|gepard|tyger …}
+what=${1:?usage: run.sh qwen|gepard|vibevoice|tyger …}
 shift
 
 need() { [[ -f $1/.done || -d $1 ]] || { echo "not set up: $1 (run setup.sh)"; exit 1; }; }
@@ -43,6 +44,10 @@ case $what in
         ref=${1:-$g/ref_audio/$(ls "$g/ref_audio" | grep -m1 '\.wav$')}
         "$g/venv/bin/python" "$here/tts_bench.py" gepard "$TRIALS/gepard/weights/gepard-1.1" --reference "$ref"
         ;;
+    vibevoice)
+        need "$TRIALS/vibevoice/.venv"
+        "$TRIALS/vibevoice/.venv/bin/python" "$here/tts_bench.py" vibevoice "$TRIALS/vibevoice/weights/Realtime-0.5B" ${1:+--speaker "$1"}
+        ;;
     tyger)
         name=${1:?run.sh tyger NAME (a take from record_pair.sh)}
         need "$TRIALS/tyger/.venv"
@@ -52,7 +57,7 @@ case $what in
         size=${1:?run.sh bonsai 9B|27B [PQ2_0|PTQ1_0]}
         pack=${2:-PQ2_0}
         bin=$TRIALS/bonsai/llama.cpp
-        model=$TRIALS/bonsai/weights/$size/Ternary-Bonsai-2-$size-$pack.gguf
+        model=$(ls "$TRIALS"/bonsai/weights/"$size"*/Ternary-Bonsai-2-"$size"-"$pack".gguf 2>/dev/null | head -1)
         need "$bin"
         [[ -e $model ]] || { echo "not downloaded: $model (run setup.sh weights)"; exit 1; }
         export LD_LIBRARY_PATH=$bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}

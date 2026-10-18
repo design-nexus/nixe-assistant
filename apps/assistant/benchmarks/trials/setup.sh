@@ -56,8 +56,16 @@ weights() {
     else
         bad "nvidia/nemo-nano-codec-22khz-1.89kbps-21.5fps" "$LOGS/dl-nano-codec.log"
     fi
+    fetch microsoft/VibeVoice-Realtime-0.5B vibevoice/weights/Realtime-0.5B
+    # Its text tokenizer, by repo name: Qwen2.5-0.5B's tokenizer files only, not its weights.
+    if uvx --from huggingface_hub hf download Qwen/Qwen2.5-0.5B tokenizer.json tokenizer_config.json vocab.json merges.txt >"$LOGS/dl-qwen2.5-tokenizer.log" 2>&1; then
+        ok "Qwen/Qwen2.5-0.5B tokenizer files → Hugging Face cache"
+    else
+        bad "Qwen/Qwen2.5-0.5B tokenizer files" "$LOGS/dl-qwen2.5-tokenizer.log"
+    fi
     # Ternary Bonsai 2 (Prism's packings, which only Prism's llama.cpp loads).
-    fetch prism-ml/Ternary-Bonsai-2-9B-gguf bonsai/weights/9B 'Ternary-Bonsai-2-9B-PQ2_0.gguf' 'Ternary-Bonsai-2-9B-PTQ1_0.gguf'
+    fetch prism-ml/Ternary-Bonsai-2-9B-gguf bonsai/weights/9B 'Ternary-Bonsai-2-9B-PQ2_0.gguf'
+    fetch prism-ml/Ternary-Bonsai-2-27B-gguf bonsai/weights/27B-pq2 'Ternary-Bonsai-2-27B-PQ2_0.gguf'
     # The 27B: the PTQ1_0 LM Studio already has, linked rather than downloaded again.
     local lms=$HOME/.lmstudio/models/prism-ml/Ternary-Bonsai-2-27B-gguf/Ternary-Bonsai-2-27B-PTQ1_0.gguf
     mkdir -p "$TRIALS/bonsai/weights/27B"
@@ -88,6 +96,7 @@ envs() {
     # cu128 wheels carry sm_120 (Blackwell) kernels; torch comes with each package so a
     # package's own torch requirement can't pull a CPU build.
     venv qwen3-tts/.venv --torch-backend cu128 torch torchaudio qwen-tts soundfile
+    venv vibevoice/.venv --torch-backend cu128 torch soundfile -e "$TRIALS/vibevoice/VibeVoice[streamingtts]"
     venv tyger/.venv --torch-backend auto -r "$TRIALS/tyger/tyger-s2s/requirements.txt"
     # Gepard: its scripts/setup.sh picks a CPU torch on CUDA 13.4 and needs a torchcodec that
     # can't load Arch's FFmpeg 9, so the same stack in one resolve: CUDA torch, NeMo's codec,
@@ -117,6 +126,7 @@ clone() {
 }
 clone https://github.com/nineninesix-ai/tyger-s2s tyger/tyger-s2s
 clone https://github.com/nineninesix-ai/gepard-inference gepard/gepard-inference
+clone https://github.com/microsoft/VibeVoice vibevoice/VibeVoice
 
 for s in "${steps[@]}"; do
     case $s in

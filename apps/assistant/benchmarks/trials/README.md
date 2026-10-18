@@ -7,6 +7,7 @@ so they can be measured on this computer before anything is wired in.
 |---|---|---|---|---|
 | Qwen3-TTS 0.6B / 1.7B CustomVoice | Speech synthesis, nine built-in voices | Kokoro | 2.5 / 4.5 GB | Apache 2.0 |
 | Gepard 1.1 | Speech synthesis made for live dialogue; clones a voice from a clip | Kokoro | 1.1 GB + 0.5 GB codec | Apache 2.0 |
+| VibeVoice Realtime 0.5B (Microsoft) | Streaming speech synthesis, English, preset voices | Kokoro | 2.0 GB (+ Qwen2.5's tokenizer files) | MIT |
 | TYGER | Turn-taking: when to answer, stop, or say "mm-hm" (Nemotron ASR + a small GRU) | the rules in `duplex.rs` | 2.6 GB | OpenMDW 1.1 |
 | Ternary Bonsai 2 9B / 27B | Ternary language models, only on Prism's llama.cpp fork | Gemma 4 E4B as the planner | 9B: 2.4 (PQ2_0) or 2.0 GB (PTQ1_0); 27B: LM Studio's PTQ1_0 (5.9 GB) | Apache 2.0 |
 
@@ -26,6 +27,7 @@ afterwards; add `--with-assistant` to see whether both fit.
 ```bash
 benchmarks/trials/run.sh qwen 0.6B       # then: run.sh qwen 1.7B
 benchmarks/trials/run.sh gepard          # a reference clip from gepard-inference/ref_audio, or give one
+benchmarks/trials/run.sh vibevoice       # en-Emma_woman; or en-Carter_man, en-Grace_woman, …
 benchmarks/trials/record_pair.sh stop1   # talk over a long reply: "stop", "mm-hm", a new request
 benchmarks/trials/run.sh tyger stop1
 benchmarks/trials/run.sh bonsai 9B PQ2_0 # or PTQ1_0; and: run.sh bonsai 27B PTQ1_0
