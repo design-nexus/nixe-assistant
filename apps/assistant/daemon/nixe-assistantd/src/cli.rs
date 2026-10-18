@@ -394,6 +394,9 @@ async fn main() -> anyhow::Result<()> {
                 _ => bench::planner::planner().await?,
             }
         }
+        "bench" if std::env::args().nth(2).as_deref() == Some("tts") => {
+            bench::tts().await?;
+        }
         "bench" if std::env::args().nth(2).as_deref() == Some("crash") => {
             bench::crash().await?;
         }
@@ -1257,6 +1260,7 @@ fn print_help() {
            bench vision     which vision model picks the right mark (Gemma vs GLM)\n\
            bench injection  pages and files with planted instructions; nothing may come of them\n\
            bench load [--only idle|cpu|gpu|both] [--heat]  first audio under load; --heat adds 10 minutes\n\
+           bench tts        Kokoro on the speech-model trials' phrases (benchmarks/trials)\n\
            bench crash      kill each part of the assistant and measure how it comes back\n\
            preview [voice speed] TTS only, without saving\n\
            calibrate      quiet/speech measurement; suggestions only\n\

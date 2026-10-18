@@ -1351,3 +1351,57 @@ pub async fn crash() -> Result<()> {
     println!("\n{} of {} recovered", rows.iter().filter(|r| r.1).count(), rows.len());
     Ok(())
 }
+
+/// `bench tts`: Kokoro, as the assistant runs it (config.toml's voice, speed and device), on
+/// the phrases benchmarks/trials/tts_bench.py times for the other speech models: a short first
+/// phrase, a typical one and a long one, the median of three after a warm-up. Writes
+/// kokoro-<voice>.json and each phrase's audio to benchmarks/trials/results/.
+pub async fn tts() -> Result<()> {
+    const PHRASES: [(&str, &str); 3] = [
+        ("first", "Sure, I can do that."),
+        ("typical", "The weather in Chicago is clear right now, with a high of fifty-two degrees."),
+        ("long", "I found three files that match your search: the tax return from last April, a scanned receipt from the hardware store, and a draft letter you started on Sunday evening."),
+    ];
+    const RATE: u32 = 24_000;
+    let cfg = assistant_core::Config::load()?;
+    let started = Instant::now();
+    let tts = tokio::task::spawn_blocking(move || assistant_agent::KokoroProvider::load(&cfg)).await??;
+    let load_s = started.elapsed().as_secs_f64();
+    let voice = tts.voice();
+    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../benchmarks/trials/results");
+    std::fs::create_dir_all(&out)?;
+    let tts = std::sync::Arc::new(tts);
+    let speak = |text: &'static str| {
+        let tts = tts.clone();
+        async move { tokio::task::spawn_blocking(move || tts.speak(text)).await? }
+    };
+    speak("Warming up.").await?;
+    let mut rows = serde_json::Map::new();
+    for (key, text) in PHRASES {
+        let mut times = Vec::new();
+        let mut audio_s = 0.0;
+        for run in 0..3 {
+            let t = Instant::now();
+            let pcm = speak(text).await?;
+            times.push(t.elapsed().as_secs_f64());
+            audio_s = pcm.len() as f64 / RATE as f64;
+            if run == 0 {
+                let spec = hound::WavSpec { channels: 1, sample_rate: RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+                let mut w = hound::WavWriter::create(out.join(format!("kokoro-{voice}-{key}.wav")), spec)?;
+                for s in &pcm {
+                    w.write_sample((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)?;
+                }
+                w.finalize()?;
+            }
+        }
+        times.sort_by(f64::total_cmp);
+        let med = times[1];
+        println!("{key:8} {:6} ms for {audio_s:5.2} s of audio (RTF {:.3})", (med * 1000.0).round(), med / audio_s);
+        rows.insert(key.into(), serde_json::json!({"text": text, "words": text.split_whitespace().count(), "median_ms": (med * 1000.0).round(), "audio_s": (audio_s * 100.0).round() / 100.0, "rtf": ((med / audio_s) * 1000.0).round() / 1000.0}));
+    }
+    let result = serde_json::json!({"backend": "kokoro", "voice": voice, "device": tts.device(), "variant": tts.variant(), "load_s": (load_s * 10.0).round() / 10.0, "phrases": rows});
+    let path = out.join(format!("kokoro-{voice}.json"));
+    std::fs::write(&path, serde_json::to_vec_pretty(&result)?)?;
+    println!("load {:.1} s on {} → {}", load_s, tts.device(), path.display());
+    Ok(())
+}

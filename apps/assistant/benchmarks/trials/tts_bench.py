@@ -75,8 +75,11 @@ def vibevoice(weights: str, speaker: str | None):
     model = VibeVoiceStreamingForConditionalGenerationInference.from_pretrained(weights, torch_dtype=torch.bfloat16, device_map="cuda", attn_implementation="sdpa")
     model.eval()
     model.set_ddpm_inference_steps(num_steps=5)
+    # The voice presets are pickled model outputs that PyTorch 2.11's weights-only loader can't
+    # rebuild (Microsoft's demo targets an older PyTorch). They come from Microsoft's own repo,
+    # cloned by setup.sh, so the full loader is used for them.
     with torch.serialization.safe_globals([BaseModelOutputWithPast, DynamicCache]):
-        prompt = torch.load(voices / f"{name}.pt", map_location="cuda", weights_only=True)
+        prompt = torch.load(voices / f"{name}.pt", map_location="cuda", weights_only=False)
 
     def speak(text):
         inputs = processor.process_input_with_cached_prompt(text=text, cached_prompt=prompt, padding=True, return_tensors="pt", return_attention_mask=True)
@@ -101,7 +104,7 @@ def main():
 
     out = Path(__file__).resolve().parent / "results"
     out.mkdir(exist_ok=True)
-    name = f"{a.backend}-{Path(a.weights.rstrip('/')).name}"
+    name = f"{a.backend}-{Path(a.weights.rstrip('/')).name}" + (f"-{a.speaker}" if a.speaker else "")
     torch.cuda.reset_peak_memory_stats()
     t = time.perf_counter()
     loaders = {"qwen": lambda: qwen(a.weights, a.speaker), "gepard": lambda: gepard(a.weights, a.reference), "vibevoice": lambda: vibevoice(a.weights, a.speaker)}

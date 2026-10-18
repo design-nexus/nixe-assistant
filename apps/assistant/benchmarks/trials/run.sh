@@ -3,7 +3,7 @@
 # card, so the assistant is stopped first and started again afterwards (--with-assistant
 # keeps it running, to see whether both fit).
 #
-#   run.sh qwen [0.6B|1.7B]          per-phrase synthesis, Qwen3-TTS CustomVoice (default 0.6B)
+#   run.sh qwen [0.6B|1.7B] [VOICE]  per-phrase synthesis, Qwen3-TTS CustomVoice (default 0.6B, aiden)
 #   run.sh gepard [REFERENCE.wav]    per-phrase synthesis, Gepard 1.1 (voice from the clip)
 #   run.sh vibevoice [VOICE]         per-phrase synthesis, VibeVoice Realtime 0.5B (default en-Emma_woman)
 #   run.sh tyger NAME                TYGER on the take results/takes/NAME-{mic,playback}.wav
@@ -28,7 +28,9 @@ if [[ $keep == 0 ]] && systemctl --user is-active -q nixe-assistantd; then
     nixe-assistant stop >/dev/null
     stopped=1
 fi
-restore() { [[ $stopped == 1 ]] && { echo "Starting the assistant again."; nixe-assistant start >/dev/null; }; }
+restore() {
+    if [[ $stopped == 1 ]]; then echo "Starting the assistant again."; nixe-assistant start >/dev/null; fi
+}
 trap restore EXIT
 nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader | sed 's/^/Graphics memory in use before: /'
 
@@ -36,7 +38,7 @@ case $what in
     qwen)
         size=${1:-0.6B}
         need "$TRIALS/qwen3-tts/.venv"
-        "$TRIALS/qwen3-tts/.venv/bin/python" "$here/tts_bench.py" qwen "$TRIALS/qwen3-tts/weights/$size-CustomVoice"
+        "$TRIALS/qwen3-tts/.venv/bin/python" "$here/tts_bench.py" qwen "$TRIALS/qwen3-tts/weights/$size-CustomVoice" ${2:+--speaker "$2"}
         ;;
     gepard)
         g=$TRIALS/gepard/gepard-inference
