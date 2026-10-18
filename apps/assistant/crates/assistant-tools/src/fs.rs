@@ -10,25 +10,84 @@ use serde_json::{json, Value};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
-/// Never read or written: keys, keyrings, password stores, browser profiles.
+/// Never read or written: keys, keyrings, password stores, sign-in tokens (cloud, git
+/// hosts, coding agents, package registries), browser profiles and messengers' sessions.
 pub(crate) const SECRET: &[&str] = &[
     ".ssh",
     ".gnupg",
     ".password-store",
     ".local/share/keyrings",
     ".pki",
+    ".git-credentials",
+    ".netrc",
+    ".npmrc",
+    ".pypirc",
+    ".cargo/credentials",
+    ".cargo/credentials.toml",
+    ".aws",
+    ".azure",
+    ".kube",
+    ".docker",
+    ".config/gcloud",
+    ".config/gh",
+    ".config/hub",
+    ".config/github-copilot",
+    ".claude",
+    ".claude.json",
+    ".codex",
+    ".gemini",
+    ".local/share/opencode",
+    ".config/op",
+    ".config/1Password",
+    ".config/Bitwarden",
     ".mozilla",
+    ".librewolf",
+    ".zen",
+    ".thunderbird",
     ".config/chromium",
     ".config/google-chrome",
     ".config/BraveSoftware",
+    ".config/vivaldi",
+    ".config/microsoft-edge",
+    ".config/opera",
+    ".config/discord",
+    ".config/Signal",
+    ".config/Slack",
+    ".local/share/TelegramDesktop",
 ];
 /// Read-only to tools: the assistant's own configuration, journal and data.
 pub(crate) const SELF: &[&str] = &[".config/nixe-assistant", ".local/state/nixe-assistant", ".local/share/nixe-assistant"];
 /// Run as the user later, outside any sandbox: shell startup, `~/.local/bin`, session and
-/// autostart services, launchers, Hyprland and Omarchy hooks, git configuration. Writing
-/// them needs a key press each time.
+/// autostart services, launchers, the bar and shell, Hyprland and Omarchy, terminals and
+/// editors that run commands from their config, audio session scripts, git configuration.
+/// Writing them needs a key press each time. Every folder on PATH under HOME counts too
+/// (`code_dirs`).
 const RUNS_CODE: &[&str] = &[
     ".local/bin",
+    ".local/share/systemd",
+    ".local/share/omarchy",
+    ".local/share/nautilus/scripts",
+    ".config/quickshell",
+    ".config/waybar",
+    ".config/walker",
+    ".config/elephant",
+    ".config/mako",
+    ".config/alacritty",
+    ".config/ghostty",
+    ".config/kitty",
+    ".config/foot",
+    ".config/tmux",
+    ".tmux.conf",
+    ".config/starship.toml",
+    ".config/mise",
+    ".config/nvim",
+    ".vim",
+    ".vimrc",
+    ".config/Code/User",
+    ".config/pipewire",
+    ".config/wireplumber",
+    ".cargo/config",
+    ".cargo/config.toml",
     ".bashrc",
     ".bash_profile",
     ".bash_login",
@@ -104,13 +163,29 @@ pub fn guard(home: &Path, input: &str, access: Access) -> Result<PathBuf> {
 /// Whether writing `path` (already through `guard`) changes something that runs as the user
 /// later, outside the sandbox. Includes any repository's hooks and config.
 pub fn runs_code(home: &Path, path: &Path) -> bool {
-    if under(path, home, RUNS_CODE) {
+    if code_dirs(home).iter().any(|d| path.starts_with(d)) {
         return true;
     }
     let parts: Vec<_> = path.components().collect();
     parts.windows(2).any(|w| {
         w[0].as_os_str() == ".git" && (w[1].as_os_str() == "hooks" || w[1].as_os_str() == "config")
     })
+}
+
+/// Everything under HOME that runs as the user later: `RUNS_CODE` and every PATH folder
+/// under HOME (`~/.cargo/bin`, mise's installs…). A linked one (dotfiles) counts at its
+/// target too, since `guard` resolves links before this is checked.
+pub fn code_dirs(home: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = RUNS_CODE.iter().map(|p| home.join(p)).collect();
+    if let Some(path) = std::env::var_os("PATH") {
+        dirs.extend(std::env::split_paths(&path).filter(|d| d.is_absolute()));
+    }
+    let resolved: Vec<PathBuf> = dirs.iter().filter_map(|d| d.canonicalize().ok()).collect();
+    dirs.extend(resolved);
+    dirs.retain(|d| d.starts_with(home) && d != home);
+    dirs.sort();
+    dirs.dedup();
+    dirs
 }
 
 /// The files a `files.undo` would write, for the same check.
@@ -150,9 +225,16 @@ fn in_own_dirs(path: &Path) -> bool {
         .any(|d| path.starts_with(d))
 }
 
-/// Whether `dir` may be a sandbox's writable working folder.
+/// Whether `dir` may be a sandbox's writable working folder: not HOME, a private folder, or
+/// a folder whose files run later outside the sandbox. (Such folders inside it are bound
+/// read-only by the sandbox.)
 pub fn sandbox_dir_ok(home: &Path, dir: &Path) -> bool {
-    dir.starts_with(home) && dir != home && !under(dir, home, SECRET) && !under(dir, home, SELF) && !in_own_dirs(dir)
+    dir.starts_with(home)
+        && dir != home
+        && !under(dir, home, SECRET)
+        && !under(dir, home, SELF)
+        && !in_own_dirs(dir)
+        && !runs_code(home, dir)
 }
 
 fn backups(home: &Path) -> PathBuf {

@@ -9,7 +9,7 @@
 use std::fmt;
 
 /// Bumped whenever the helper or its policy changes; `install-helper` replaces older ones.
-pub const HELPER_VERSION: u32 = 1;
+pub const HELPER_VERSION: u32 = 2;
 pub const HELPER: &str = "/usr/local/lib/nixe-assistant/nixe-assistant-helper";
 pub const POLICY: &str = "/usr/share/polkit-1/actions/io.github.design_nexus.nixe.assistant.policy";
 pub const POLICY_XML: &str = include_str!("../data/io.github.design_nexus.nixe.assistant.policy");

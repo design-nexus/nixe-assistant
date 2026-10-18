@@ -317,6 +317,9 @@ impl App {
         task_scope: bool,
         cancel: &CancellationToken,
     ) -> Result<(bool, bool)> {
+        // Listens until the approval itself expires.
+        let expires = self.pending.snapshot().get(id).and_then(|i| i["expires_at_ms"].as_u64()).unwrap_or(0);
+        let deadline = Instant::now() + Duration::from_millis(expires.saturating_sub(now_ms()));
         self.emit_session_mode("approval");
         let spoken = format!(
             "May I {}? {}",
@@ -338,14 +341,17 @@ impl App {
         }
         self.audio.play(pcm)?;
         tokio::select! {_=cancel.cancelled()=>return Ok((false, false)),_=self.audio.wait_playback()=>{}}
-        let deadline = Instant::now() + Duration::from_secs(55);
+        // A cough or a click is heard past.
         loop {
             if !self.pending.contains(id) || Instant::now() >= deadline {
                 return Ok((false, false));
             }
             let pcm = self.listen_pcm(deadline, None, cancel).await?;
-            if pcm.len() < 3200 || cancel.is_cancelled() {
+            if cancel.is_cancelled() {
                 return Ok((false, false));
+            }
+            if pcm.len() < 3200 {
+                continue;
             }
             // Streamed while it was heard; Voxtype transcribes the take.
             let tr = if self.stt.streaming() {
@@ -381,6 +387,7 @@ impl App {
         let tool = verdict.tool();
         let task_scope = task_id.is_some() && verdict.task_approvable();
         let expires = now_ms() + 60_000;
+        let deadline = Instant::now() + Duration::from_secs(60);
         let summary = assistant_policy::summary::describe(tool, args);
         // A video or song could say "approve": while something plays, only a key press does.
         let media_playing = !verdict.key_press() && media_playing().await;
@@ -406,7 +413,7 @@ impl App {
             .as_ref()
             .map(|p| p.token(tool))
             .unwrap_or_default();
-        let (approved, for_task) = tokio::select! {_=plugin_cancel.cancelled()=>(false,false),_=cancel.cancelled()=>(false,false),r=tokio::time::timeout(Duration::from_secs(60),rx)=>r.ok().and_then(|r|r.ok()).unwrap_or((false,false)),r=async {match self.voice_approval(&id,voice_allowed,media_playing,&summary,task_scope,cancel).await {Ok(v)=>v,Err(err)=>{tracing::warn!(%err,"voice approval unavailable; keyboard approval remains available");std::future::pending::<(bool,bool)>().await}}}=>r};
+        let (approved, for_task) = tokio::select! {_=plugin_cancel.cancelled()=>(false,false),_=cancel.cancelled()=>(false,false),r=tokio::time::timeout_at(deadline.into(),rx)=>r.ok().and_then(|r|r.ok()).unwrap_or((false,false)),r=async {match self.voice_approval(&id,voice_allowed,media_playing,&summary,task_scope,cancel).await {Ok(v)=>v,Err(err)=>{tracing::warn!(%err,"voice approval unavailable; keyboard approval remains available");std::future::pending::<(bool,bool)>().await}}}=>r};
         let _ = self.audio.stop_capture();
         let _ = self.audio.cancel_playback();
         self.pending.remove(&id);
@@ -587,11 +594,20 @@ impl App {
                 return Ok(true);
             }
         }
-        if let Some(location) = text.trim().strip_prefix("remember weather location ") {
-            let mut cfg = self.cfg();
-            cfg.browser.weather_location = location.trim().into();
-            cfg.save()?;
-            *self.cfg.lock().unwrap() = cfg;
+        // "Remember weather location Chicago." as the recognizer writes it.
+        const WEATHER: &str = "remember weather location ";
+        if clean.starts_with(WEATHER) {
+            let location = text.trim().get(WEATHER.len()..).unwrap_or("").trim().trim_end_matches(['.', '!', '?']).trim();
+            anyhow::ensure!(!location.is_empty(), "say the city after remember weather location");
+            {
+                // The file as saved, not the running settings: those keep restart-only
+                // changes at their old values, which saving them would undo.
+                let _guard = self.reload_lock.lock().await;
+                let mut saved = Config::load()?;
+                saved.browser.weather_location = location.into();
+                saved.save()?;
+                self.cfg.lock().unwrap().browser.weather_location = location.into();
+            }
             self.speak_reply("Weather location saved.", timing.clone())
                 .await?;
             return Ok(true);
@@ -916,12 +932,22 @@ impl App {
         // After the task read private data and untrusted content, a call that sends things
         // out asks first, on its own (an injected page could ask to send the data away).
         let leak = task.is_some_and(|t| t.lock().unwrap().may_leak(name, &args));
+        // A coding agent handed a request after the task read a page or document: the
+        // request may come from that content, so a person checks it.
+        let injected = task.is_some_and(|t| t.lock().unwrap().may_be_injected(name));
+        let tighten = |verdict: assistant_policy::Verdict| {
+            if leak {
+                verdict.ask_before_sending()
+            } else {
+                verdict.ask_after_untrusted()
+            }
+        };
         let authorization = match self.registry.authorize(name, &args, &cfg)? {
-            Authorization::Granted(_) if leak => Authorization::NeedsApproval(
-                self.registry.verdict_for(name, Some(&args), &cfg).ask_before_sending(),
+            Authorization::Granted(_) if leak || injected => Authorization::NeedsApproval(
+                tighten(self.registry.verdict_for(name, Some(&args), &cfg)),
             ),
-            Authorization::NeedsApproval(verdict) if leak => {
-                Authorization::NeedsApproval(verdict.ask_before_sending())
+            Authorization::NeedsApproval(verdict) if leak || injected => {
+                Authorization::NeedsApproval(tighten(verdict))
             }
             other => other,
         };
@@ -1019,7 +1045,13 @@ impl App {
                         .sum::<u64>()
                 });
         result["assistant_approval_ms"] = json!(approval_ms + child_approval_ms);
-        self.remember_action(name, &args, &result, task.map(|t| t.lock().unwrap().id.clone()))?;
+        // The action already happened: if the history file can't be written, the undo is
+        // kept only until a restart, but the call stays a success (an error here would have
+        // the planner do it again).
+        if let Err(err) = self.remember_action(name, &args, &result, task.map(|t| t.lock().unwrap().id.clone())) {
+            tracing::warn!(%err, tool = name, "action history not saved");
+            self.emit(Event::Error { message: format!("Couldn't save action history ({err:#}); undoing {name} works only until the assistant restarts.") });
+        }
         self.emit_tool(name, &args, &result);
         Ok(result)
     }

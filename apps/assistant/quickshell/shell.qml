@@ -160,7 +160,8 @@ ShellRoot {
             root.approvalVoice = obj.voice_allowed === true;
             root.approvalText = obj.summary || obj.tool;
             root.approvalDetail = obj.tool + "\n" + JSON.stringify(obj.arguments, null, 2);
-            root.approvalDetailsOpen = false;
+            // A command the assistant wrote is shown whole: the summary only has its start.
+            root.approvalDetailsOpen = obj.tool === "terminal.run" || obj.tool === "terminal.shell";
             break;
         case "turn":
             if (obj.event && obj.event.type === "tool") { root.toolProgress = obj.event.tool + " · " + obj.event.status + " · " + JSON.stringify(obj.event.arguments || {}); }

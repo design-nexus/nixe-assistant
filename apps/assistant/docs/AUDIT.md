@@ -163,9 +163,8 @@ all 55 app tools costs it one step and no time.
   worker or daemon of that same user, parses its arguments again, runs pacman or systemctl
   by absolute path with a cleared environment, and appends one JSON line per request to
   `/var/log/nixe-assistant/privileged.log` (`nixe-assistant admin-log`).
-- Polkit: one action per verb through `exec.argv1`. Installs and updates ask for the
-  password every time (`auth_admin`); removes and service actions keep it for polkit's few
-  minutes (`auth_admin_keep`).
+- Polkit: one action per verb through `exec.argv1`. Every action asks for the password
+  every time (`auth_admin`).
 - Packages come from the configured repositories only (`-S --needed`, never `-Sy`; no AUR,
   URLs or files). Removal is `-Rs` and refused when it would take a protected package (the
   base system, kernel and boot chain, systemd, D-Bus, the desktop) with it. Updates are

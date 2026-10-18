@@ -746,8 +746,6 @@ impl App {
             let end = tokio::time::Instant::now() + Duration::from_secs(5);
             let mut rms = Vec::new();
             let mut recording = Vec::new();
-            let cfg = self.cfg();
-            let _ = cfg;
             loop {
                 let frame = tokio::select! {
                     _ = cancel.cancelled() => anyhow::bail!("calibration cancelled"),
@@ -1409,13 +1407,16 @@ impl App {
         }
         tracing::info!(reply = %spoken, "spoken reply");
         let interrupted = self.interrupted.lock().unwrap().take().filter(|_| cancel.is_cancelled());
+        // The history keeps what was asked, never the retrieved pages or tool results the
+        // model answered from: those are untrusted, and later turns would read them as the
+        // person's own words.
         if !cancel.is_cancelled() && !spoken.trim().is_empty() {
-            self.remember(user_text, &spoken).await;
+            self.remember(&ask, &spoken).await;
         } else if let Some(heard) = interrupted {
             // Cut off by the listener: keep what they actually heard, marked as interrupted.
             let note = duplex::interrupted_note(&heard);
             tracing::info!(heard = %note, "interrupted reply");
-            self.remember(user_text, &note).await;
+            self.remember(&ask, &note).await;
         }
         self.emit(Event::AssistantText {
             text: spoken,

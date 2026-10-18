@@ -536,8 +536,13 @@ impl PluginManager {
                 settings.settings.to_string(),
             ),
             ("ASSISTANT_PLUGIN_ID".into(), id.into()),
-            ("ASSISTANT_CONFIG".into(), serde_json::to_string(cfg)?),
         ]);
+        // The whole configuration (other servers' keys, the saved location) only for the
+        // assistant's own worker, which runs the built-in tools from it.
+        let first_party = ["bundled", "migrated"].contains(&settings.source.as_str());
+        if first_party && m.executable.ends_with("nixe-assistant-plugin-worker") {
+            env.insert("ASSISTANT_CONFIG".into(), serde_json::to_string(cfg)?);
+        }
         if let Some(server) = cfg.mcp.servers.get(id) {
             env.extend(server.env.clone());
         }
@@ -568,7 +573,6 @@ impl PluginManager {
             m.executable.clone()
         };
         let attempt = async {
-            let first_party = ["bundled", "migrated"].contains(&settings.source.as_str());
             let client = Arc::new(start(id, m.sandbox.as_ref(), &executable, &args, &env, first_party).await?);
             let mut tools = client.list_tools().await?;
             if id == "browser" || id == "web-search" {
@@ -774,10 +778,13 @@ pub fn install(staged: &Path, source: &str, update: bool) -> Result<Manifest> {
     let mut state = saved()?;
     if update {
         let old = Manifest::read(&target)?;
+        // What it can reach is part of what was reviewed: a wider sandbox (network, the home
+        // folder, sockets) is a new plugin.
         anyhow::ensure!(
             old.tools == m.tools
                 && old.providers == m.providers
-                && old.dependencies == m.dependencies,
+                && old.dependencies == m.dependencies
+                && old.sandbox == m.sandbox,
             "permission surface changed: install under a new ID for review"
         );
     }

@@ -239,6 +239,12 @@ impl Capability {
             )
     }
 
+    /// The call hands a free-form request to a program that carries it out on its own (a
+    /// coding agent can edit files and run commands).
+    pub fn acts_on_request(tool: &str) -> bool {
+        tool == "agent.handoff"
+    }
+
     pub fn passive(self, tool: &str) -> bool {
         match self {
             Self::Inspect | Self::FileRead => true,

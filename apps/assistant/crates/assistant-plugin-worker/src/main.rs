@@ -68,17 +68,34 @@ fn route(request: &str, id: &str, cfg: &Config) -> Result<Value> {
         _ => Value::Null,
     })
 }
-/// A desktop phrase's command: a typed Hyprland action (`hypr …`), `hyprctl` for anything
-/// but `eval` and `dispatch exec`, or an Omarchy command. Lua from a phrase file is never run.
+/// A desktop phrase's command: a typed Hyprland action (`hypr …`), one of a few `hyprctl`
+/// commands that can't start programs, or an Omarchy command. Lua from a phrase file is
+/// never run.
 async fn run_phrase(argv: &[&str]) -> Result<String> {
     match argv {
         ["hypr", action @ ..] => assistant_omarchy::hypr::run_action(action).await,
-        ["hyprctl", "eval", ..] => anyhow::bail!("phrase commands can't run hyprctl eval; use a typed action such as [\"hypr\", \"close_window\"] (see config/commands.toml)"),
-        ["hyprctl", "dispatch", "exec", ..] => anyhow::bail!("phrase commands can't use hyprctl dispatch exec; name the program as an app in apps.toml"),
-        ["hyprctl", rest @ ..] => assistant_omarchy::hyprctl(rest).await,
+        ["hyprctl", rest @ ..] => {
+            phrase_hyprctl(rest)?;
+            assistant_omarchy::hyprctl(rest).await
+        }
         _ => assistant_omarchy::omarchy(argv).await,
     }
 }
+
+/// The `hyprctl` commands a phrase may use: `dispatch` (but no exec dispatcher),
+/// `switchxkblayout`, `notify`, `dismissnotify`, `setcursor`. No options before them
+/// (`--batch` runs several), no `eval`, `keyword`, `plugin` or `reload`.
+fn phrase_hyprctl(args: &[&str]) -> Result<()> {
+    match args {
+        ["eval", ..] => anyhow::bail!("phrase commands can't run hyprctl eval; use a typed action such as [\"hypr\", \"close_window\"] (see config/commands.toml)"),
+        ["dispatch", dispatcher, ..] if dispatcher.to_lowercase().contains("exec") => {
+            anyhow::bail!("phrase commands can't start programs through hyprctl; name the program as an app in apps.toml")
+        }
+        ["dispatch", _, ..] | ["switchxkblayout" | "notify" | "dismissnotify" | "setcursor", ..] => Ok(()),
+        _ => anyhow::bail!("phrase commands can use hyprctl dispatch, switchxkblayout, notify, dismissnotify or setcursor only; use a typed action (see config/commands.toml)"),
+    }
+}
+
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -199,4 +216,30 @@ async fn main() -> Result<()> {
     }
     registry.jobs.cancel_all().await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::phrase_hyprctl;
+
+    #[test]
+    fn phrase_hyprctl_cant_start_programs() {
+        for ok in [&["dispatch", "workspace", "3"][..], &["switchxkblayout", "all", "next"], &["dismissnotify"]] {
+            assert!(phrase_hyprctl(ok).is_ok(), "{ok:?}");
+        }
+        for bad in [
+            &["eval", "hl.exec('x')"][..],
+            &["dispatch", "exec", "foot"],
+            &["dispatch", "execr", "foot"],
+            &["dispatch", "exec,foot"],
+            &["--batch", "dispatch exec foot"],
+            &["-j", "dispatch", "exec", "foot"],
+            &["plugin", "load", "/tmp/x.so"],
+            &["keyword", "bind", "SUPER,x,exec,foot"],
+            &["dispatch"],
+            &[],
+        ] {
+            assert!(phrase_hyprctl(bad).is_err(), "{bad:?}");
+        }
+    }
 }

@@ -147,10 +147,18 @@ impl Verdict {
     /// For a call that could carry private data out of the machine after the task read
     /// untrusted content: an allowed call asks, by itself, and only a key press approves it
     /// (the untrusted content could be read aloud saying "approve"). A deny stays a deny.
-    pub fn ask_before_sending(mut self) -> Self {
+    pub fn ask_before_sending(self) -> Self {
+        self.ask_by_key_press("may send private data")
+    }
+    /// For a call that hands a request to something that acts on it (a coding agent) after
+    /// the task read content someone else wrote: the request may be theirs, not the person's.
+    pub fn ask_after_untrusted(self) -> Self {
+        self.ask_by_key_press("acts on untrusted content")
+    }
+    fn ask_by_key_press(mut self, rule: &'static str) -> Self {
         if self.decision < Decision::Ask {
             self.decision = Decision::Ask;
-            self.rule = "may send private data";
+            self.rule = rule;
         }
         self.single = true;
         self.key_press = true;
@@ -500,5 +508,14 @@ mod tests {
         let typing = decide("input.type", &c);
         assert!(t.approve_for_task(&typing, Some("write")));
         assert!(!t.approved_for_task(&typing, Some("firefox")));
+        // A coding agent started after reading a page: a key press, on its own.
+        assert!(t.may_be_injected("agent.handoff"));
+        let v = decide("agent.handoff", &c);
+        assert_eq!(v.decision(), Decision::Allow, "asked for directly, it just starts");
+        let v = v.ask_after_untrusted();
+        assert_eq!((v.decision(), v.rule()), (Decision::Ask, "acts on untrusted content"));
+        assert!(v.key_press() && !v.task_approvable());
+        let fresh = Task::new("2", "ask claude to fix the build", Budget { max_calls: 10, max_active_ms: 60_000 });
+        assert!(!fresh.may_be_injected("agent.handoff"), "nothing untrusted read yet");
     }
 }

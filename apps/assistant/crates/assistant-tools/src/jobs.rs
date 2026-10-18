@@ -61,7 +61,7 @@ impl Jobs {
                     crate::fs::sandbox_dir_ok(&home, &cwd),
                     "a sandboxed command needs a project folder; HOME itself and private folders can't be shared"
                 );
-                let mut argv = crate::sandbox::wrap(sandbox, &home, &cwd, argv);
+                let mut argv = crate::sandbox::wrap(sandbox, &home, &cwd, argv)?;
                 let fd = crate::plugin_sandbox::seccomp_fd()?;
                 argv.splice(1..1, ["--seccomp".to_string(), std::os::fd::AsRawFd::as_raw_fd(&fd).to_string()]);
                 seccomp = Some(fd);

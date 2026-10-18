@@ -286,6 +286,12 @@ impl Task {
         self.read_private && self.read_untrusted && Capability::sends_out(tool, args)
     }
 
+    /// Whether this call hands a request to something that acts on it after the task read
+    /// content someone else wrote (a page could have asked for it).
+    pub fn may_be_injected(&self, tool: &str) -> bool {
+        self.read_untrusted && Capability::acts_on_request(tool)
+    }
+
     #[cfg(test)]
     fn expire_approvals(&mut self) {
         for (_, _, expires) in &mut self.approvals {

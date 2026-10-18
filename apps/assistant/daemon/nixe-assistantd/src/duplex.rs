@@ -114,6 +114,22 @@ impl Classifier {
     }
 }
 
+/// How long the recognizer's words must stay the same before they count without its final
+/// result: the echo of the reply can keep the voice detector from ever hearing the end.
+pub const SETTLED_MS: u64 = 350;
+
+impl Classifier {
+    /// The verdict for words that stopped changing before the recognizer finished: a stop,
+    /// a backchannel or an echo is clear already; a short redirect may still be growing, so
+    /// it waits for the final text.
+    pub fn classify_settled(&self, text: &str, since_onset_ms: u64, speaking: &str) -> Verdict {
+        match self.classify(text, true, since_onset_ms, speaking) {
+            v @ (Verdict::Stop | Verdict::Backchannel | Verdict::Echo) if !words(text).is_empty() => v,
+            _ => Verdict::Pending,
+        }
+    }
+}
+
 /// The text of the phrase playing now and the one before it, for the echo check.
 pub fn speaking_now(track: &ReplyTrack, played: PlayedTo) -> String {
     if played.generation != track.generation || track.phrases.is_empty() {
@@ -286,6 +302,7 @@ impl App {
                 speaking_now(&track, self.audio.played())
             };
             let mut text = String::new();
+            let mut changed = Instant::now();
             let mut ended = false;
             let mut verdict = Verdict::Pending;
             while verdict == Verdict::Pending && !ended {
@@ -303,17 +320,30 @@ impl App {
                     r = replies.recv() => {
                         if let Ok(Reply::Partial { u: id, text: t, .. }) = r {
                             if id == u {
+                                if t != text {
+                                    changed = Instant::now();
+                                }
                                 text = t;
                                 verdict = classifier.classify(&text, false, onset.elapsed().as_millis() as u64, &speaking());
                             }
                         }
                     }
                     _ = tokio::time::sleep(Duration::from_millis(100)) => {
-                        verdict = classifier.classify(&text, false, onset.elapsed().as_millis() as u64, &speaking());
+                        let since = onset.elapsed().as_millis() as u64;
+                        verdict = classifier.classify(&text, false, since, &speaking());
+                        // "Stop" said over the reply: its words settle well before the voice
+                        // detector hears an end through the echo.
+                        if verdict == Verdict::Pending && changed.elapsed() >= Duration::from_millis(SETTLED_MS) {
+                            verdict = classifier.classify_settled(&text, since, &speaking());
+                        }
                     }
                 }
             }
-            if verdict == Verdict::Pending {
+            if verdict == Verdict::Stop && !ended {
+                // Decided from settled words: the recognizer's take isn't needed (a redirect
+                // keeps it for the rest of the request; carrying on drops it below).
+                asr.abort(u);
+            } else if verdict == Verdict::Pending {
                 // The speaker stopped before the words decided it: the final text does.
                 text = match asr.finish(u, &cancel).await {
                     Ok(t) => t,
@@ -501,6 +531,16 @@ mod tests {
         assert_eq!(c.classify("", false, 2000, speaking), Verdict::Noise);
         // A stop phrase the assistant happens to be saying is still a stop.
         assert_eq!(c.classify("stop", true, 900, "Please stop at the next exit"), Verdict::Stop);
+        // Words that stopped changing: a stop, backchannel or echo is clear; a short request
+        // or nothing at all waits for the final text.
+        let s = |t: &str| c.classify_settled(t, 600, speaking);
+        assert_eq!(s("stop"), Verdict::Stop);
+        assert_eq!(s("Echo, wait"), Verdict::Stop);
+        assert_eq!(s("mm-hm"), Verdict::Backchannel);
+        assert_eq!(s("sunny"), Verdict::Echo);
+        assert_eq!(s("Louder"), Verdict::Pending);
+        assert_eq!(s("Wait, what"), Verdict::Pending);
+        assert_eq!(s(""), Verdict::Pending);
     }
 
     fn track() -> ReplyTrack {

@@ -591,12 +591,28 @@ fn file_tool(name: &str, args: &Value) -> Result<Value> {
 fn search_text(home: &std::path::Path, path: &str, text: &str) -> Result<Value> {
     let root = crate::fs::guard(home, path, crate::fs::Access::Read)?;
     anyhow::ensure!(root.is_dir(), "not a folder");
+    // Hidden folders are skipped, but a search started inside one (~/.config) would reach
+    // the secrets below it (~/.config/gh).
+    let excluded: Vec<String> = crate::fs::SECRET
+        .iter()
+        .map(|s| home.join(s))
+        .filter(|p| p.starts_with(&root))
+        .map(|p| format!("!{}", p.display()))
+        .collect();
     let out = std::process::Command::new("rg")
-        .args(["-l", "-i", "-F", "--max-filesize", "1M", "--max-depth", "8", "--", text])
+        .args(["-l", "-i", "-F", "--max-filesize", "1M", "--max-depth", "8"])
+        .args(excluded.iter().flat_map(|g| ["--glob", g.as_str()]))
+        .args(["--", text])
         .arg(&root)
         .output()
         .context("ripgrep (rg) isn't available")?;
-    let matches: Vec<_> = String::from_utf8_lossy(&out.stdout).lines().take(50).map(String::from).collect();
+    // And whatever a link led to: only what the guard would let a read open is listed.
+    let matches: Vec<_> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|p| crate::fs::guard(home, p, crate::fs::Access::Read).is_ok())
+        .take(50)
+        .map(String::from)
+        .collect();
     Ok(json!({"path": root, "text": text, "matches": matches, "truncated": matches.len() == 50}))
 }
 

@@ -52,7 +52,8 @@ Archives are limited to 128 MiB of declared uncompressed file sizes. Git sources
 require `--revision` with an exact 40-character commit hash. Install prints source,
 startup command, tools and dependencies for review. `--yes` means the user has
 reviewed the package. New third-party packages start disabled. Updates cannot
-change declared tools, providers or required dependencies silently; use a new ID
+change declared tools, providers, required dependencies or the `[sandbox]` section
+silently; use a new ID
 for a reviewed permission surface change. Failed live update restores the prior
 package. Failed reload keeps the working process and reports the new error.
 
@@ -81,8 +82,9 @@ network = true
 `executable` and `args` are argument arrays, never a shell string. Arguments
 beginning `./` resolve within the installed package. Do not depend on the daemon's
 working directory. The host provides `ASSISTANT_PLUGIN_ID`,
-`ASSISTANT_PLUGIN_DATA`, `ASSISTANT_PLUGIN_SETTINGS` (JSON) and
-`ASSISTANT_CONFIG` (compatibility settings for bundled workers).
+`ASSISTANT_PLUGIN_DATA` and `ASSISTANT_PLUGIN_SETTINGS` (JSON). The assistant's
+whole configuration (`ASSISTANT_CONFIG`) goes only to its own bundled worker: it holds
+other servers' keys and the saved location.
 
 ### Sandbox
 
@@ -114,8 +116,8 @@ declares what it may reach; without one it gets the strictest sandbox. Inside:
 | `unconfined = "reason"` | No bubblewrap or seccomp (limits still apply; defaults 8192 MB and 4096 tasks, no CPU limit). Only for plugins bundled with the assistant. |
 
 The seccomp filter refuses calls a plugin has no use for: debugging other processes,
-kernel modules and keyrings, BPF, perf, mounts and new namespaces, clock changes, and
-typing into the terminal (TIOCSTI). `nixe-assistant plugins` shows each manifest's
+kernel modules and keyrings, BPF, perf, io_uring, mounts and new namespaces, clock
+changes, and typing into the terminal (TIOCSTI). `nixe-assistant plugins` shows each manifest's
 sandbox. Configured MCP servers get `network = true` unless `[mcp.servers.ID.sandbox]`
 says otherwise.
 

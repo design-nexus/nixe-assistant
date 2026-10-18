@@ -173,10 +173,13 @@ pub fn bwrap_args(profile: &SandboxProfile, launch: &Launch, home: &Path, runtim
         HomeAccess::Write => push(&["--bind", &home_s, &home_s]),
     }
     if profile.home != HomeAccess::None {
+        // Secret folders are emptied and secret files (.netrc, .git-credentials) read as empty.
         for d in SECRET {
             let p = home.join(d);
             if p.is_dir() {
                 push(&["--tmpfs", &p.display().to_string()]);
+            } else if p.exists() {
+                push(&["--ro-bind", "/dev/null", &p.display().to_string()]);
             }
         }
     }
@@ -454,11 +457,18 @@ fn pipe() -> Result<(OwnedFd, OwnedFd)> {
 /// `--seccomp`.
 pub fn seccomp_fd() -> Result<OwnedFd> {
     let program = seccomp_program();
-    let fd = unsafe { libc::memfd_create(c"nixe-assistant-seccomp".as_ptr(), libc::MFD_CLOEXEC) };
+    let fd = unsafe { libc::memfd_create(c"nixe-assistant-seccomp".as_ptr(), libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING) };
     anyhow::ensure!(fd >= 0, "memfd: {}", std::io::Error::last_os_error());
     let fd = unsafe { OwnedFd::from_raw_fd(fd) };
     let mut file = std::fs::File::from(fd);
     std::io::Write::write_all(&mut file, &program)?;
+    // Nothing that inherits it can change the program before bwrap loads it.
+    let seals = libc::F_SEAL_WRITE | libc::F_SEAL_GROW | libc::F_SEAL_SHRINK | libc::F_SEAL_SEAL;
+    anyhow::ensure!(
+        unsafe { libc::fcntl(file.as_raw_fd(), libc::F_ADD_SEALS, seals) } == 0,
+        "seal the seccomp program: {}",
+        std::io::Error::last_os_error()
+    );
     std::io::Seek::seek(&mut file, std::io::SeekFrom::Start(0))?;
     Ok(file.into())
 }
@@ -480,7 +490,7 @@ const AUDIT_ARCH: u32 = 0xc000_00b7;
 
 /// Calls a plugin never needs that widen what a compromised one can do: debugging other
 /// processes, kernel modules and keyrings, BPF, perf, mounts and new namespaces (bwrap has
-/// already made its own), userfaultfd and terminal input injection. Refused with EPERM;
+/// already made its own), userfaultfd, io_uring and terminal input injection. Refused with EPERM;
 /// clone3 with ENOSYS so libc falls back to clone, whose namespace flags are checked.
 fn denied() -> Vec<libc::c_long> {
     let mut v = vec![
@@ -521,6 +531,10 @@ fn denied() -> Vec<libc::c_long> {
         libc::SYS_clock_adjtime,
         libc::SYS_adjtimex,
         libc::SYS_syslog,
+        // Its requests run outside this filter's view.
+        libc::SYS_io_uring_setup,
+        libc::SYS_io_uring_enter,
+        libc::SYS_io_uring_register,
     ];
     #[cfg(target_arch = "x86_64")]
     v.extend([libc::SYS_iopl, libc::SYS_ioperm, libc::SYS_lookup_dcookie, libc::SYS_uselib]);

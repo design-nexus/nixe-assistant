@@ -5,8 +5,9 @@
 # when the first arg is "hypr": close_window, focus_workspace N|e+1|e-1|previous|
 # special:NAME, move_to_workspace N|special:NAME [follow|stay], toggle_special NAME,
 # float_toggle, toggle_split, focus_direction l|r|u|d, cycle_next, cycle_previous.
-# Each is checked and confirmed afterwards. "hyprctl" works too, except eval and
-# dispatch exec, which are refused. `{n}` in [workspace] is the spoken number.
+# Each is checked and confirmed afterwards. "hyprctl" works for dispatch (not exec),
+# switchxkblayout, notify, dismissnotify and setcursor; anything else is refused.
+# `{n}` in [workspace] is the spoken number.
 
 can_do = "I didn't catch a command I can run. I can lock, close a window, change volume or brightness, switch workspaces 1 to 5, cycle wallpaper, toggle the bar, gaps, or night light, or take a screenshot"
 

@@ -41,7 +41,9 @@ pub async fn bind() -> anyhow::Result<Ipc> {
     fs::set_permissions(&sock, perms)?;
 
     let (cmd_tx, cmd_rx) = mpsc::channel(32);
-    let (ev_tx, _) = broadcast::channel(256);
+    // Room for a long streamed reply (every token is an event) without a slow client
+    // losing the result it's waiting for.
+    let (ev_tx, _) = broadcast::channel(4096);
     let events = ev_tx.clone();
 
     let listener_cmd_tx = cmd_tx.clone();
@@ -80,7 +82,7 @@ async fn handle_client(
             let ev = match ev_rx.recv().await {
                 Ok(ev) => ev,
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                    tracing::debug!(skipped, "ipc client lagged");
+                    tracing::warn!(skipped, "ipc client fell behind; events dropped");
                     continue;
                 }
                 Err(broadcast::error::RecvError::Closed) => break,

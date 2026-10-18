@@ -268,10 +268,22 @@ pub fn shortcut(combo: &str) -> Result<Option<(String, String)>> {
     Ok(Some((names.join(" "), sym)))
 }
 
+/// Whether a combination holds or is the Super key (as a modifier or on its own).
+pub fn uses_super(combo: &str) -> bool {
+    combo.split('+').map(|p| p.trim().to_lowercase()).any(|p| {
+        MODIFIERS.iter().any(|(said, name)| *name == "logo" && said.eq_ignore_ascii_case(&p)) || p.starts_with("super_")
+    })
+}
+
 /// Press a key combination in the focused window. A letter or digit shortcut goes to `window`
 /// (a Hyprland address) through Hyprland: Electron apps such as VS Code drop a virtual
 /// keyboard's modifiers for those, so wtype's ctrl+s never saves there.
 pub async fn key(combo: &str, window: Option<&str>) -> Result<()> {
+    // Super shortcuts are the desktop's (open a terminal, close a window, …), not the app's:
+    // they would land outside the window the call was approved for.
+    if uses_super(combo) {
+        bail!("Super shortcuts go to the desktop, not the window; use the windows or desktop tools instead");
+    }
     match (shortcut(combo)?, window) {
         // Only letter and digit shortcuts: Electron drops wtype's modifiers there (its
         // accelerators read the keymap), while ctrl+End and the like work through wtype and
@@ -309,6 +321,17 @@ mod tests {
         for c in ["ctrl+alt+delete", "super+shift+q", "shift+pagedown"] {
             let a = combo_args(c).unwrap();
             assert_eq!(a.iter().filter(|x| *x == "-M").count(), a.iter().filter(|x| *x == "-m").count(), "{c}");
+        }
+    }
+
+    #[tokio::test]
+    async fn super_shortcuts_are_refused() {
+        for c in ["super+return", "Super+Shift+Q", "win+d", "logo", "meta+space", "Super_L"] {
+            assert!(uses_super(c), "{c}");
+            assert!(key(c, None).await.is_err(), "{c}");
+        }
+        for c in ["ctrl+s", "enter", "alt+F4", "s"] {
+            assert!(!uses_super(c), "{c}");
         }
     }
 
