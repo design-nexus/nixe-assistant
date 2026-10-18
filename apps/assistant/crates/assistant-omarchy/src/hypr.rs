@@ -226,9 +226,156 @@ pub async fn focus_workspace(workspace: &str) -> Result<()> {
     dispatch(format!(r#"hl.dsp.focus({{ workspace = "{ws}" }})"#)).await
 }
 
+/// A desktop phrase's action: a closed set, each value checked, run through the same
+/// dispatchers as the window tools. Phrase files name these (`["hypr", "close_window"]`);
+/// raw `hyprctl eval` from a file isn't run.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Action {
+    CloseWindow,
+    /// A number, `special:<name>`, `e+1` / `e-1` (next / previous) or `previous` (the last one).
+    FocusWorkspace(String),
+    /// The focused window to a workspace number or `special:<name>`; `follow` goes along.
+    MoveToWorkspace(String, bool),
+    ToggleSpecial(String),
+    FloatToggle,
+    ToggleSplit,
+    FocusDirection(char),
+    CycleNext,
+    CyclePrevious,
+}
+
+fn special_name_ok(name: &str) -> bool {
+    !name.is_empty() && name.len() <= 32 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// `workspace_selector`, plus the relative ones focusing allows.
+fn focus_selector(input: &str) -> Result<String> {
+    match input.trim() {
+        s @ ("e+1" | "e-1" | "previous") => Ok(s.to_string()),
+        s => workspace_selector(s),
+    }
+}
+
+impl Action {
+    /// From a phrase's argv after `hypr`.
+    pub fn parse(args: &[&str]) -> Result<Self> {
+        let one = || args.get(1).copied().context("the action needs a value");
+        Ok(match args.first().copied().unwrap_or("") {
+            "close_window" => Self::CloseWindow,
+            "focus_workspace" => Self::FocusWorkspace(focus_selector(one()?)?),
+            "move_to_workspace" => Self::MoveToWorkspace(
+                workspace_selector(one()?)?,
+                match args.get(2).copied() {
+                    None | Some("stay") => false,
+                    Some("follow") => true,
+                    Some(_) => bail!("after the workspace: follow or stay"),
+                },
+            ),
+            "toggle_special" => {
+                let name = one()?;
+                ensure!(special_name_ok(name), "invalid special workspace name");
+                Self::ToggleSpecial(name.into())
+            }
+            "float_toggle" => Self::FloatToggle,
+            "toggle_split" => Self::ToggleSplit,
+            "focus_direction" => match one()? {
+                d @ ("l" | "r" | "u" | "d") => Self::FocusDirection(d.chars().next().unwrap()),
+                _ => bail!("direction is l, r, u or d"),
+            },
+            "cycle_next" => Self::CycleNext,
+            "cycle_previous" => Self::CyclePrevious,
+            other => bail!("unknown desktop action {other:?}"),
+        })
+    }
+
+    /// The dispatcher, built only from checked values.
+    fn lua(&self) -> String {
+        match self {
+            Self::CloseWindow => "hl.dsp.window.close()".into(),
+            Self::FocusWorkspace(ws) => format!(r#"hl.dsp.focus({{ workspace = "{ws}" }})"#),
+            Self::MoveToWorkspace(ws, follow) => format!(r#"hl.dsp.window.move({{ workspace = "{ws}", follow = {follow} }})"#),
+            Self::ToggleSpecial(name) => format!(r#"hl.dsp.workspace.toggle_special("{name}")"#),
+            Self::FloatToggle => r#"hl.dsp.window.float({ action = "toggle" })"#.into(),
+            Self::ToggleSplit => r#"hl.dsp.layout("togglesplit")"#.into(),
+            Self::FocusDirection(d) => format!(r#"hl.dsp.focus({{ direction = "{d}" }})"#),
+            Self::CycleNext => "hl.dsp.window.cycle_next()".into(),
+            Self::CyclePrevious => "hl.dsp.window.cycle_next({ next = false })".into(),
+        }
+    }
+}
+
+/// Re-read Hyprland until `check` holds, for up to 1.5 s.
+async fn settled(check: impl Fn(Option<&Client>, Option<&Workspace>, &[Client]) -> bool) -> bool {
+    for _ in 0..15 {
+        let (w, ws, cs) = (active_window().await.ok().flatten(), active_workspace().await.ok(), clients().await.unwrap_or_default());
+        if check(w.as_ref(), ws.as_ref(), &cs) {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    false
+}
+
+/// Run a phrase's action and check it took: the window gone or moved, the workspace or focus
+/// changed, floating flipped. The reply says when it couldn't be confirmed.
+pub async fn run_action(args: &[&str]) -> Result<String> {
+    let action = Action::parse(args)?;
+    let window = active_window().await.ok().flatten();
+    let workspace = active_workspace().await.ok();
+    if matches!(action, Action::CloseWindow | Action::MoveToWorkspace(..) | Action::FloatToggle | Action::ToggleSplit) {
+        ensure!(window.is_some(), "no window is focused");
+    }
+    dispatch(action.lua()).await?;
+    let before_ws = workspace.as_ref().map(|w| w.name.clone()).unwrap_or_default();
+    let before_win = window.as_ref().map(|w| w.address.clone()).unwrap_or_default();
+    let verified = match &action {
+        Action::CloseWindow => settled(|_, _, cs: &[Client]| cs.iter().all(|c| c.address != before_win)).await,
+        Action::FocusWorkspace(ws) if ws.starts_with("special:") || ws.parse::<i64>().is_ok() => {
+            let target = ws.clone();
+            settled(move |_, w: Option<&Workspace>, _| w.is_some_and(|w| w.name == target || w.id.to_string() == target)).await
+        }
+        Action::FocusWorkspace(_) => settled(|_, w: Option<&Workspace>, _| w.is_some_and(|w| w.name != before_ws)).await,
+        Action::MoveToWorkspace(ws, _) => {
+            let target = ws.clone();
+            settled(move |_, _, cs: &[Client]| cs.iter().any(|c| c.address == before_win && (c.workspace.name == target || c.workspace.id.to_string() == target))).await
+        }
+        Action::FloatToggle => {
+            let was = window.as_ref().is_some_and(|w| w.floating);
+            settled(move |_, _, cs: &[Client]| cs.iter().any(|c| c.address == before_win && c.floating != was)).await
+        }
+        Action::FocusDirection(_) | Action::CycleNext | Action::CyclePrevious => settled(|w: Option<&Client>, _, _| w.is_some_and(|w| w.address != before_win)).await,
+        // Nothing to read back: the special workspace's visibility and the split aren't reported.
+        Action::ToggleSpecial(_) | Action::ToggleSplit => true,
+    };
+    Ok(if verified { "done".into() } else { "sent, but the change couldn't be confirmed".into() })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn phrase_actions_are_closed_and_checked() {
+        assert_eq!(Action::parse(&["close_window"]).unwrap().lua(), "hl.dsp.window.close()");
+        assert_eq!(Action::parse(&["focus_workspace", "e+1"]).unwrap().lua(), r#"hl.dsp.focus({ workspace = "e+1" })"#);
+        assert_eq!(Action::parse(&["focus_workspace", "3"]).unwrap(), Action::FocusWorkspace("3".into()));
+        assert_eq!(Action::parse(&["move_to_workspace", "special:scratchpad"]).unwrap().lua(), r#"hl.dsp.window.move({ workspace = "special:scratchpad", follow = false })"#);
+        assert_eq!(Action::parse(&["move_to_workspace", "4", "follow"]).unwrap().lua(), r#"hl.dsp.window.move({ workspace = "4", follow = true })"#);
+        assert!(Action::parse(&["move_to_workspace", "4", "true"]).is_err());
+        assert_eq!(Action::parse(&["focus_direction", "l"]).unwrap().lua(), r#"hl.dsp.focus({ direction = "l" })"#);
+        assert_eq!(Action::parse(&["toggle_special", "scratchpad"]).unwrap().lua(), r#"hl.dsp.workspace.toggle_special("scratchpad")"#);
+        for bad in [
+            &["focus_workspace", r#"1" }) hl.dsp.exec_cmd("rm"#][..],
+            &["move_to_workspace", "e+1"],
+            &["toggle_special", "a\"b"],
+            &["focus_direction", "left"],
+            &["exec", "foot"],
+            &["focus_workspace"],
+            &[],
+        ] {
+            assert!(Action::parse(bad).is_err(), "{bad:?}");
+        }
+    }
 
     #[test]
     fn matches_by_name_words() {

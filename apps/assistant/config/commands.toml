@@ -1,8 +1,12 @@
 # Desktop command phrases. Edit this file, then:
 #   nixe-assistant reload
 #
-# `omarchy` is argv after the binary: omarchy <args>, or hyprctl <args> when
-# the first arg is hyprctl. `{n}` in [workspace] is the spoken workspace number.
+# `omarchy` is argv after the binary: omarchy <args>, or a typed Hyprland action
+# when the first arg is "hypr": close_window, focus_workspace N|e+1|e-1|previous|
+# special:NAME, move_to_workspace N|special:NAME [follow|stay], toggle_special NAME,
+# float_toggle, toggle_split, focus_direction l|r|u|d, cycle_next, cycle_previous.
+# Each is checked and confirmed afterwards. "hyprctl" works too, except eval and
+# dispatch exec, which are refused. `{n}` in [workspace] is the spoken number.
 
 can_do = "I didn't catch a command I can run. I can lock, close a window, change volume or brightness, switch workspaces 1 to 5, cycle wallpaper, toggle the bar, gaps, or night light, or take a screenshot"
 
@@ -146,8 +150,6 @@ tool = "hypr.workspace"
 move_tool = "hypr.workspace_move"
 spoken = "Workspace {n}."
 move_spoken = "Moving to workspace {n}."
-focus = 'hl.dispatch(hl.dsp.focus({ workspace = "{n}" }))'
-move = 'hl.dispatch(hl.dsp.window.move({ workspace = "{n}" }))'
 
 [[say]]
 phrases = [
@@ -551,11 +553,7 @@ phrases = [
 ]
 tool = "hypr.window_close"
 reply = "Closing the window."
-omarchy = [
-  "hyprctl",
-  "eval",
-  "hl.dispatch(hl.dsp.window.close())",
-]
+omarchy = ["hypr", "close_window"]
 
 [[command]]
 phrases = [
@@ -565,11 +563,7 @@ phrases = [
 ]
 tool = "hypr.workspace"
 reply = "Next workspace."
-omarchy = [
-  "hyprctl",
-  "eval",
-  'hl.dispatch(hl.dsp.focus({ workspace = "e+1" }))',
-]
+omarchy = ["hypr", "focus_workspace", "e+1"]
 
 [[command]]
 phrases = [
@@ -580,11 +574,7 @@ phrases = [
 ]
 tool = "hypr.workspace"
 reply = "Previous workspace."
-omarchy = [
-  "hyprctl",
-  "eval",
-  'hl.dispatch(hl.dsp.focus({ workspace = "e-1" }))',
-]
+omarchy = ["hypr", "focus_workspace", "e-1"]
 
 [[command]]
 phrases = [
@@ -594,11 +584,7 @@ phrases = [
 ]
 tool = "hypr.workspace"
 reply = "Former workspace."
-omarchy = [
-  "hyprctl",
-  "eval",
-  'hl.dispatch(hl.dsp.focus({ workspace = "previous" }))',
-]
+omarchy = ["hypr", "focus_workspace", "previous"]
 
 [[command]]
 phrases = [
@@ -712,11 +698,7 @@ phrases = [
 ]
 tool = "hypr.scratchpad"
 reply = "Toggling the scratchpad."
-omarchy = [
-  "hyprctl",
-  "eval",
-  'hl.dispatch(hl.dsp.workspace.toggle_special("scratchpad"))',
-]
+omarchy = ["hypr", "toggle_special", "scratchpad"]
 
 [[command]]
 phrases = [
@@ -726,11 +708,7 @@ phrases = [
 ]
 tool = "hypr.scratchpad_move"
 reply = "Moving to the scratchpad."
-omarchy = [
-  "hyprctl",
-  "eval",
-  'hl.dispatch(hl.dsp.window.move({ workspace = "special:scratchpad", follow = false }))',
-]
+omarchy = ["hypr", "move_to_workspace", "special:scratchpad", "stay"]
 
 [[command]]
 phrases = [
@@ -741,11 +719,7 @@ phrases = [
 ]
 tool = "hypr.float"
 reply = "Toggling floating."
-omarchy = [
-  "hyprctl",
-  "eval",
-  'hl.dispatch(hl.dsp.window.float({ action = "toggle" }))',
-]
+omarchy = ["hypr", "float_toggle"]
 
 [[command]]
 phrases = [
@@ -754,11 +728,7 @@ phrases = [
 ]
 tool = "hypr.split"
 reply = "Toggling the split."
-omarchy = [
-  "hyprctl",
-  "eval",
-  'hl.dispatch(hl.dsp.layout("togglesplit"))',
-]
+omarchy = ["hypr", "toggle_split"]
 
 [[command]]
 phrases = [
@@ -768,11 +738,7 @@ phrases = [
 ]
 tool = "hypr.focus"
 reply = "Focusing left."
-omarchy = [
-  "hyprctl",
-  "eval",
-  'hl.dispatch(hl.dsp.focus({ direction = "l" }))',
-]
+omarchy = ["hypr", "focus_direction", "l"]
 
 [[command]]
 phrases = [
@@ -782,11 +748,7 @@ phrases = [
 ]
 tool = "hypr.focus"
 reply = "Focusing right."
-omarchy = [
-  "hyprctl",
-  "eval",
-  'hl.dispatch(hl.dsp.focus({ direction = "r" }))',
-]
+omarchy = ["hypr", "focus_direction", "r"]
 
 [[command]]
 phrases = [
@@ -796,11 +758,7 @@ phrases = [
 ]
 tool = "hypr.focus"
 reply = "Focusing up."
-omarchy = [
-  "hyprctl",
-  "eval",
-  'hl.dispatch(hl.dsp.focus({ direction = "u" }))',
-]
+omarchy = ["hypr", "focus_direction", "u"]
 
 [[command]]
 phrases = [
@@ -810,11 +768,7 @@ phrases = [
 ]
 tool = "hypr.focus"
 reply = "Focusing down."
-omarchy = [
-  "hyprctl",
-  "eval",
-  'hl.dispatch(hl.dsp.focus({ direction = "d" }))',
-]
+omarchy = ["hypr", "focus_direction", "d"]
 
 [[command]]
 phrases = [
@@ -824,11 +778,7 @@ phrases = [
 ]
 tool = "hypr.window_cycle"
 reply = "Next window."
-omarchy = [
-  "hyprctl",
-  "eval",
-  "hl.dispatch(hl.dsp.window.cycle_next())",
-]
+omarchy = ["hypr", "cycle_next"]
 
 [[command]]
 phrases = [
@@ -837,11 +787,7 @@ phrases = [
 ]
 tool = "hypr.window_cycle"
 reply = "Previous window."
-omarchy = [
-  "hyprctl",
-  "eval",
-  "hl.dispatch(hl.dsp.window.cycle_next({ next = false }))",
-]
+omarchy = ["hypr", "cycle_previous"]
 
 [[command]]
 phrases = [

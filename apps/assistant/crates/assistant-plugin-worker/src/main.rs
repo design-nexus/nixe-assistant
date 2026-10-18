@@ -68,6 +68,18 @@ fn route(request: &str, id: &str, cfg: &Config) -> Result<Value> {
         _ => Value::Null,
     })
 }
+/// A desktop phrase's command: a typed Hyprland action (`hypr …`), `hyprctl` for anything
+/// but `eval` and `dispatch exec`, or an Omarchy command. Lua from a phrase file is never run.
+async fn run_phrase(argv: &[&str]) -> Result<String> {
+    match argv {
+        ["hypr", action @ ..] => assistant_omarchy::hypr::run_action(action).await,
+        ["hyprctl", "eval", ..] => anyhow::bail!("phrase commands can't run hyprctl eval; use a typed action such as [\"hypr\", \"close_window\"] (see config/commands.toml)"),
+        ["hyprctl", "dispatch", "exec", ..] => anyhow::bail!("phrase commands can't use hyprctl dispatch exec; name the program as an app in apps.toml"),
+        ["hyprctl", rest @ ..] => assistant_omarchy::hyprctl(rest).await,
+        _ => assistant_omarchy::omarchy(argv).await,
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let id = std::env::args().nth(1).unwrap_or_default();
@@ -165,7 +177,7 @@ async fn main() -> Result<()> {
                         let hit=route(request,&id,&cfg)?;anyhow::ensure!(hit["tool"]==name,"phrase does not match tool");
                         if let Intent::Desktop{omarchy,..}=route_with(request,&AppsFile::load()?.app,&CommandsFile::load()?) {
                             let argv:Vec<_>=omarchy.iter().map(String::as_str).collect();
-                            let text=tokio::select! {_=token.cancelled()=>anyhow::bail!("cancelled"),r=async{if argv.first()==Some(&"hyprctl"){assistant_omarchy::hyprctl(&argv[1..]).await}else{assistant_omarchy::omarchy(&argv).await}}=>r?};
+                            let text=tokio::select! {_=token.cancelled()=>anyhow::bail!("cancelled"),r=run_phrase(&argv)=>r?};
                             return Ok(json!({"content":[{"type":"text","text":text}],"isError":false}));
                         }
                     }

@@ -47,7 +47,11 @@ pub struct WorkspaceCommands {
     pub move_tool: String,
     pub spoken: String,
     pub move_spoken: String,
+    /// No longer used: workspace phrases run the typed `focus_workspace` and
+    /// `move_to_workspace` actions. Kept so older files still load.
+    #[serde(default, skip_serializing)]
     pub focus: String,
+    #[serde(default, skip_serializing, rename = "move")]
     pub r#move: String,
 }
 
@@ -59,8 +63,8 @@ impl Default for WorkspaceCommands {
             move_tool: "hypr.workspace_move".into(),
             spoken: "Workspace {n}.".into(),
             move_spoken: "Moving to workspace {n}.".into(),
-            focus: r#"hl.dispatch(hl.dsp.focus({ workspace = "{n}" }))"#.into(),
-            r#move: r#"hl.dispatch(hl.dsp.window.move({ workspace = "{n}" }))"#.into(),
+            focus: String::new(),
+            r#move: String::new(),
         }
     }
 }
@@ -73,9 +77,47 @@ fn default_reply() -> String {
     "Okay.".into()
 }
 
+/// The typed action for a Hyprland Lua line the shipped file used to carry, so files
+/// written before typed actions keep working. Anything else stays as written, and the
+/// worker refuses to run `hyprctl eval`.
+pub fn typed_action(lua: &str) -> Option<Vec<String>> {
+    let action: &[&str] = match lua.trim() {
+        "hl.dispatch(hl.dsp.window.close())" => &["close_window"],
+        r#"hl.dispatch(hl.dsp.focus({ workspace = "e+1" }))"# => &["focus_workspace", "e+1"],
+        r#"hl.dispatch(hl.dsp.focus({ workspace = "e-1" }))"# => &["focus_workspace", "e-1"],
+        r#"hl.dispatch(hl.dsp.focus({ workspace = "previous" }))"# => &["focus_workspace", "previous"],
+        r#"hl.dispatch(hl.dsp.workspace.toggle_special("scratchpad"))"# => &["toggle_special", "scratchpad"],
+        r#"hl.dispatch(hl.dsp.window.move({ workspace = "special:scratchpad", follow = false }))"# => &["move_to_workspace", "special:scratchpad", "stay"],
+        r#"hl.dispatch(hl.dsp.window.float({ action = "toggle" }))"# => &["float_toggle"],
+        r#"hl.dispatch(hl.dsp.layout("togglesplit"))"# => &["toggle_split"],
+        r#"hl.dispatch(hl.dsp.focus({ direction = "l" }))"# => &["focus_direction", "l"],
+        r#"hl.dispatch(hl.dsp.focus({ direction = "r" }))"# => &["focus_direction", "r"],
+        r#"hl.dispatch(hl.dsp.focus({ direction = "u" }))"# => &["focus_direction", "u"],
+        r#"hl.dispatch(hl.dsp.focus({ direction = "d" }))"# => &["focus_direction", "d"],
+        "hl.dispatch(hl.dsp.window.cycle_next())" => &["cycle_next"],
+        "hl.dispatch(hl.dsp.window.cycle_next({ next = false }))" => &["cycle_previous"],
+        _ => return None,
+    };
+    Some(std::iter::once("hypr").chain(action.iter().copied()).map(String::from).collect())
+}
+
 impl CommandsFile {
     pub fn shipped() -> Self {
-        toml::from_str(SHIPPED).expect("shipped commands.toml")
+        toml::from_str::<Self>(SHIPPED).expect("shipped commands.toml").typed()
+    }
+
+    /// Known `hyprctl eval` lines become typed actions.
+    fn typed(mut self) -> Self {
+        for c in &mut self.command {
+            if let [hyprctl, eval, lua] = c.omarchy.as_slice() {
+                if hyprctl == "hyprctl" && eval == "eval" {
+                    if let Some(typed) = typed_action(lua) {
+                        c.omarchy = typed;
+                    }
+                }
+            }
+        }
+        self
     }
 
     pub fn load() -> crate::Result<Self> {
@@ -85,7 +127,7 @@ impl CommandsFile {
     pub fn load_from(path: &Path) -> crate::Result<Self> {
         if path.exists() {
             let text = fs::read_to_string(path)?;
-            Ok(toml::from_str(&text)?)
+            Ok(toml::from_str::<Self>(&text)?.typed())
         } else {
             Ok(Self::shipped())
         }
@@ -103,5 +145,36 @@ mod tests {
         assert!(cmds.forget.iter().any(|p| p == "forget everything"));
         assert_eq!(cmds.workspace.max, 5);
         assert!(cmds.say.len() >= 2);
+    }
+
+    #[test]
+    fn nothing_shipped_runs_hyprctl_eval() {
+        for c in CommandsFile::shipped().command {
+            assert!(!(c.omarchy.first().is_some_and(|p| p == "hyprctl") && c.omarchy.get(1).is_some_and(|a| a == "eval")), "{}: {:?}", c.tool, c.omarchy);
+        }
+    }
+
+    #[test]
+    fn older_files_get_typed_actions() {
+        let old = r#"
+[[command]]
+phrases = ["close window"]
+tool = "hypr.window_close"
+omarchy = ["hyprctl", "eval", "hl.dispatch(hl.dsp.window.close())"]
+
+[[command]]
+phrases = ["mine"]
+tool = "hypr.mine"
+omarchy = ["hyprctl", "eval", "hl.dispatch(hl.dsp.exec_cmd('foot'))"]
+
+[workspace]
+focus = 'hl.dispatch(hl.dsp.focus({ workspace = "{n}" }))'
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("commands.toml");
+        std::fs::write(&path, old).unwrap();
+        let cmds = CommandsFile::load_from(&path).unwrap();
+        assert_eq!(cmds.command[0].omarchy, ["hypr", "close_window"]);
+        assert_eq!(cmds.command[1].omarchy[1], "eval", "unknown Lua is left as written (and refused when run)");
     }
 }

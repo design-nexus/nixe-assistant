@@ -306,7 +306,7 @@ fn workspace_intent(n: u8, ws: &assistant_core::WorkspaceCommands) -> Intent {
     Intent::Desktop {
         tool: ws.tool.clone(),
         spoken: ws.spoken.replace("{n}", &n),
-        omarchy: vec!["hyprctl".into(), "eval".into(), ws.focus.replace("{n}", &n)],
+        omarchy: vec!["hypr".into(), "focus_workspace".into(), n],
     }
 }
 
@@ -315,11 +315,7 @@ fn workspace_move_intent(n: u8, ws: &assistant_core::WorkspaceCommands) -> Inten
     Intent::Desktop {
         tool: ws.move_tool.clone(),
         spoken: ws.move_spoken.replace("{n}", &n),
-        omarchy: vec![
-            "hyprctl".into(),
-            "eval".into(),
-            ws.r#move.replace("{n}", &n),
-        ],
+        omarchy: vec!["hypr".into(), "move_to_workspace".into(), n, "follow".into()],
     }
 }
 
@@ -647,6 +643,18 @@ mod tests {
         assert!(matches!(route("show me how gravity works"), Intent::Chat));
         assert!(matches!(route("go to workspace eleven"), Intent::Chat));
         assert!(matches!(route("make the screen wider"), Intent::Chat));
+    }
+
+    #[test]
+    fn hyprland_phrases_run_typed_actions() {
+        let argv = |text: &str| match route(text) {
+            Intent::Desktop { omarchy, .. } => omarchy,
+            other => panic!("{text}: {other:?}"),
+        };
+        assert_eq!(argv("go to workspace 3"), ["hypr", "focus_workspace", "3"]);
+        assert_eq!(argv("move this window to workspace 2"), ["hypr", "move_to_workspace", "2", "follow"]);
+        assert_eq!(argv("close the window"), ["hypr", "close_window"]);
+        assert_eq!(argv("next workspace"), ["hypr", "focus_workspace", "e+1"]);
     }
 
     #[test]
