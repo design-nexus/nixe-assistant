@@ -11,6 +11,7 @@ results/tyger-<mic name>.json, to compare with what `bench duplex` logged for th
 """
 import argparse
 import json
+import os
 import statistics
 import sys
 import time
@@ -86,3 +87,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+    # The engine's native threads abort the interpreter's shutdown ("terminate called
+    # without an active exception", status 134) once everything is written, so leave now.
+    sys.stdout.flush()
+    os._exit(0)

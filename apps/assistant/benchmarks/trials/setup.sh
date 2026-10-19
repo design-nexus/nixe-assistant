@@ -97,7 +97,10 @@ envs() {
     # package's own torch requirement can't pull a CPU build.
     venv qwen3-tts/.venv --torch-backend cu128 torch torchaudio qwen-tts soundfile
     venv vibevoice/.venv --torch-backend cu128 torch soundfile -e "$TRIALS/vibevoice/VibeVoice[streamingtts]"
-    venv tyger/.venv --torch-backend auto -r "$TRIALS/tyger/tyger-s2s/requirements.txt"
+    # Only TYGER's EARS engine runs here, not tyger-s2s's full agent (vLLM, VoxCPM2), so only
+    # its packages, at the torch and transformers versions tyger-s2s is tested with.
+    venv tyger/.venv --torch-backend auto torch==2.13.0 transformers==5.14.1 safetensors==0.8.0 \
+        huggingface_hub soundfile==0.14.0 librosa==1.0.0
     # Gepard: its scripts/setup.sh picks a CPU torch on CUDA 13.4 and needs a torchcodec that
     # can't load Arch's FFmpeg 9, so the same stack in one resolve: CUDA torch, NeMo's codec,
     # the package. torchcodec is only for transformers' speech recognition, which Gepard
