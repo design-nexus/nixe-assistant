@@ -388,6 +388,23 @@ mod tests {
     }
 
     #[test]
+    fn passwords_ask_by_key_press_every_time() {
+        let rules = Rules { files_read: Decision::Allow, ..Rules::default() };
+        let mut c = cx(&rules);
+        c.resource_approved = true;
+        c.tool_rule = Some(Decision::Allow);
+        for t in ["passwords.find", "passwords.copy"] {
+            let v = decide(t, &c);
+            assert_eq!((v.capability(), v.decision()), (Capability::Secrets, Decision::Ask), "{t}");
+            assert!(!v.capability().voice_approvable(), "{t}: a spoken approve doesn't count");
+            assert!(!v.capability().task_approvable(), "{t}: each call is approved on its own");
+        }
+        // What find returns is private, and may carry other people's words.
+        assert!(Capability::reads_private("passwords.find") && Capability::brings_in_untrusted("passwords.find"));
+        assert!(!Capability::reads_private("passwords.copy"), "copy returns only that it copied");
+    }
+
+    #[test]
     fn computer_use_asks_once_per_task_by_key_press() {
         let rules = Rules::default();
         let mut c = cx(&rules);

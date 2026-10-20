@@ -987,6 +987,7 @@ pub async fn migrate(cfg: &Config, worker: &Path, checkout: &Path) -> Result<()>
         "power",
         "history",
         "nixe-apps",
+        "passwords",
     ] {
         let folder = package_dir().join(id);
         let source = checkout.join("abilities").join(id);
@@ -1255,3 +1256,20 @@ mod restart_tests {
     }
 }
 
+#[cfg(test)]
+mod bundled_tests {
+    /// Every ability shipped in the checkout reads and validates, as activation does.
+    #[test]
+    fn bundled_manifests_validate() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../abilities");
+        let mut seen = 0;
+        for entry in std::fs::read_dir(&root).unwrap() {
+            let path = entry.unwrap().path();
+            if path.join("plugin.toml").exists() {
+                super::Manifest::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+                seen += 1;
+            }
+        }
+        assert!(seen >= 12, "{seen} abilities");
+    }
+}

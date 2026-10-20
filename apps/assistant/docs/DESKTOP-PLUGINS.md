@@ -196,3 +196,16 @@ monad is"**, **"In Fonts, install JetBrains Mono"**, **"In Photos, find photos f
 Store, look for an image editor"**, **"In Tasks, what's using the most memory"**, **"In
 Torrents, pause everything"**. Settings and Store only look and show; Tasks only reports.
 Extracting, packing, sending a chat, installing a font and adding a torrent ask first.
+
+## Passwords
+
+The `passwords` ability finds logins in Nixe Passwords and copies one to the clipboard.
+It runs `nixe-passwords-assistant`, which comes with Passwords, and does nothing until
+**Nixe Assistant** is turned on in Passwords' settings.
+
+Say **"find my GitHub logins"** or **"copy my password for GitHub"** (also `username` and
+`one-time code`). `passwords.find` returns names, usernames and sites; `passwords.copy`
+puts the value on the clipboard through Passwords, which clears it later, and returns only
+that it copied. No password reaches the assistant. Both ask every time, with a key press
+(a spoken "approve" doesn't count), one call at a time. Logins that ask for the master
+password are copied in Passwords only.

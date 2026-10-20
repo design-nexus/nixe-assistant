@@ -43,6 +43,10 @@ pub enum Capability {
     /// Reading and operating app windows (`ui.*`, `screen.*`, `input.*`). Asks with a key
     /// press; one approval may cover the rest of a task.
     ComputerUse,
+    /// Finding logins in Nixe Passwords and copying one to the clipboard
+    /// (`passwords.find`, `passwords.copy`). Always asks, with a key press, one call at a
+    /// time.
+    Secrets,
     /// Never runs.
     Disabled,
     /// External MCP and third-party tools nothing else describes.
@@ -112,6 +116,7 @@ impl Capability {
             "app.launch" | "apps.launch" | "agent.handoff" => return Self::AppLaunch,
             "system.shutdown" => return Self::Shutdown,
             "capture.screen" | "capture.clipboard" => return Self::Capture,
+            "passwords.find" | "passwords.copy" => return Self::Secrets,
             "history.undo" | "history.undo_task" => return Self::PluginData,
             // Nixe apps worked directly: reading a file in, typing into a document, saving.
             "notepad.open" | "write.open" | "archive.list" | "archive.open" | "photos.open" | "pdf.open" => return Self::FileRead,
@@ -164,6 +169,7 @@ impl Capability {
             | Self::Service
             | Self::Privileged
             | Self::ComputerUse
+            | Self::Secrets
             | Self::Network => Decision::Ask,
             // Visible-browser form actions are external tools until they are typed.
             Self::Web if !READ_BROWSER.contains(&tool) => Decision::Ask,
@@ -175,7 +181,7 @@ impl Capability {
     /// always ask.
     pub(crate) fn floor(self) -> Option<Decision> {
         match self {
-            Self::TerminalGenerated | Self::Privileged | Self::ComputerUse => Some(Decision::Ask),
+            Self::TerminalGenerated | Self::Privileged | Self::ComputerUse | Self::Secrets => Some(Decision::Ask),
             Self::Disabled => Some(Decision::Deny),
             _ => None,
         }
@@ -186,7 +192,10 @@ impl Capability {
     /// external tools (which send their arguments to another machine) need a key press (HUD,
     /// TUI or `nixe-assistant approve`). A spoken "deny" always counts.
     pub fn voice_approvable(self) -> bool {
-        !matches!(self, Self::TerminalGenerated | Self::Shutdown | Self::Capture | Self::Privileged | Self::ComputerUse | Self::External)
+        !matches!(
+            self,
+            Self::TerminalGenerated | Self::Shutdown | Self::Capture | Self::Privileged | Self::ComputerUse | Self::External | Self::Secrets
+        )
     }
 
     /// Whether one approval may cover the rest of a task. The same tools that need a key
@@ -206,6 +215,8 @@ impl Capability {
         match c {
             Self::Web | Self::External | Self::FileRead => true,
             Self::PluginData | Self::ComputerUse | Self::Terminal => c.passive(tool) || COMPUTER_READS.contains(&tool),
+            // Item names in a shared organization are written by other people.
+            Self::Secrets => tool == "passwords.find",
             _ => false,
         }
     }
@@ -217,6 +228,7 @@ impl Capability {
         match c {
             Self::FileRead | Self::Capture => true,
             Self::PluginData | Self::ComputerUse | Self::Terminal => c.passive(tool) || COMPUTER_READS.contains(&tool),
+            Self::Secrets => tool == "passwords.find",
             _ => false,
         }
     }
