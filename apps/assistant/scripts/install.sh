@@ -85,7 +85,7 @@ systemctl --user daemon-reload
 # Preserve existing service enablement during migration.
 # Existing daemon enablement is retained.
 if [[ $start_after == 1 ]]; then systemctl --user restart nixe-assistantd.service; fi
-if [[ -f "$bind_file" ]]; then
+if [[ ${NIXE_SKIP_INTEGRATION:-0} != 1 && -f "$bind_file" ]]; then
   bound=0
   if ! rg -q 'Assistant PTT' "$bind_file"; then cat "$root/scripts/hypr-bind.lua" >> "$bind_file"; bound=1; fi
   if ! rg -q 'Assistant stop' "$bind_file"; then printf '\n' >> "$bind_file"; cat "$root/scripts/hypr-stop.lua" >> "$bind_file"; bound=1; fi
