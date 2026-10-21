@@ -37,8 +37,8 @@ impl Verdict {
 
 /// Words that carry no request on their own: they neither start nor block a redirect.
 const FILLER: &[&str] = &[
-    "please", "a", "the", "second", "sec", "moment", "minute", "bit", "thanks", "thank", "you", "no", "hey", "um", "uh",
-    "er", "ah", "oh", "just", "now", "there",
+    "please", "a", "the", "second", "sec", "moment", "minute", "bit", "thanks", "thank", "you", "no", "hey", "um", "uh", "er",
+    "ah", "oh", "just", "now", "there",
 ];
 
 fn words(text: &str) -> Vec<String> {
@@ -55,7 +55,9 @@ fn covered(tokens: &[String], phrases: &[Vec<String>]) -> bool {
     if tokens.is_empty() {
         return true;
     }
-    phrases.iter().any(|p| !p.is_empty() && tokens.len() >= p.len() && tokens[..p.len()] == p[..] && covered(&tokens[p.len()..], phrases))
+    phrases
+        .iter()
+        .any(|p| !p.is_empty() && tokens.len() >= p.len() && tokens[..p.len()] == p[..] && covered(&tokens[p.len()..], phrases))
 }
 
 pub struct Classifier {
@@ -68,7 +70,12 @@ pub struct Classifier {
 impl Classifier {
     pub fn new(cfg: &DuplexCfg, assistant_name: &str) -> Self {
         let phrases = |list: &[String]| list.iter().map(|p| words(p)).filter(|w| !w.is_empty()).collect();
-        Self { stop: phrases(&cfg.stop_phrases), backchannel: phrases(&cfg.backchannels), name: assistant_name.to_lowercase(), noise_ms: cfg.noise_ms }
+        Self {
+            stop: phrases(&cfg.stop_phrases),
+            backchannel: phrases(&cfg.backchannels),
+            name: assistant_name.to_lowercase(),
+            noise_ms: cfg.noise_ms,
+        }
     }
 
     /// `speaking` is the text of the phrases playing now; `since_onset_ms` how long ago the
@@ -82,7 +89,9 @@ impl Classifier {
         let core: Vec<String> = w.iter().filter(|t| !FILLER.contains(&t.as_str()) && **t != self.name).cloned().collect();
         // Phrases may contain filler words ("uh huh"), so they're matched with and without them.
         let named: Vec<String> = w.iter().filter(|t| **t != self.name).cloned().collect();
-        let made_of = |phrases: &[Vec<String>]| (!core.is_empty() && covered(&core, phrases)) || (!named.is_empty() && covered(&named, phrases));
+        let made_of = |phrases: &[Vec<String>]| {
+            (!core.is_empty() && covered(&core, phrases)) || (!named.is_empty() && covered(&named, phrases))
+        };
         let is_backchannel = made_of(&self.backchannel);
         // "okay, stop": stop and backchannel words together, with a stop among them.
         let either: Vec<Vec<String>> = self.stop.iter().chain(&self.backchannel).cloned().collect();
@@ -95,7 +104,10 @@ impl Classifier {
             }
         }
         // Three words of request are enough to stop talking, before the speaker finishes.
-        let content = core.iter().filter(|t| !covered(std::slice::from_ref(*t), &self.stop) && !covered(std::slice::from_ref(*t), &self.backchannel)).count();
+        let content = core
+            .iter()
+            .filter(|t| !covered(std::slice::from_ref(*t), &self.stop) && !covered(std::slice::from_ref(*t), &self.backchannel))
+            .count();
         if content >= 3 {
             return Verdict::Redirect;
         }
@@ -544,7 +556,10 @@ mod tests {
     }
 
     fn track() -> ReplyTrack {
-        ReplyTrack { generation: 4, phrases: vec!["The forecast is sunny.".into(), "Highs near twenty degrees.".into(), "Bring sunglasses.".into()] }
+        ReplyTrack {
+            generation: 4,
+            phrases: vec!["The forecast is sunny.".into(), "Highs near twenty degrees.".into(), "Bring sunglasses.".into()],
+        }
     }
 
     #[test]

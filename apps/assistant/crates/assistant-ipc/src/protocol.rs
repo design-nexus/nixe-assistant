@@ -17,6 +17,14 @@ pub enum Command {
     Say {
         text: String,
     },
+    /// LLM only. The reply is `assistant_text` and is not spoken or stored as a conversation turn.
+    Complete {
+        text: String,
+    },
+    /// Speak this script on the existing speech path. No model call.
+    Speak {
+        text: String,
+    },
     /// Closed-loop probe: Kokoro → 16 kHz WAV → Parakeet → LLM → speakers.
     Demo,
     /// Reload `apps.toml`, `commands.toml`, and `config.toml` without restarting the models.

@@ -86,6 +86,8 @@ pub enum Event {
     AssistantText {
         text: String,
         done: bool,
+        #[serde(default)]
+        silent: bool,
     },
     Level {
         rms: f32,

@@ -3,8 +3,8 @@
 //! An answer for an unknown, expired or already answered ID fails, and "for the rest of the
 //! task" only counts when the request offered it.
 
-use anyhow::{bail, Result};
 use super::now_ms;
+use anyhow::{bail, Result};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Mutex;

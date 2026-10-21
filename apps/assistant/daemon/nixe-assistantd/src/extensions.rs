@@ -27,11 +27,7 @@ pub(super) struct PowerSettings {
 }
 impl Default for PowerSettings {
     fn default() -> Self {
-        Self {
-            profile: "normal".into(),
-            idle_seconds: 300,
-            battery_idle_seconds: 0,
-        }
+        Self { profile: "normal".into(), idle_seconds: 300, battery_idle_seconds: 0 }
     }
 }
 /// How long the models stay loaded while nothing happens: the shorter battery limit when
@@ -49,9 +45,7 @@ impl PowerSettings {
             .ok()
             .and_then(|v| serde_json::from_slice::<Self>(&v).ok())
             .filter(|s| {
-                matches!(s.profile.as_str(), "normal" | "battery")
-                    && s.idle_seconds <= 86400
-                    && s.battery_idle_seconds <= 86400
+                matches!(s.profile.as_str(), "normal" | "battery") && s.idle_seconds <= 86400 && s.battery_idle_seconds <= 86400
             })
             .unwrap_or_default()
     }
@@ -63,7 +57,8 @@ fn task_actions(records: &[ActionRecord], task: Option<&str>) -> Option<(String,
         Some(t) => t.to_string(),
         None => records.iter().rev().find(|r| !r.undone && r.task.is_some())?.task.clone()?,
     };
-    let actions: Vec<_> = records.iter().rev().filter(|r| !r.undone && r.task.as_deref() == Some(task.as_str())).cloned().collect();
+    let actions: Vec<_> =
+        records.iter().rev().filter(|r| !r.undone && r.task.as_deref() == Some(task.as_str())).cloned().collect();
     (!actions.is_empty()).then_some((task, actions))
 }
 pub(super) fn load_actions() -> Vec<ActionRecord> {
@@ -96,9 +91,7 @@ impl App {
         }
         let owner = self.registry.plugins.as_ref().and_then(|p| p.owner(name));
         let mut undo = result["structuredContent"]["undo"].clone();
-        let inverse_owner = undo["tool"]
-            .as_str()
-            .and_then(|tool| self.registry.plugins.as_ref().and_then(|p| p.owner(tool)));
+        let inverse_owner = undo["tool"].as_str().and_then(|tool| self.registry.plugins.as_ref().and_then(|p| p.owner(tool)));
         if !valid_undo(name, &undo) || owner.is_none() || owner != inverse_owner {
             undo = Value::Null;
         }
@@ -126,23 +119,14 @@ impl App {
     async fn undo_action(&self, action: &ActionRecord, cancel: &CancellationToken, depth: usize) -> Result<()> {
         let undo = action.undo.as_ref().context("this change can't be undone")?;
         anyhow::ensure!(valid_undo(&action.tool, undo), "invalid saved undo");
-        let undo_owner = self
-            .registry
-            .plugins
-            .as_ref()
-            .and_then(|p| p.owner(undo["tool"].as_str().unwrap()));
+        let undo_owner = self.registry.plugins.as_ref().and_then(|p| p.owner(undo["tool"].as_str().unwrap()));
         anyhow::ensure!(
             action.owner.is_some() && action.owner == undo_owner,
             "original undo owner is unavailable or changed; enable the original plugin"
         );
-        let value = Box::pin(self.dispatch_plugin_depth(
-            undo["tool"].as_str().unwrap(),
-            undo["arguments"].clone(),
-            cancel,
-            depth + 1,
-            1,
-        ))
-        .await?;
+        let value =
+            Box::pin(self.dispatch_plugin_depth(undo["tool"].as_str().unwrap(), undo["arguments"].clone(), cancel, depth + 1, 1))
+                .await?;
         anyhow::ensure!(value["isError"] != true, "undo failed: {value}");
         let mut records = self.actions.lock().unwrap();
         if let Some(record) = records.iter_mut().find(|r| r.id == action.id) {
@@ -166,26 +150,15 @@ impl App {
             return Ok(result);
         }
         // Only these bundled, trusted tools can request host operations. Retrieved text is never interpreted.
-        if !self
-            .registry
-            .plugins
-            .as_ref()
-            .is_some_and(|p| p.trusted_tool(name))
-        {
+        if !self.registry.plugins.as_ref().is_some_and(|p| p.trusted_tool(name)) {
             return Ok(result);
         }
         if matches!(name, "routines.run" | "projects.action") {
             anyhow::ensure!(depth == 0, "nested coordinated actions are unsupported");
             let directive = &result["structuredContent"]["host_actions"];
             anyhow::ensure!(directive["version"] == 1, "unsupported action extension");
-            let steps = directive["steps"]
-                .as_array()
-                .context("missing routine steps")?
-                .clone();
-            anyhow::ensure!(
-                !steps.is_empty() && steps.len() <= budget,
-                "one to four actions required"
-            );
+            let steps = directive["steps"].as_array().context("missing routine steps")?.clone();
+            anyhow::ensure!(!steps.is_empty() && steps.len() <= budget, "one to four actions required");
             // Validate the entire routine before the first effect. Never inherit the parent's grant.
             for step in &steps {
                 let tool = step["tool"].as_str().context("missing action tool")?;
@@ -195,28 +168,16 @@ impl App {
                     "nested host actions are unsupported"
                 );
                 self.registry.validate(tool, &step["arguments"])?;
-                anyhow::ensure!(
-                    self.registry.policy(tool, &self.cfg()) != "deny",
-                    "routine step denied: {tool}"
-                );
+                anyhow::ensure!(self.registry.policy(tool, &self.cfg()) != "deny", "routine step denied: {tool}");
             }
-            let owner_generation = self
-                .registry
-                .plugins
-                .as_ref()
-                .and_then(|p| p.generation(name));
+            let owner_generation = self.registry.plugins.as_ref().and_then(|p| p.generation(name));
             let routine_cancel = cancel.child_token();
             let owner = self.registry.plugins.as_ref().unwrap().token(name);
             let _forward = forward_cancel(owner, routine_cancel.clone());
             let mut completed = Vec::new();
             for step in steps {
                 anyhow::ensure!(
-                    owner_generation
-                        == self
-                            .registry
-                            .plugins
-                            .as_ref()
-                            .and_then(|p| p.generation(name)),
+                    owner_generation == self.registry.plugins.as_ref().and_then(|p| p.generation(name)),
                     "routine plugin changed or disabled"
                 );
                 let value = Box::pin(self.dispatch_plugin_depth(
@@ -228,9 +189,7 @@ impl App {
                 ))
                 .await;
                 match value {
-                    Ok(value) if value["isError"] != true => {
-                        completed.push(json!({"tool":step["tool"],"result":value}))
-                    }
+                    Ok(value) if value["isError"] != true => completed.push(json!({"tool":step["tool"],"result":value})),
                     other => {
                         let error = match other {
                             Ok(value) => value.to_string(),
@@ -249,18 +208,12 @@ impl App {
                 let directive = &result["structuredContent"]["host_power"];
                 anyhow::ensure!(directive["version"] == 1, "unsupported power extension");
                 let settings = PowerSettings {
-                    profile: directive["profile"]
-                        .as_str()
-                        .context("missing power profile")?
-                        .into(),
-                    idle_seconds: directive["idle_seconds"]
-                        .as_u64()
-                        .context("missing idle time")?,
+                    profile: directive["profile"].as_str().context("missing power profile")?.into(),
+                    idle_seconds: directive["idle_seconds"].as_u64().context("missing idle time")?,
                     battery_idle_seconds: self.power.lock().unwrap().battery_idle_seconds,
                 };
                 anyhow::ensure!(
-                    matches!(settings.profile.as_str(), "normal" | "battery")
-                        && settings.idle_seconds <= 86400,
+                    matches!(settings.profile.as_str(), "normal" | "battery") && settings.idle_seconds <= 86400,
                     "invalid power settings"
                 );
                 self.llm.set_battery(settings.profile == "battery").await?;
@@ -274,31 +227,19 @@ impl App {
             }
             result["structuredContent"]["host"] = self.power_json();
         } else if name == "history.list" {
-            result["structuredContent"]["actions"] =
-                serde_json::to_value(&*self.actions.lock().unwrap())?;
+            result["structuredContent"]["actions"] = serde_json::to_value(&*self.actions.lock().unwrap())?;
         } else if name == "history.undo" {
             let _guard = self.undo_lock.lock().await;
-            let action = self
-                .actions
-                .lock()
-                .unwrap()
-                .iter()
-                .rev()
-                .find(|r| !r.undone)
-                .cloned()
-                .context("no reversible action to undo")?;
-            anyhow::ensure!(
-                action.undo.is_some(),
-                "the most recent recorded change cannot be undone; inspect action history"
-            );
+            let action =
+                self.actions.lock().unwrap().iter().rev().find(|r| !r.undone).cloned().context("no reversible action to undo")?;
+            anyhow::ensure!(action.undo.is_some(), "the most recent recorded change cannot be undone; inspect action history");
             self.undo_action(&action, cancel, depth).await?;
-            result["structuredContent"] =
-                json!({"undone":action.id,"tool":action.tool,"acknowledgement":"Action undone."});
+            result["structuredContent"] = json!({"undone":action.id,"tool":action.tool,"acknowledgement":"Action undone."});
         } else if name == "history.undo_task" {
             let _guard = self.undo_lock.lock().await;
             let asked = result["structuredContent"]["host_history"]["task"].as_str().map(String::from);
-            let (task, actions) = task_actions(&self.actions.lock().unwrap(), asked.as_deref())
-                .context("no task with changes to undo")?;
+            let (task, actions) =
+                task_actions(&self.actions.lock().unwrap(), asked.as_deref()).context("no task with changes to undo")?;
             let (mut undone, mut kept) = (Vec::new(), Vec::new());
             let mut failed = None;
             for action in &actions {
@@ -326,7 +267,8 @@ impl App {
             if let Some(f) = &failed {
                 said.push_str(&format!(" Stopped at {}, which failed.", f["tool"].as_str().unwrap_or("a step")));
             }
-            result["structuredContent"] = json!({"task": task, "undone": undone, "not_reversible": kept, "failed": failed, "acknowledgement": said});
+            result["structuredContent"] =
+                json!({"task": task, "undone": undone, "not_reversible": kept, "failed": failed, "acknowledgement": said});
             if failed.is_some() {
                 result["isError"] = json!(true);
             }
@@ -353,10 +295,7 @@ impl App {
             && !self.turn_busy.load(Ordering::SeqCst)
             && self.pending.is_empty()
             && self.session.lock().unwrap().mode == Mode::Wake
-            && self
-                .state
-                .try_lock()
-                .is_ok_and(|s| s.current() == AssistantState::Idle)
+            && self.state.try_lock().is_ok_and(|s| s.current() == AssistantState::Idle)
         {
             if let Err(e) = self.llm.unload().await {
                 tracing::warn!(%e, "idle model unload failed");
@@ -397,9 +336,7 @@ fn is_read_only(name: &str) -> bool {
 }
 fn valid_undo(source: &str, value: &Value) -> bool {
     value["version"] == 1
-        && source
-            .split_once('.')
-            .is_some_and(|(prefix, _)| value["tool"].as_str() == Some(&format!("{prefix}.undo")))
+        && source.split_once('.').is_some_and(|(prefix, _)| value["tool"].as_str() == Some(&format!("{prefix}.undo")))
         && value["arguments"].is_object()
 }
 #[cfg(test)]
@@ -431,23 +368,15 @@ mod tests {
         let (_, actions) = task_actions(&records, Some("t-a")).unwrap();
         assert_eq!(actions.len(), 1);
         assert!(task_actions(&records, Some("t-none")).is_none());
-        let old: ActionRecord = serde_json::from_value(json!({"id":"9","tool":"notes.create","arguments":{},"undo":null,"undone":false})).unwrap();
+        let old: ActionRecord =
+            serde_json::from_value(json!({"id":"9","tool":"notes.create","arguments":{},"undo":null,"undone":false})).unwrap();
         assert!(old.task.is_none(), "journals from before tasks were recorded still load");
     }
     #[test]
     fn undo_cannot_dispatch_another_ability() {
-        assert!(valid_undo(
-            "notes.edit",
-            &json!({"version":1,"tool":"notes.undo","arguments":{"token":"abc"}})
-        ));
-        assert!(!valid_undo(
-            "notes.edit",
-            &json!({"version":1,"tool":"terminal.run","arguments":{"argv":["sh"]}})
-        ));
-        assert!(!valid_undo(
-            "notes.edit",
-            &json!({"version":2,"tool":"notes.undo","arguments":{}})
-        ));
+        assert!(valid_undo("notes.edit", &json!({"version":1,"tool":"notes.undo","arguments":{"token":"abc"}})));
+        assert!(!valid_undo("notes.edit", &json!({"version":1,"tool":"terminal.run","arguments":{"argv":["sh"]}})));
+        assert!(!valid_undo("notes.edit", &json!({"version":2,"tool":"notes.undo","arguments":{}})));
     }
 
     #[test]

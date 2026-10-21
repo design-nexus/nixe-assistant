@@ -224,6 +224,8 @@ ShellRoot {
                 root.transcript = obj.text;
             break;
         case "assistant_text":
+            if (obj.silent || root.daemonState === "idle")
+                break;
             if (typeof obj.text === "string")
                 root.assistant = obj.text;
             break;

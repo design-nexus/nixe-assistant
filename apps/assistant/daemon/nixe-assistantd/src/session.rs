@@ -28,13 +28,7 @@ pub struct Session {
 }
 impl Default for Session {
     fn default() -> Self {
-        Self {
-            id: 0,
-            mode: Mode::Wake,
-            deadline: Instant::now(),
-            target: Value::Null,
-            draft: String::new(),
-        }
+        Self { id: 0, mode: Mode::Wake, deadline: Instant::now(), target: Value::Null, draft: String::new() }
     }
 }
 impl Session {
@@ -54,16 +48,12 @@ impl Session {
     pub fn after_reply(&mut self, enabled: bool, follow: u64, idle: u64) {
         match self.mode {
             Mode::Conversation => self.deadline = Instant::now() + Duration::from_secs(idle),
-            Mode::Wake | Mode::FollowUp if enabled && follow > 0 => {
-                self.begin(Mode::FollowUp, follow)
-            }
+            Mode::Wake | Mode::FollowUp if enabled && follow > 0 => self.begin(Mode::FollowUp, follow),
             _ => {}
         }
     }
     pub fn remaining(&self) -> u64 {
-        self.deadline
-            .saturating_duration_since(Instant::now())
-            .as_secs()
+        self.deadline.saturating_duration_since(Instant::now()).as_secs()
     }
     pub fn json(&self) -> Value {
         json!({"session_id":self.id,"mode":self.mode.name(),"remaining_secs":self.remaining(),"target":self.target,"draft":self.draft})
@@ -84,17 +74,59 @@ pub enum RequestKind {
 /// action someone would do with the mouse or keyboard.
 fn computer_request(s: &str) -> bool {
     const ACTS: &[&str] = &[
-        "click", "press", "type ", "tap ", "select", "toggle", "turn on", "turn off", "switch on", "switch off", "new tab",
-        "close the tab", "save", "scroll", "fill in", "enter ", "check the", "uncheck", "open the menu", "go to the end",
-        "search", "write ", "find ", "open ", "close ", "play", "pause", "add ", "go to ", "delete ", "rename ", "choose ",
+        "click",
+        "press",
+        "type ",
+        "tap ",
+        "select",
+        "toggle",
+        "turn on",
+        "turn off",
+        "switch on",
+        "switch off",
+        "new tab",
+        "close the tab",
+        "save",
+        "scroll",
+        "fill in",
+        "enter ",
+        "check the",
+        "uncheck",
+        "open the menu",
+        "go to the end",
+        "search",
+        "write ",
+        "find ",
+        "open ",
+        "close ",
+        "play",
+        "pause",
+        "add ",
+        "go to ",
+        "delete ",
+        "rename ",
+        "choose ",
     ];
     let place = s.contains(" window") || s.starts_with("in ") || s.contains(" in the app") || s.starts_with("on the screen");
     place && ACTS.iter().any(|a| s.contains(a))
 }
 /// Every Nixe app's tool prefix (the nixe-apps ability).
 pub const APP_TOOL_PREFIXES: &[&str] = &[
-    "notepad.", "write.", "music.", "contacts.", "archive.", "chat.", "fonts.", "photos.", "glimpse.", "video.", "pdf.", "settings.",
-    "store.", "tasks.", "torrents.",
+    "notepad.",
+    "write.",
+    "music.",
+    "contacts.",
+    "archive.",
+    "chat.",
+    "fonts.",
+    "photos.",
+    "glimpse.",
+    "video.",
+    "pdf.",
+    "settings.",
+    "store.",
+    "tasks.",
+    "torrents.",
 ];
 
 /// The tools of the Nixe apps a request names that have their own ("notepad.", "write."):
@@ -128,7 +160,9 @@ pub fn app_tool_prefixes(text: &str) -> Vec<&'static str> {
         }
     }
     // Names nothing else is called.
-    for (name, prefix) in [("contacts", "contacts."), ("glimpse", "glimpse."), ("media player", "video."), ("torrents", "torrents.")] {
+    for (name, prefix) in
+        [("contacts", "contacts."), ("glimpse", "glimpse."), ("media player", "video."), ("torrents", "torrents.")]
+    {
         if lower.contains(name) && !out.contains(&prefix) {
             out.push(prefix);
         }
@@ -169,24 +203,12 @@ pub fn classify(text: &str) -> RequestKind {
     if computer_request(&s) {
         return RequestKind::Computer;
     }
-    if ["open ", "go to ", "navigate to "]
-        .iter()
-        .any(|p| s.starts_with(p))
-        && [".com", ".org", ".net", ".io", ".dev", ".gov", ".edu"]
-            .iter()
-            .any(|d| s.contains(d))
+    if ["open ", "go to ", "navigate to "].iter().any(|p| s.starts_with(p))
+        && [".com", ".org", ".net", ".io", ".dev", ".gov", ".edu"].iter().any(|d| s.contains(d))
     {
         return RequestKind::Browse;
     }
-    if [
-        "read the file ",
-        "read file ",
-        "git status",
-        "check git status",
-    ]
-    .iter()
-    .any(|p| s.starts_with(p))
-    {
+    if ["read the file ", "read file ", "git status", "check git status"].iter().any(|p| s.starts_with(p)) {
         return RequestKind::Tools;
     }
     if [
@@ -259,12 +281,7 @@ pub fn classify(text: &str) -> RequestKind {
     RequestKind::Chat
 }
 pub fn dictation_control(text: &str) -> Option<&'static str> {
-    match text
-        .trim()
-        .trim_end_matches(['.', '!', '?'])
-        .to_lowercase()
-        .as_str()
-    {
+    match text.trim().trim_end_matches(['.', '!', '?']).to_lowercase().as_str() {
         "stop dictating" | "end dictation" => Some("stop"),
         "pause dictation" => Some("pause"),
         "resume dictation" => Some("resume"),
@@ -341,18 +358,12 @@ mod tests {
         s.stop();
         assert_eq!(s.mode, Mode::Wake);
         assert_eq!(dictation_control("Stop dictating."), Some("stop"));
-        assert_eq!(
-            dictation_control("write stop dictating in the document"),
-            None
-        );
+        assert_eq!(dictation_control("write stop dictating in the document"), None);
         assert_eq!(punctuation("new paragraph"), "\n\n");
     }
     #[test]
     fn factual_vs_browser() {
-        assert_eq!(
-            classify("What's the weather tomorrow?"),
-            RequestKind::Lookup
-        );
+        assert_eq!(classify("What's the weather tomorrow?"), RequestKind::Lookup);
         assert_eq!(classify("Google weather pages"), RequestKind::Browse);
         assert_eq!(classify("show me websites about Rust"), RequestKind::Browse);
         assert_eq!(classify("What is two plus two?"), RequestKind::Chat);

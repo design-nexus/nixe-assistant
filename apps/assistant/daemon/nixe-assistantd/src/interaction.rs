@@ -5,28 +5,14 @@ impl App {
         let cfg = self.cfg();
         anyhow::ensure!(cfg.location.enabled, "location is disabled");
         let cancel = self.cancel.lock().await.clone();
-        let result = self
-            .registry
-            .call_allowed("location.current", json!({}), &cfg, &cancel)
-            .await?;
+        let result = self.registry.call_allowed("location.current", json!({}), &cfg, &cancel).await?;
         let location = serde_json::from_value(result["structuredContent"].clone())?;
         Ok(location)
     }
-    pub(super) async fn location_control(
-        &self,
-        action: &str,
-        city: Option<String>,
-    ) -> Result<Value> {
+    pub(super) async fn location_control(&self, action: &str, city: Option<String>) -> Result<Value> {
         if matches!(action, "show" | "refresh") {
-            let result = self
-                .registry
-                .call_allowed(
-                    "location.current",
-                    json!({}),
-                    &self.cfg(),
-                    &CancellationToken::new(),
-                )
-                .await?;
+            let result =
+                self.registry.call_allowed("location.current", json!({}), &self.cfg(), &CancellationToken::new()).await?;
             return Ok(result["structuredContent"].clone());
         }
         let _guard = self.reload_lock.lock().await;
@@ -51,11 +37,7 @@ impl App {
         saved.save()?;
         self.cfg.lock().unwrap().location = saved.location.clone();
         if let Some(plugins) = &self.registry.plugins {
-            let action = if saved.location.enabled {
-                "enable"
-            } else {
-                "disable"
-            };
+            let action = if saved.location.enabled { "enable" } else { "disable" };
             plugins.change(action, "location", &self.cfg()).await?;
             if saved.location.enabled {
                 plugins.change("reload", "location", &self.cfg()).await?;
@@ -64,17 +46,14 @@ impl App {
         Ok(json!({"settings":saved.location}))
     }
     pub(super) async fn resume_browser(self: &Arc<Self>) -> Result<Value> {
-        let result = self
-            .dispatch_plugin("browser.resume", json!({}), &CancellationToken::new())
-            .await?;
+        let result = self.dispatch_plugin("browser.resume", json!({}), &CancellationToken::new()).await?;
         if result["structuredContent"]["resumed"] == true {
             let pending = self.pending_browser.lock().unwrap().take();
             if let Some(text) = pending {
                 let app = self.clone();
                 tokio::spawn(async move {
                     for _ in 0..100 {
-                        if !app.turn_busy.load(Ordering::SeqCst)
-                            || app.state.lock().await.current() == AssistantState::Listening
+                        if !app.turn_busy.load(Ordering::SeqCst) || app.state.lock().await.current() == AssistantState::Listening
                         {
                             let _ = app.command_tx.send(Command::Say { text }).await;
                             return;
@@ -95,10 +74,7 @@ impl App {
             self.cancel_turn().await;
             drop(self.samples.lock().await);
             if mode == Mode::Conversation {
-                self.session
-                    .lock()
-                    .unwrap()
-                    .begin(mode, self.cfg().conversation.idle_secs);
+                self.session.lock().unwrap().begin(mode, self.cfg().conversation.idle_secs);
             }
         }
     }
@@ -120,10 +96,7 @@ impl App {
             self.cancel_turn().await;
             if action == "start" {
                 anyhow::ensure!(self.cfg().conversation.enabled, "conversation is disabled");
-                self.session
-                    .lock()
-                    .unwrap()
-                    .begin(Mode::Conversation, self.cfg().conversation.idle_secs);
+                self.session.lock().unwrap().begin(Mode::Conversation, self.cfg().conversation.idle_secs);
             } else {
                 self.session.lock().unwrap().stop();
             }
@@ -143,10 +116,7 @@ impl App {
             } else if action == "stop" {
                 self.cancel_turn().await;
             } else if action == "pause" {
-                self.session
-                    .lock()
-                    .unwrap()
-                    .begin(Mode::Paused, self.cfg().dictation.idle_secs);
+                self.session.lock().unwrap().begin(Mode::Paused, self.cfg().dictation.idle_secs);
             } else if action == "resume" {
                 let target = active_window().await?;
                 let mut s = self.session.lock().unwrap();
@@ -176,17 +146,9 @@ impl App {
         cancel: &CancellationToken,
     ) -> Result<Vec<i16>> {
         let cfg = self.cfg();
-        let mut gate = self.streaming_vad(
-            cfg.vad.hangover_ms,
-            cfg.vad.start_confirm_frames,
-            cfg.vad.energy_threshold,
-        );
+        let mut gate = self.streaming_vad(cfg.vad.hangover_ms, cfg.vad.start_confirm_frames, cfg.vad.energy_threshold);
         let mut raw = self.samples.lock().await;
-        let mut aec = if cfg.barge_in.aec {
-            Some(self.aec_samples.lock().await)
-        } else {
-            None
-        };
+        let mut aec = if cfg.barge_in.aec { Some(self.aec_samples.lock().await) } else { None };
         let samples = match aec.as_mut().and_then(|a| a.as_mut()) {
             Some(samples) => samples,
             None => &mut *raw,
@@ -266,9 +228,7 @@ impl App {
             self.emit_state(AssistantState::Idle).await;
             return Ok(());
         }
-        self.emit(Event::Transcript {
-            text: tr.text.clone(),
-        });
+        self.emit(Event::Transcript { text: tr.text.clone() });
         if matches!(mode, Mode::Dictation | Mode::Paused) {
             if let Some(action) = dictation_control(&tr.text) {
                 self.session_control("dictation", action).await?;
@@ -277,25 +237,19 @@ impl App {
                 let target = {
                     let mut s = self.session.lock().unwrap();
                     s.draft.push_str(&text);
-                    s.deadline =
-                        Instant::now() + Duration::from_secs(self.cfg().dictation.idle_secs);
+                    s.deadline = Instant::now() + Duration::from_secs(self.cfg().dictation.idle_secs);
                     s.target.clone()
                 };
                 let active = active_window().await?;
                 if active["address"] != target["address"] {
                     self.session.lock().unwrap().mode = Mode::Paused;
-                    self.emit(Event::Error {
-                        message: "Dictation paused: application focus changed. Draft retained."
-                            .into(),
-                    });
+                    self.emit(Event::Error { message: "Dictation paused: application focus changed. Draft retained.".into() });
                 } else if !terminal_target(&target) {
                     match type_target(&target, &text).await {
                         Ok(()) => self.session.lock().unwrap().draft.clear(),
                         Err(err) => {
                             self.session.lock().unwrap().mode = Mode::Paused;
-                            self.emit(Event::Error {
-                                message: format!("Dictation paused: {err}. Draft retained."),
-                            });
+                            self.emit(Event::Error { message: format!("Dictation paused: {err}. Draft retained.") });
                         }
                     }
                 }
@@ -407,12 +361,7 @@ impl App {
             summary: summary.clone(),
             voice_allowed,
         });
-        let plugin_cancel = self
-            .registry
-            .plugins
-            .as_ref()
-            .map(|p| p.token(tool))
-            .unwrap_or_default();
+        let plugin_cancel = self.registry.plugins.as_ref().map(|p| p.token(tool)).unwrap_or_default();
         let (approved, for_task) = tokio::select! {_=plugin_cancel.cancelled()=>(false,false),_=cancel.cancelled()=>(false,false),r=tokio::time::timeout_at(deadline.into(),rx)=>r.ok().and_then(|r|r.ok()).unwrap_or((false,false)),r=async {match self.voice_approval(&id,voice_allowed,media_playing,&summary,task_scope,cancel).await {Ok(v)=>v,Err(err)=>{tracing::warn!(%err,"voice approval unavailable; keyboard approval remains available");std::future::pending::<(bool,bool)>().await}}}=>r};
         let _ = self.audio.stop_capture();
         let _ = self.audio.cancel_playback();
@@ -421,17 +370,11 @@ impl App {
         let approved = approved && !cancel.is_cancelled() && now_ms() < expires;
         Ok((approved, approved && for_task && task_scope))
     }
-    pub(super) async fn control_phrase(
-        self: &Arc<Self>,
-        text: &str,
-        timing: &TurnTiming,
-    ) -> Result<bool> {
+    pub(super) async fn control_phrase(self: &Arc<Self>, text: &str, timing: &TurnTiming) -> Result<bool> {
         let clean = text.trim().trim_end_matches(['.', '!', '?']).to_lowercase();
         let action = match clean.as_str() {
             "start conversation" | "start conversation mode" => Some(("conversation", "start")),
-            "end conversation" | "stop conversation" | "stop listening" => {
-                Some(("conversation", "stop"))
-            }
+            "end conversation" | "stop conversation" | "stop listening" => Some(("conversation", "stop")),
             "start dictating" | "start dictation" => Some(("dictation", "start")),
             "stop dictating" | "end dictation" => Some(("dictation", "stop")),
             "pause dictation" => Some(("dictation", "pause")),
@@ -482,36 +425,21 @@ impl App {
             let spoken = format!("{kind} {action}");
             let phase = Mutex::new(timing.clone());
             let first = AtomicBool::new(true);
-            self.speak_phrase(&self.tts, &spoken, &phase, &first)
-                .await?;
+            self.speak_phrase(&self.tts, &spoken, &phase, &first).await?;
             let cancel = self.cancel.lock().await.clone();
             tokio::select! {_=cancel.cancelled()=>{let _=self.audio.cancel_playback();},_=self.audio.wait_playback()=>{}}
             self.emit_state(AssistantState::Idle).await;
             // Acknowledgments must not re-arm a stopped conversation.
-            self.emit(Event::AssistantText {
-                text: format!("{kind} {action}"),
-                done: true,
-            });
+            self.emit(Event::AssistantText { text: format!("{kind} {action}"), done: true, silent: false });
             self.emit(Event::from_timing(timing));
             return Ok(true);
         }
         if clean == "resume browser" || clean == "take over browser" {
-            let name = if clean == "resume browser" {
-                "browser.resume"
-            } else {
-                "browser.takeover"
-            };
+            let name = if clean == "resume browser" { "browser.resume" } else { "browser.takeover" };
             let data = if clean == "resume browser" {
                 self.resume_browser().await?
             } else {
-                self.registry
-                    .call_allowed(
-                        name,
-                        json!({}),
-                        &self.cfg(),
-                        &CancellationToken::new(),
-                    )
-                    .await?
+                self.registry.call_allowed(name, json!({}), &self.cfg(), &CancellationToken::new()).await?
             };
             self.emit_tool(name, &json!({}), &data);
             self.speak_reply(
@@ -525,42 +453,26 @@ impl App {
             .await?;
             return Ok(true);
         }
-        if clean == "open that source" || clean == "open the source" || clean == "open first result"
-        {
+        if clean == "open that source" || clean == "open the source" || clean == "open first result" {
             let result = self
                 .registry
-                .call_allowed(
-                    "browser.open_source",
-                    json!({"index":0}),
-                    &self.cfg(),
-                    &CancellationToken::new(),
-                )
+                .call_allowed("browser.open_source", json!({"index":0}), &self.cfg(), &CancellationToken::new())
                 .await?;
             self.emit_tool("browser.open_source", &json!({"index":0}), &result);
             self.speak_reply(
-                if result["isError"] == true {
-                    "I couldn't open that source."
-                } else {
-                    "Opening the source."
-                },
+                if result["isError"] == true { "I couldn't open that source." } else { "Opening the source." },
                 timing.clone(),
             )
             .await?;
             return Ok(true);
         }
-        if matches!(
-            clean.as_str(),
-            "where am i" | "what is my location" | "what's my location" | "where are we"
-        ) {
+        if matches!(clean.as_str(), "where am i" | "what is my location" | "what's my location" | "where are we") {
             self.emit_state(AssistantState::Thinking).await;
             let spoken=match self.locate_for_turn().await {Ok(v)=>format!("{} {}.",if v.source=="saved" {"Your saved location is"}else{"Your approximate location is"},v.label),Err(_)=>"I couldn't determine your location. Say remember my location followed by your city, or enable location if it is disabled.".into()};
             self.speak_reply(&spoken, timing.clone()).await?;
             return Ok(true);
         }
-        if matches!(
-            clean.as_str(),
-            "disable location" | "enable location" | "forget my location"
-        ) {
+        if matches!(clean.as_str(), "disable location" | "enable location" | "forget my location") {
             let action = match clean.as_str() {
                 "disable location" => "off",
                 "enable location" => "on",
@@ -580,15 +492,9 @@ impl App {
             .await?;
             return Ok(true);
         }
-        for prefix in [
-            "remember my location ",
-            "set my location to ",
-            "my location is ",
-        ] {
+        for prefix in ["remember my location ", "set my location to ", "my location is "] {
             if clean.starts_with(prefix) {
-                let city = text.trim()[prefix.len()..]
-                    .trim()
-                    .trim_end_matches(['.', '!', '?']);
+                let city = text.trim()[prefix.len()..].trim().trim_end_matches(['.', '!', '?']);
                 self.location_control("set", Some(city.into())).await?;
                 self.speak_reply("Location saved.", timing.clone()).await?;
                 return Ok(true);
@@ -608,8 +514,7 @@ impl App {
                 saved.save()?;
                 self.cfg.lock().unwrap().browser.weather_location = location.into();
             }
-            self.speak_reply("Weather location saved.", timing.clone())
-                .await?;
+            self.speak_reply("Weather location saved.", timing.clone()).await?;
             return Ok(true);
         }
         Ok(false)
@@ -621,13 +526,9 @@ impl App {
         } else {
             data.clone()
         };
-        let event =
-            json!({"type":"tool","tool":name,"arguments":args,"result":bounded,"status":"done"});
+        let event = json!({"type":"tool","tool":name,"arguments":args,"result":bounded,"status":"done"});
         self.record_activity(self.turn_id(), event.clone());
-        self.emit(Event::Turn {
-            turn_id: self.turn_id(),
-            event,
-        });
+        self.emit(Event::Turn { turn_id: self.turn_id(), event });
     }
     pub(super) async fn web_answer(&self, ask: &str) -> Result<Value> {
         let cfg = self.cfg();
@@ -635,20 +536,12 @@ impl App {
         if assistant_core::weather::is_weather(ask) {
             let city = assistant_core::weather::place(ask);
             if city.is_none()
-                && (!cfg.location.enabled
-                    || !self
-                        .registry
-                        .plugins
-                        .as_ref()
-                        .is_some_and(|p| p.available("location.current")))
+                && (!cfg.location.enabled || !self.registry.plugins.as_ref().is_some_and(|p| p.available("location.current")))
             {
                 return Ok(json!({"needs_location":true}));
             }
             let args = json!({"city":city.unwrap_or_default(),"celsius":ask.to_lowercase().contains("celsius")});
-            let result = self
-                .registry
-                .call_allowed("weather.lookup", args.clone(), &cfg, &cancel)
-                .await;
+            let result = self.registry.call_allowed("weather.lookup", args.clone(), &cfg, &cancel).await;
             return match result {
                 Ok(result) => {
                     self.emit_tool("weather.lookup", &args, &result);
@@ -662,12 +555,9 @@ impl App {
             };
         }
         let mut query = ask.to_string();
-        if assistant_core::location::needs_location(ask)
-            && !assistant_core::location::explicit_place(ask)
-        {
+        if assistant_core::location::needs_location(ask) && !assistant_core::location::explicit_place(ask) {
             let location = if cfg.location.enabled
-                && (ask.to_lowercase().contains("weather")
-                    || ask.to_lowercase().contains("forecast"))
+                && (ask.to_lowercase().contains("weather") || ask.to_lowercase().contains("forecast"))
                 && !cfg.browser.weather_location.is_empty()
             {
                 Some(cfg.browser.weather_location.clone())
@@ -680,22 +570,12 @@ impl App {
             }
         }
         let today = chrono_date();
-        if ["news", "latest", "weather", "forecast", "today", "current"]
-            .iter()
-            .any(|x| query.to_lowercase().contains(x))
-        {
+        if ["news", "latest", "weather", "forecast", "today", "current"].iter().any(|x| query.to_lowercase().contains(x)) {
             query = format!("{query} {today}");
         }
         let args = json!({"query":query});
-        let search_tool = if cfg.browser.search_tool.is_empty() {
-            "web.search"
-        } else {
-            &cfg.browser.search_tool
-        };
-        let result = self
-            .registry
-            .call_allowed(search_tool, args.clone(), &cfg, &cancel)
-            .await;
+        let search_tool = if cfg.browser.search_tool.is_empty() { "web.search" } else { &cfg.browser.search_tool };
+        let result = self.registry.call_allowed(search_tool, args.clone(), &cfg, &cancel).await;
         let result = match result {
             Ok(result) => result,
             Err(error) => json!({"isError":true,"error":error.to_string()}),
@@ -714,9 +594,7 @@ impl App {
             }
         }
         let data = &search;
-        if result["isError"] == true
-            || data["needs_takeover"] == true
-            || data["results"].as_array().is_none_or(|r| r.is_empty())
+        if result["isError"] == true || data["needs_takeover"] == true || data["results"].as_array().is_none_or(|r| r.is_empty())
         {
             if search_tool == "web.search" {
                 *self.pending_browser.lock().unwrap() = Some(ask.into());
@@ -727,20 +605,8 @@ impl App {
         }
         if let Some(results) = data["results"].as_array() {
             if cfg.browser.enabled {
-                let citations: Vec<_> = results
-                    .iter()
-                    .take(5)
-                    .map(|v| json!({"title":v["title"],"url":v["url"]}))
-                    .collect();
-                let _ = self
-                    .registry
-                    .call_allowed(
-                        "browser.remember_sources",
-                        json!({"sources":citations}),
-                        &cfg,
-                        &cancel,
-                    )
-                    .await;
+                let citations: Vec<_> = results.iter().take(5).map(|v| json!({"title":v["title"],"url":v["url"]})).collect();
+                let _ = self.registry.call_allowed("browser.remember_sources", json!({"sources":citations}), &cfg, &cancel).await;
             }
             for source in results.iter().take(3) {
                 if let Some(text) = source["text"].as_str().filter(|s| !s.is_empty()) {
@@ -748,10 +614,7 @@ impl App {
                     continue;
                 }
                 let args = json!({"url":source["url"]});
-                let r = self
-                    .registry
-                    .call_allowed("web.read", args.clone(), &cfg, &cancel)
-                    .await;
+                let r = self.registry.call_allowed("web.read", args.clone(), &cfg, &cancel).await;
                 let mut r = match r {
                     Ok(v) => v,
                     Err(e) => json!({"isError":true,"error":e.to_string()}),
@@ -783,10 +646,7 @@ impl App {
 async fn active_window() -> Result<Value> {
     let out = tokio::time::timeout(
         Duration::from_secs(3),
-        tokio::process::Command::new("hyprctl")
-            .args(["activewindow", "-j"])
-            .kill_on_drop(true)
-            .output(),
+        tokio::process::Command::new("hyprctl").args(["activewindow", "-j"]).kill_on_drop(true).output(),
     )
     .await??;
     anyhow::ensure!(out.status.success(), "cannot read selected application");
@@ -794,37 +654,17 @@ async fn active_window() -> Result<Value> {
 }
 fn terminal_target(target: &Value) -> bool {
     let class = target["class"].as_str().unwrap_or("").to_lowercase();
-    [
-        "foot",
-        "kitty",
-        "alacritty",
-        "ghostty",
-        "wezterm",
-        "xterm",
-        "terminal",
-    ]
-    .iter()
-    .any(|s| class.contains(s))
+    ["foot", "kitty", "alacritty", "ghostty", "wezterm", "xterm", "terminal"].iter().any(|s| class.contains(s))
 }
 async fn type_target(target: &Value, text: &str) -> Result<()> {
     let active = active_window().await?;
-    anyhow::ensure!(
-        active["address"] == target["address"] && !target["address"].is_null(),
-        "application focus changed"
-    );
+    anyhow::ensure!(active["address"] == target["address"] && !target["address"].is_null(), "application focus changed");
     let output = tokio::time::timeout(
         Duration::from_secs(5),
-        tokio::process::Command::new("wtype")
-            .args(["--", text])
-            .kill_on_drop(true)
-            .output(),
+        tokio::process::Command::new("wtype").args(["--", text]).kill_on_drop(true).output(),
     )
     .await??;
-    anyhow::ensure!(
-        output.status.success(),
-        "typing failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    anyhow::ensure!(output.status.success(), "typing failed: {}", String::from_utf8_lossy(&output.stderr));
     Ok(())
 }
 fn chrono_date() -> String {
@@ -840,15 +680,7 @@ pub(super) fn compact_result(value: &Value) -> Value {
         data["text"] = text.chars().take(1400).collect::<String>().into();
     }
     if let Some(text) = data["output"].as_str() {
-        data["output"] = text
-            .chars()
-            .rev()
-            .take(2000)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect::<String>()
-            .into();
+        data["output"] = text.chars().rev().take(2000).collect::<String>().chars().rev().collect::<String>().into();
     }
     if let Some(elements) = data["elements"].as_array_mut() {
         elements.truncate(30);
@@ -857,12 +689,7 @@ pub(super) fn compact_result(value: &Value) -> Value {
 }
 
 impl App {
-    pub(super) async fn dispatch_plugin(
-        &self,
-        name: &str,
-        args: Value,
-        cancel: &CancellationToken,
-    ) -> Result<Value> {
+    pub(super) async fn dispatch_plugin(&self, name: &str, args: Value, cancel: &CancellationToken) -> Result<Value> {
         self.dispatch_plugin_depth(name, args, cancel, 0, 4).await
     }
     pub(super) async fn dispatch_plugin_depth(
@@ -873,8 +700,7 @@ impl App {
         depth: usize,
         budget: usize,
     ) -> Result<Value> {
-        self.dispatch_in_task(name, args, cancel, depth, budget, None)
-            .await
+        self.dispatch_in_task(name, args, cancel, depth, budget, None).await
     }
     /// Dispatch one call. Inside a task, approvals show the task, a task-wide approval
     /// covers later calls to the same tool, and the task waits while a person decides.
@@ -892,11 +718,7 @@ impl App {
         let cfg = self.cfg();
         let args = self.registry.normalize_args(name, args);
         self.registry.validate(name, &args)?;
-        let generation = self
-            .registry
-            .plugins
-            .as_ref()
-            .and_then(|p| p.generation(name));
+        let generation = self.registry.plugins.as_ref().and_then(|p| p.generation(name));
         let verdict = self.registry.verdict(name, &cfg);
         if verdict.decision() == assistant_policy::Decision::Deny {
             return Err(self.registry.refuse(&verdict, &args));
@@ -905,15 +727,8 @@ impl App {
         let mut args = args;
         let mut review_args = args.clone();
         if name == "routines.run" {
-            let preview = self
-                .registry
-                .call_allowed(
-                    "routines.preview",
-                    json!({"name":args["name"]}),
-                    &self.cfg(),
-                    cancel,
-                )
-                .await?;
+            let preview =
+                self.registry.call_allowed("routines.preview", json!({"name":args["name"]}), &self.cfg(), cancel).await?;
             anyhow::ensure!(preview["isError"] != true, "routine preview failed");
             review_args["steps"] = preview["structuredContent"]["steps"].clone();
             args["expected_digest"] = preview["structuredContent"]["digest"].clone();
@@ -943,12 +758,10 @@ impl App {
             }
         };
         let authorization = match self.registry.authorize(name, &args, &cfg)? {
-            Authorization::Granted(_) if leak || injected => Authorization::NeedsApproval(
-                tighten(self.registry.verdict_for(name, Some(&args), &cfg)),
-            ),
-            Authorization::NeedsApproval(verdict) if leak || injected => {
-                Authorization::NeedsApproval(tighten(verdict))
+            Authorization::Granted(_) if leak || injected => {
+                Authorization::NeedsApproval(tighten(self.registry.verdict_for(name, Some(&args), &cfg)))
             }
+            Authorization::NeedsApproval(verdict) if leak || injected => Authorization::NeedsApproval(tighten(verdict)),
             other => other,
         };
         let grant = match authorization {
@@ -961,10 +774,8 @@ impl App {
                 record.approval_id = Some(id.clone());
                 // A confirmed send/buy/delete is approved on its own, whatever the task allowed.
                 let confirmed = args["confirmed"].as_bool().unwrap_or(false);
-                let covered = !confirmed
-                    && task.is_some_and(|t| {
-                        t.lock().unwrap().approved_for_task(&verdict, resource.as_deref())
-                    });
+                let covered =
+                    !confirmed && task.is_some_and(|t| t.lock().unwrap().approved_for_task(&verdict, resource.as_deref()));
                 if covered {
                     record.outcome = "approved".into();
                     record.detail = Some("covered by a task-wide approval".into());
@@ -974,9 +785,7 @@ impl App {
                     if let Some(t) = task {
                         self.task_move(t, TaskState::WaitingForApproval)?;
                     }
-                    let (approved, for_task) = self
-                        .request_approval(id.clone(), &verdict, &review_args, task_id, cancel)
-                        .await?;
+                    let (approved, for_task) = self.request_approval(id.clone(), &verdict, &review_args, task_id, cancel).await?;
                     record.outcome = if approved { "approved" } else { "denied" }.into();
                     if for_task {
                         record.detail = Some("for the rest of the task".into());
@@ -984,9 +793,7 @@ impl App {
                     self.registry.journal(record);
                     if let Some(t) = task {
                         if for_task {
-                            t.lock()
-                                .unwrap()
-                                .approve_for_task(&verdict, resource.as_deref());
+                            t.lock().unwrap().approve_for_task(&verdict, resource.as_deref());
                         }
                         if !cancel.is_cancelled() {
                             self.task_move(t, TaskState::Running)?;
@@ -1001,18 +808,10 @@ impl App {
         }
         .for_turn(self.turn_id().to_string());
         anyhow::ensure!(
-            generation
-                == self
-                    .registry
-                    .plugins
-                    .as_ref()
-                    .and_then(|p| p.generation(name)),
+            generation == self.registry.plugins.as_ref().and_then(|p| p.generation(name)),
             "plugin changed during approval; retry"
         );
-        anyhow::ensure!(
-            self.registry.policy(name, &self.cfg()) == policy,
-            "tool permissions changed during review; retry"
-        );
+        anyhow::ensure!(self.registry.policy(name, &self.cfg()) == policy, "tool permissions changed during review; retry");
         // Keyboard and pointer actions go to another app: the HUD gives up the keyboard for
         // them (it grabs it while the assistant works, for Escape and approvals).
         let drives_input = name.starts_with("input.") || name == "ui.act";
@@ -1032,25 +831,21 @@ impl App {
                 t.lock().unwrap().note_read(name);
             }
         }
-        let mut result = self
-            .host_extensions(name, result, cancel, depth, budget)
-            .await?;
-        let child_approval_ms =
-            result["structuredContent"]["completed"]
-                .as_array()
-                .map_or(0, |steps| {
-                    steps
-                        .iter()
-                        .filter_map(|s| s["result"]["assistant_approval_ms"].as_u64())
-                        .sum::<u64>()
-                });
+        let mut result = self.host_extensions(name, result, cancel, depth, budget).await?;
+        let child_approval_ms = result["structuredContent"]["completed"]
+            .as_array()
+            .map_or(0, |steps| steps.iter().filter_map(|s| s["result"]["assistant_approval_ms"].as_u64()).sum::<u64>());
         result["assistant_approval_ms"] = json!(approval_ms + child_approval_ms);
         // The action already happened: if the history file can't be written, the undo is
         // kept only until a restart, but the call stays a success (an error here would have
         // the planner do it again).
         if let Err(err) = self.remember_action(name, &args, &result, task.map(|t| t.lock().unwrap().id.clone())) {
             tracing::warn!(%err, tool = name, "action history not saved");
-            self.emit(Event::Error { message: format!("Couldn't save action history ({err:#}); undoing {name} works only until the assistant restarts.") });
+            self.emit(Event::Error {
+                message: format!(
+                    "Couldn't save action history ({err:#}); undoing {name} works only until the assistant restarts."
+                ),
+            });
         }
         self.emit_tool(name, &args, &result);
         Ok(result)
@@ -1061,9 +856,7 @@ impl App {
         };
         let died = plugins.refresh_health();
         if !died.is_empty() {
-            self.emit(Event::Plugins {
-                state: plugins.inspect(),
-            });
+            self.emit(Event::Plugins { state: plugins.inspect() });
             // Start crashed plugins again, with backoff. A plugin that needs another one
             // that also died gets a second try once that one is back.
             let cfg = self.cfg();
@@ -1086,14 +879,11 @@ impl App {
                     tracing::warn!(plugin = %id, "plugin crashed; restarted");
                 }
             }
-            self.emit(Event::Plugins {
-                state: plugins.inspect(),
-            });
+            self.emit(Event::Plugins { state: plugins.inspect() });
         }
         let events = plugins.events();
         for (id, event) in events {
-            if !event["id"].is_string() || !event["title"].is_string() || !event["text"].is_string()
-            {
+            if !event["id"].is_string() || !event["title"].is_string() || !event["text"].is_string() {
                 continue;
             }
             // Due delivery remains pending in the plugin until the host acknowledges it.
@@ -1102,10 +892,7 @@ impl App {
             }
             let dnd = tokio::time::timeout(
                 Duration::from_secs(1),
-                tokio::process::Command::new("omarchy-shell")
-                    .args(["notifications", "isDnd"])
-                    .kill_on_drop(true)
-                    .output(),
+                tokio::process::Command::new("omarchy-shell").args(["notifications", "isDnd"]).kill_on_drop(true).output(),
             )
             .await;
             if matches!(dnd,Ok(Ok(ref output)) if output.status.success() && String::from_utf8_lossy(&output.stdout).trim()=="on")
@@ -1115,34 +902,22 @@ impl App {
             let result = tokio::time::timeout(
                 Duration::from_secs(3),
                 tokio::process::Command::new("notify-send")
-                    .args([
-                        "--app-name=Assistant",
-                        "--",
-                        event["title"].as_str().unwrap(),
-                        event["text"].as_str().unwrap(),
-                    ])
+                    .args(["--app-name=Assistant", "--", event["title"].as_str().unwrap(), event["text"].as_str().unwrap()])
                     .kill_on_drop(true)
                     .output(),
             )
             .await;
             if !matches!(result,Ok(Ok(ref o)) if o.status.success()) {
-                self.emit(Event::Error {
-                    message: format!("{id}: notification service unavailable; delivery retained"),
-                });
+                self.emit(Event::Error { message: format!("{id}: notification service unavailable; delivery retained") });
                 continue;
             }
             if let Err(e) = plugins.ack_event(&id, event["id"].as_str().unwrap()).await {
-                self.emit(Event::Error {
-                    message: format!("{id}: event acknowledgement failed: {e}"),
-                });
+                self.emit(Event::Error { message: format!("{id}: event acknowledgement failed: {e}") });
                 continue;
             }
             let quiet = self.pending.is_empty()
                 && self.session.lock().unwrap().mode == Mode::Wake
-                && self
-                    .state
-                    .try_lock()
-                    .is_ok_and(|s| s.current() == AssistantState::Idle);
+                && self.state.try_lock().is_ok_and(|s| s.current() == AssistantState::Idle);
             if quiet && !self.turn_busy.swap(true, Ordering::SeqCst) {
                 if let Some(speech) = event["speech"].as_str() {
                     let _ = self.speak_reply(speech, TurnTiming::new()).await;
@@ -1175,13 +950,22 @@ pub(super) fn approval_phrase(text: &str, by_voice: bool, task_scope: bool) -> O
 /// counts as playing (and the key press stays available).
 async fn media_playing() -> bool {
     async fn busctl(args: &[&str]) -> Option<Value> {
-        let out = tokio::process::Command::new("busctl").args(["--user", "--json=short"]).args(args).kill_on_drop(true).output().await.ok()?;
+        let out = tokio::process::Command::new("busctl")
+            .args(["--user", "--json=short"])
+            .args(args)
+            .kill_on_drop(true)
+            .output()
+            .await
+            .ok()?;
         out.status.success().then(|| serde_json::from_slice(&out.stdout).ok()).flatten()
     }
     let check = async {
-        let names = busctl(&["call", "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListNames"]).await?;
+        let names =
+            busctl(&["call", "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListNames"]).await?;
         for name in mpris_players(&names) {
-            let status = busctl(&["get-property", &name, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "PlaybackStatus"]).await;
+            let status =
+                busctl(&["get-property", &name, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "PlaybackStatus"])
+                    .await;
             if status.is_some_and(|s| s["data"] == "Playing") {
                 return Some(true);
             }
@@ -1201,7 +985,14 @@ async fn media_playing() -> bool {
 fn mpris_players(reply: &Value) -> Vec<String> {
     reply["data"][0]
         .as_array()
-        .map(|names| names.iter().filter_map(Value::as_str).filter(|n| n.starts_with("org.mpris.MediaPlayer2.")).map(String::from).collect())
+        .map(|names| {
+            names
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|n| n.starts_with("org.mpris.MediaPlayer2."))
+                .map(String::from)
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -1227,7 +1018,9 @@ mod tests {
         assert_eq!(approval_phrase(" yes ", true, false), Some((true, false)));
         assert_eq!(approval_phrase("Approve for this task!", true, true), Some((true, true)));
         assert_eq!(approval_phrase("approve for this task", true, false), None, "task scope not offered");
-        for said in ["I don't approve", "approve it later", "yes, but not now", "approved", "do not approve", "approve approve", ""] {
+        for said in
+            ["I don't approve", "approve it later", "yes, but not now", "approved", "do not approve", "approve approve", ""]
+        {
             assert_eq!(approval_phrase(said, true, true), None, "{said}");
         }
     }

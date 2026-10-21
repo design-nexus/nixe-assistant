@@ -42,7 +42,8 @@ pub const PLAN_SYSTEM: &str = "Write the checklist a person would follow to do t
 /// Whether a request reads as several steps: worth a plan before the first call.
 pub fn wants_plan(ask: &str) -> bool {
     let lower = format!(" {} ", ask.to_lowercase());
-    let joins = [" then ", " and then ", " after that ", " afterwards ", " finally ", "; "].iter().filter(|j| lower.contains(*j)).count();
+    let joins =
+        [" then ", " and then ", " after that ", " afterwards ", " finally ", "; "].iter().filter(|j| lower.contains(*j)).count();
     let ands = lower.matches(" and ").count();
     joins > 0 || ands >= 2 || (ands >= 1 && lower.matches(',').count() >= 1)
 }
@@ -85,7 +86,12 @@ mod tests {
         ] {
             assert!(wants_plan(ask), "{ask}");
         }
-        for ask in ["In Music, play the album Blue", "What's the weather and the time", "Open a new tab in Notepad", "Search Google for rock and roll"] {
+        for ask in [
+            "In Music, play the album Blue",
+            "What's the weather and the time",
+            "Open a new tab in Notepad",
+            "Search Google for rock and roll",
+        ] {
             assert!(!wants_plan(ask), "{ask}");
         }
     }

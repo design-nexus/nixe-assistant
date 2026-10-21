@@ -8,9 +8,7 @@ mod planner;
 mod session;
 
 use anyhow::Context;
-use assistant_ipc::{
-    request, send_and_listen, send_command, send_until_done, stream_events, Command, Control,
-};
+use assistant_ipc::{request, send_and_listen, send_command, send_until_done, stream_events, Command, Control};
 use std::io::{self, IsTerminal, Write};
 
 #[tokio::main]
@@ -24,45 +22,27 @@ async fn main() -> anyhow::Result<()> {
             let rest: Vec<_> = args.collect();
             if action == "migrate" {
                 let cfg = assistant_core::Config::load()?;
-                let worker =
-                    std::env::current_exe()?.with_file_name("nixe-assistant-plugin-worker");
-                let checkout = rest
-                    .first()
-                    .map(std::path::PathBuf::from)
-                    .unwrap_or(std::env::current_dir()?);
+                let worker = std::env::current_exe()?.with_file_name("nixe-assistant-plugin-worker");
+                let checkout = rest.first().map(std::path::PathBuf::from).unwrap_or(std::env::current_dir()?);
                 plugins::migrate(&cfg, &worker, &checkout).await?;
                 println!("Plugin migration complete; existing configuration retained.");
                 return Ok(());
             }
             if action == "install" || action == "update" {
-                let source = rest
-                    .first()
-                    .ok_or_else(|| anyhow::anyhow!("package source required"))?;
-                let revision = rest
-                    .iter()
-                    .position(|a| a == "--revision")
-                    .and_then(|i| rest.get(i + 1))
-                    .cloned();
+                let source = rest.first().ok_or_else(|| anyhow::anyhow!("package source required"))?;
+                let revision = rest.iter().position(|a| a == "--revision").and_then(|i| rest.get(i + 1)).cloned();
                 let source_for_stage = source.clone();
-                let staged = tokio::task::spawn_blocking(move || {
-                    plugins::stage(&source_for_stage, revision.as_deref())
-                })
-                .await??;
+                let staged =
+                    tokio::task::spawn_blocking(move || plugins::stage(&source_for_stage, revision.as_deref())).await??;
                 let manifest = plugins::Manifest::read(&staged.path().join("package"))?;
                 println!("Source: {source}\nStartup: {} {:?}\nTools: {:?}\nDependencies: {:?}\nRuns with your account permissions. MCP approval is not an OS sandbox.\nNew third-party packages start disabled.",manifest.executable,manifest.args,manifest.tools,manifest.dependencies);
                 if !rest.iter().any(|a| a == "--yes") {
-                    anyhow::ensure!(
-                        io::stdin().is_terminal(),
-                        "review the package above and repeat with --yes"
-                    );
+                    anyhow::ensure!(io::stdin().is_terminal(), "review the package above and repeat with --yes");
                     eprint!("Install this reviewed package? [y/N] ");
                     io::stderr().flush()?;
                     let mut answer = String::new();
                     io::stdin().read_line(&mut answer)?;
-                    anyhow::ensure!(
-                        answer.trim().eq_ignore_ascii_case("y"),
-                        "installation cancelled"
-                    );
+                    anyhow::ensure!(answer.trim().eq_ignore_ascii_case("y"), "installation cancelled");
                 }
                 // Retain the installed package for rollback if live activation fails.
                 let target = plugins::package_dir().join(&manifest.id);
@@ -81,14 +61,8 @@ async fn main() -> anyhow::Result<()> {
                 let old_state = plugins::saved()?;
                 plugins::install(&staged.path().join("package"), source, action == "update")?;
                 if action == "update" && old_state.get(&manifest.id).is_some_and(|s| s.enabled) {
-                    if let Err(e) = request(
-                        Control::Plugins {
-                            action: "reload".into(),
-                            id: Some(manifest.id.clone()),
-                        },
-                        30_000,
-                    )
-                    .await
+                    if let Err(e) =
+                        request(Control::Plugins { action: "reload".into(), id: Some(manifest.id.clone()) }, 30_000).await
                     {
                         std::fs::remove_dir_all(&target)?;
                         std::fs::rename(backup.path().join("previous"), &target)?;
@@ -100,15 +74,7 @@ async fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
             if action == "list" || action == "inspect" {
-                let value = match request(
-                    Control::Plugins {
-                        action: action.clone(),
-                        id: None,
-                    },
-                    2000,
-                )
-                .await
-                {
+                let value = match request(Control::Plugins { action: action.clone(), id: None }, 2000).await {
                     Ok(v) => v,
                     Err(_) => plugins::PluginManager::new().inspect(),
                 };
@@ -125,50 +91,26 @@ async fn main() -> anyhow::Result<()> {
                 println!("{}", serde_json::to_string_pretty(&value)?);
                 return Ok(());
             }
-            anyhow::ensure!(
-                ["enable", "disable", "reload", "remove"].contains(&action.as_str()),
-                "unknown plugins command"
-            );
+            anyhow::ensure!(["enable", "disable", "reload", "remove"].contains(&action.as_str()), "unknown plugins command");
             let id = rest.first().context("plugin ID required")?.clone();
-            println!(
-                "{}",
-                request(
-                    Control::Plugins {
-                        action,
-                        id: Some(id)
-                    },
-                    30_000
-                )
-                .await?
-            );
+            println!("{}", request(Control::Plugins { action, id: Some(id) }, 30_000).await?);
         }
         "tool" => {
             let name = args.next().context("tool name required")?;
             let arguments = serde_json::from_str(&args.collect::<Vec<_>>().join(" "))?;
-            println!(
-                "{}",
-                request(Control::ToolCall { name, arguments }, 90_000).await?
-            );
+            println!("{}", request(Control::ToolCall { name, arguments }, 90_000).await?);
         }
         "search-provider" => {
             let provider = args.next().unwrap_or_else(|| "show".into());
             let mut cfg = assistant_core::Config::load()?;
             match provider.as_str() {
                 "show" => {
-                    println!(
-                        "{}",
-                        if cfg.browser.search_tool.is_empty() {
-                            "built-in"
-                        } else {
-                            &cfg.browser.search_tool
-                        }
-                    );
+                    println!("{}", if cfg.browser.search_tool.is_empty() { "built-in" } else { &cfg.browser.search_tool });
                     return Ok(());
                 }
                 "builtin" => cfg.browser.search_tool.clear(),
                 "duckduckgo" => {
-                    let path =
-                        assistant_core::paths::data_dir().join("search/duckduckgo/dist/index.js");
+                    let path = assistant_core::paths::data_dir().join("search/duckduckgo/dist/index.js");
                     anyhow::ensure!(path.is_file(), "run scripts/install-search.sh first");
                     let server = assistant_core::config::McpServerCfg {
                         command: cfg.browser.node.clone(),
@@ -177,15 +119,15 @@ async fn main() -> anyhow::Result<()> {
                         sandbox: None,
                     };
                     if let Some(existing) = cfg.mcp.servers.get("duckduckgo") {
-                        anyhow::ensure!(existing.command==server.command && existing.args==server.args, "an existing duckduckgo server has a different command; configure browser.search_tool manually");
+                        anyhow::ensure!(
+                            existing.command == server.command && existing.args == server.args,
+                            "an existing duckduckgo server has a different command; configure browser.search_tool manually"
+                        );
                     } else {
                         cfg.mcp.servers.insert("duckduckgo".into(), server);
                     }
                     cfg.mcp.enabled = true;
-                    cfg.mcp
-                        .permissions
-                        .entry("duckduckgo.search".into())
-                        .or_insert_with(|| "allow".into());
+                    cfg.mcp.permissions.entry("duckduckgo.search".into()).or_insert_with(|| "allow".into());
                     cfg.browser.search_tool = "duckduckgo.search".into();
                 }
                 _ => anyhow::bail!("usage: search-provider show|builtin|duckduckgo"),
@@ -195,17 +137,8 @@ async fn main() -> anyhow::Result<()> {
         }
         "location" => {
             let action = args.next().unwrap_or_else(|| "show".into());
-            let city = if action == "set" {
-                Some(args.collect::<Vec<_>>().join(" "))
-            } else {
-                None
-            };
-            println!(
-                "{}",
-                serde_json::to_string_pretty(
-                    &request(Control::Location { action, city }, 10_000).await?
-                )?
-            );
+            let city = if action == "set" { Some(args.collect::<Vec<_>>().join(" ")) } else { None };
+            println!("{}", serde_json::to_string_pretty(&request(Control::Location { action, city }, 10_000).await?)?);
         }
         "conversation" => {
             let enabled = match args.next().as_deref() {
@@ -213,10 +146,7 @@ async fn main() -> anyhow::Result<()> {
                 Some("stop" | "off") => false,
                 _ => anyhow::bail!("usage: conversation start|stop"),
             };
-            println!(
-                "{}",
-                request(Control::Conversation { enabled }, 5000).await?
-            );
+            println!("{}", request(Control::Conversation { enabled }, 5000).await?);
         }
         "dictation" => {
             let action = args.next().unwrap_or_else(|| "start".into());
@@ -226,20 +156,12 @@ async fn main() -> anyhow::Result<()> {
         "browser-resume" => println!("{}", request(Control::BrowserResume, 20_000).await?),
         "jobs" => {
             let action = args.next().unwrap_or_else(|| "status".into());
-            let job_id = args
-                .next()
-                .ok_or_else(|| anyhow::anyhow!("usage: jobs status|follow|cancel ID"))?;
+            let job_id = args.next().ok_or_else(|| anyhow::anyhow!("usage: jobs status|follow|cancel ID"))?;
             if action == "cancel" {
                 println!("{}", request(Control::JobCancel { job_id }, 2000).await?);
             } else {
                 loop {
-                    let job = request(
-                        Control::JobStatus {
-                            job_id: job_id.clone(),
-                        },
-                        2000,
-                    )
-                    .await?;
+                    let job = request(Control::JobStatus { job_id: job_id.clone() }, 2000).await?;
                     if action == "follow" {
                         print!("\x1b[2J\x1b[H");
                         println!(
@@ -301,21 +223,10 @@ async fn main() -> anyhow::Result<()> {
                     value
                 }
             };
-            println!(
-                "{}",
-                if json_mode {
-                    data.to_string()
-                } else {
-                    serde_json::to_string_pretty(&data)?
-                }
-            );
+            println!("{}", if json_mode { data.to_string() } else { serde_json::to_string_pretty(&data)? });
         }
         "activity" => {
-            let action = if args.next().as_deref() == Some("clear") {
-                Control::ClearActivity
-            } else {
-                Control::Activity
-            };
+            let action = if args.next().as_deref() == Some("clear") { Control::ClearActivity } else { Control::Activity };
             println!("{}", request(action, 2000).await?);
         }
         "audit" => {
@@ -327,8 +238,7 @@ async fn main() -> anyhow::Result<()> {
                 .map(|n| n.parse::<usize>())
                 .transpose()?
                 .unwrap_or(50);
-            let path =
-                assistant_policy::store::default_path(&assistant_core::paths::state_dir());
+            let path = assistant_policy::store::default_path(&assistant_core::paths::state_dir());
             let rows = assistant_policy::store::recent(&path, limit)?;
             if rest.iter().any(|a| a == "--json") {
                 println!("{}", serde_json::to_string(&rows)?);
@@ -422,10 +332,7 @@ async fn main() -> anyhow::Result<()> {
         // Bare `models` opens the TUI's model page (below).
         "models" if std::env::args().nth(2).as_deref() == Some("fetch") => {
             let rest: Vec<_> = args.collect();
-            anyhow::ensure!(
-                rest.iter().map(String::as_str).eq(["fetch", "asr"]),
-                "usage: nixe-assistant models fetch asr"
-            );
+            anyhow::ensure!(rest.iter().map(String::as_str).eq(["fetch", "asr"]), "usage: nixe-assistant models fetch asr");
             fetch_asr_model()?;
         }
         "admin-log" => {
@@ -466,8 +373,7 @@ async fn main() -> anyhow::Result<()> {
         }
         "tasks" => {
             let rest: Vec<_> = args.collect();
-            let path =
-                assistant_policy::store::default_path(&assistant_core::paths::state_dir());
+            let path = assistant_policy::store::default_path(&assistant_core::paths::state_dir());
             let json_mode = rest.iter().any(|a| a == "--json");
             let when = |ms: u64| {
                 chrono::DateTime::from_timestamp_millis(ms as i64)
@@ -489,8 +395,7 @@ async fn main() -> anyhow::Result<()> {
                 }
                 Some("show") => {
                     let id = rest.get(1).context("task ID required")?;
-                    let (task, steps) = assistant_policy::store::task(&path, id)?
-                        .with_context(|| format!("no task {id}"))?;
+                    let (task, steps) = assistant_policy::store::task(&path, id)?.with_context(|| format!("no task {id}"))?;
                     if json_mode {
                         println!("{}", serde_json::json!({"task":task,"steps":steps}));
                     } else {
@@ -511,10 +416,7 @@ async fn main() -> anyhow::Result<()> {
                             }
                         }
                         for s in steps {
-                            println!(
-                                "  {}  {:<28} {:<11} {}",
-                                s.index, s.tool, s.verification, s.summary
-                            );
+                            println!("  {}  {:<28} {:<11} {}", s.index, s.tool, s.verification, s.summary);
                         }
                     }
                 }
@@ -534,14 +436,7 @@ async fn main() -> anyhow::Result<()> {
                     }
                     for t in rows.iter().filter(|_| !json_mode) {
                         let request: String = t.request.chars().take(60).collect();
-                        println!(
-                            "{}  {}  {:<20} {}/{}  {request}",
-                            when(t.created_ms),
-                            t.id,
-                            t.state,
-                            t.calls,
-                            t.max_calls
-                        );
+                        println!("{}  {}  {:<20} {}/{}  {request}", when(t.created_ms), t.id, t.state, t.calls, t.max_calls);
                     }
                 }
             }
@@ -549,18 +444,13 @@ async fn main() -> anyhow::Result<()> {
         "preview" => {
             let cfg = assistant_core::Config::load()?;
             let voice = args.next().unwrap_or(cfg.tts.voice);
-            let speed = args
-                .next()
-                .map(|s| s.parse::<f32>())
-                .transpose()?
-                .unwrap_or(cfg.tts.speed);
-            println!(
-                "{}",
-                request(Control::Preview { voice, speed }, 30_000).await?
-            );
+            let speed = args.next().map(|s| s.parse::<f32>()).transpose()?.unwrap_or(cfg.tts.speed);
+            println!("{}", request(Control::Preview { voice, speed }, 30_000).await?);
         }
         "calibrate" => {
-            eprintln!("Five seconds of quiet, then five seconds of normal speech. HUD shows each phase. Suggestions are not saved.");
+            eprintln!(
+                "Five seconds of quiet, then five seconds of normal speech. HUD shows each phase. Suggestions are not saved."
+            );
             println!("{}", request(Control::Calibrate, 30_000).await?);
         }
         "tool-mode" => {
@@ -572,33 +462,16 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", request(Control::ToolMode { enabled }, 2000).await?);
         }
         "approve" | "deny" => {
-            let approval_id = args
-                .next()
-                .ok_or_else(|| anyhow::anyhow!("approval ID required"))?;
-            let scope = if args.any(|a| a == "--task") {
-                assistant_ipc::ApprovalScope::Task
-            } else {
-                assistant_ipc::ApprovalScope::Once
-            };
-            println!(
-                "{}",
-                request(
-                    Control::Approve {
-                        approval_id,
-                        allow: cmd == "approve",
-                        scope,
-                    },
-                    2000
-                )
-                .await?
-            );
+            let approval_id = args.next().ok_or_else(|| anyhow::anyhow!("approval ID required"))?;
+            let scope =
+                if args.any(|a| a == "--task") { assistant_ipc::ApprovalScope::Task } else { assistant_ipc::ApprovalScope::Once };
+            println!("{}", request(Control::Approve { approval_id, allow: cmd == "approve", scope }, 2000).await?);
         }
         "migrate" => {
             let mut cfg = assistant_core::Config::load()?;
             if cfg.assistant.persona_id.is_empty() {
-                if let Some(p) = assistant_core::Persona::load_all()?
-                    .iter()
-                    .find(|p| p.name.eq_ignore_ascii_case(&cfg.assistant.name))
+                if let Some(p) =
+                    assistant_core::Persona::load_all()?.iter().find(|p| p.name.eq_ignore_ascii_case(&cfg.assistant.name))
                 {
                     cfg.assistant.persona_id = p.id.clone();
                 }
@@ -645,11 +518,7 @@ async fn main() -> anyhow::Result<()> {
             let tui_bin = dirs::home_dir()
                 .map(|h| h.join(".local/bin/nixe-assistant-tui"))
                 .unwrap_or_else(|| std::path::PathBuf::from("nixe-assistant-tui"));
-            let bin_path = if tui_bin.exists() {
-                tui_bin
-            } else {
-                std::path::PathBuf::from("nixe-assistant-tui")
-            };
+            let bin_path = if tui_bin.exists() { tui_bin } else { std::path::PathBuf::from("nixe-assistant-tui") };
             let status = std::process::Command::new(bin_path).status()?;
             if !status.success() {
                 std::process::exit(status.code().unwrap_or(1));
@@ -657,12 +526,7 @@ async fn main() -> anyhow::Result<()> {
         }
         "start" | "enable" => {
             let status = std::process::Command::new("systemctl")
-                .args([
-                    "--user",
-                    "start",
-                    "nixe-assistant-stt.service",
-                    "nixe-assistantd.service",
-                ])
+                .args(["--user", "start", "nixe-assistant-stt.service", "nixe-assistantd.service"])
                 .status()?;
             if status.success() {
                 println!("Started assistant daemon & loaded models.");
@@ -673,12 +537,7 @@ async fn main() -> anyhow::Result<()> {
         }
         "stop" | "disable" => {
             let status = std::process::Command::new("systemctl")
-                .args([
-                    "--user",
-                    "stop",
-                    "nixe-assistantd.service",
-                    "nixe-assistant-stt.service",
-                ])
+                .args(["--user", "stop", "nixe-assistantd.service", "nixe-assistant-stt.service"])
                 .status()?;
             if status.success() {
                 println!("Stopped assistant daemon & unloaded models from VRAM/RAM.");
@@ -689,34 +548,19 @@ async fn main() -> anyhow::Result<()> {
         }
         "toggle-service" | "toggle-daemon" => {
             let is_active = std::process::Command::new("systemctl")
-                .args([
-                    "--user",
-                    "is-active",
-                    "--quiet",
-                    "nixe-assistantd.service",
-                ])
+                .args(["--user", "is-active", "--quiet", "nixe-assistantd.service"])
                 .status()
                 .map(|s| s.success())
                 .unwrap_or(false);
             if is_active {
                 let status = std::process::Command::new("systemctl")
-                    .args([
-                        "--user",
-                        "stop",
-                        "nixe-assistantd.service",
-                        "nixe-assistant-stt.service",
-                    ])
+                    .args(["--user", "stop", "nixe-assistantd.service", "nixe-assistant-stt.service"])
                     .status()?;
                 anyhow::ensure!(status.success(), "Failed to stop services");
                 println!("Assistant disabled (models unloaded).");
             } else {
                 let status = std::process::Command::new("systemctl")
-                    .args([
-                        "--user",
-                        "start",
-                        "nixe-assistant-stt.service",
-                        "nixe-assistantd.service",
-                    ])
+                    .args(["--user", "start", "nixe-assistant-stt.service", "nixe-assistantd.service"])
                     .status()?;
                 anyhow::ensure!(status.success(), "Failed to start services");
                 println!("Assistant enabled (models loaded).");
@@ -732,20 +576,15 @@ async fn main() -> anyhow::Result<()> {
                         std::process::exit(1);
                     }
                     let personas = assistant_core::Persona::load_all()?;
-                    if let Some(p) = personas.iter().find(|p| {
-                        p.name.eq_ignore_ascii_case(&target) || p.id.eq_ignore_ascii_case(&target)
-                    }) {
+                    if let Some(p) =
+                        personas.iter().find(|p| p.name.eq_ignore_ascii_case(&target) || p.id.eq_ignore_ascii_case(&target))
+                    {
                         let mut cfg = assistant_core::Config::load()?;
                         cfg.activate_persona(p);
                         cfg.save()?;
                         assistant_core::sync_plugin_manifest(p)?;
                         println!("{}", request(Control::Reload, 30_000).await?);
-                        println!(
-                            "Activated persona: {} (voice: {}, {} aliases)",
-                            p.name,
-                            p.voice,
-                            p.aliases.len()
-                        );
+                        println!("Activated persona: {} (voice: {}, {} aliases)", p.name, p.voice, p.aliases.len());
                     } else {
                         eprintln!("Persona '{}' not found. Available personas:", target);
                         for p in personas {
@@ -761,32 +600,21 @@ async fn main() -> anyhow::Result<()> {
                         std::process::exit(1);
                     }
                     let p = assistant_core::Persona::new_with_generated(&name);
-                    if assistant_core::paths::personas_dir()
-                        .join(format!("{}.toml", p.id))
-                        .exists()
-                    {
+                    if assistant_core::paths::personas_dir().join(format!("{}.toml", p.id)).exists() {
                         anyhow::bail!("persona ID already exists");
                     }
                     p.save()?;
-                    println!(
-                        "Created persona '{}' (id: {}) with {} generated aliases.",
-                        p.name,
-                        p.id,
-                        p.aliases.len()
-                    );
+                    println!("Created persona '{}' (id: {}) with {} generated aliases.", p.name, p.id, p.aliases.len());
                 }
                 Some("aliases") => {
                     let target = args.next();
                     let personas = assistant_core::Persona::load_all()?;
                     let p = if let Some(t) = target {
-                        personas.iter().find(|p| {
-                            p.name.eq_ignore_ascii_case(&t) || p.id.eq_ignore_ascii_case(&t)
-                        })
+                        personas.iter().find(|p| p.name.eq_ignore_ascii_case(&t) || p.id.eq_ignore_ascii_case(&t))
                     } else {
                         let cfg = assistant_core::Config::load()?;
                         personas.iter().find(|p| {
-                            p.name.eq_ignore_ascii_case(&cfg.assistant.name)
-                                || p.id.eq_ignore_ascii_case(&cfg.assistant.name)
+                            p.name.eq_ignore_ascii_case(&cfg.assistant.name) || p.id.eq_ignore_ascii_case(&cfg.assistant.name)
                         })
                     };
                     if let Some(p) = p {
@@ -808,8 +636,7 @@ async fn main() -> anyhow::Result<()> {
                     let mut personas = assistant_core::Persona::load_all()?;
                     let mut cfg = assistant_core::Config::load()?;
                     let pos = personas.iter().position(|p| {
-                        p.name.eq_ignore_ascii_case(&cfg.assistant.name)
-                            || p.id.eq_ignore_ascii_case(&cfg.assistant.name)
+                        p.name.eq_ignore_ascii_case(&cfg.assistant.name) || p.id.eq_ignore_ascii_case(&cfg.assistant.name)
                     });
                     if let Some(idx) = pos {
                         let p = &mut personas[idx];
@@ -831,17 +658,10 @@ async fn main() -> anyhow::Result<()> {
                     let cfg = assistant_core::Config::load()?;
                     println!("Saved Assistant Personas:");
                     for p in personas {
-                        let is_active = p.name.eq_ignore_ascii_case(&cfg.assistant.name)
-                            || p.id.eq_ignore_ascii_case(&cfg.assistant.name);
+                        let is_active =
+                            p.name.eq_ignore_ascii_case(&cfg.assistant.name) || p.id.eq_ignore_ascii_case(&cfg.assistant.name);
                         let badge = if is_active { "[ACTIVE] " } else { "         " };
-                        println!(
-                            "  {}{} (id: {:<7} voice: {:<11} aliases: {})",
-                            badge,
-                            p.name,
-                            p.id,
-                            p.voice,
-                            p.aliases.len()
-                        );
+                        println!("  {}{} (id: {:<7} voice: {:<11} aliases: {})", badge, p.name, p.id, p.voice, p.aliases.len());
                     }
                     println!("\nCommands: nixe-assistant persona set <name>");
                     println!("          nixe-assistant persona new <name>");
@@ -877,20 +697,16 @@ fn print_events(events: Vec<assistant_core::Event>) {
 async fn cancel_esc() -> anyhow::Result<()> {
     let events = send_and_listen(Some(Command::Status), 80).await?;
     let busy = events.iter().any(|ev| match ev {
-        assistant_core::Event::Health { state, .. }
-        | assistant_core::Event::State { state, .. } => !matches!(
-            state,
-            assistant_core::AssistantState::Idle | assistant_core::AssistantState::Interrupted
-        ),
+        assistant_core::Event::Health { state, .. } | assistant_core::Event::State { state, .. } => {
+            !matches!(state, assistant_core::AssistantState::Idle | assistant_core::AssistantState::Interrupted)
+        }
         _ => false,
     });
     if busy {
         send_command(&Command::Cancel).await?;
         return Ok(());
     }
-    let status = std::process::Command::new("hyprctl")
-        .args(["dispatch", "sendshortcut", ",Escape,"])
-        .status()?;
+    let status = std::process::Command::new("hyprctl").args(["dispatch", "sendshortcut", ",Escape,"]).status()?;
     anyhow::ensure!(status.success(), "Failed to dispatch Escape");
     Ok(())
 }
@@ -903,7 +719,10 @@ async fn config_command(rest: &[String]) -> anyhow::Result<()> {
     let path = assistant_core::paths::config_path();
     let cfg = assistant_core::Config::load()?;
     match words.as_slice() {
-        ["get"] => println!("{}", if json { serde_json::to_string(&cfg.to_json())? } else { serde_json::to_string_pretty(&cfg.to_json())? }),
+        ["get"] => println!(
+            "{}",
+            if json { serde_json::to_string(&cfg.to_json())? } else { serde_json::to_string_pretty(&cfg.to_json())? }
+        ),
         ["get", key] => {
             let v = cfg.get_key(key).with_context(|| format!("no setting “{key}”"))?;
             println!("{}", if json || !v.is_string() { v.to_string() } else { v.as_str().unwrap_or("").to_string() });
@@ -915,7 +734,8 @@ async fn config_command(rest: &[String]) -> anyhow::Result<()> {
             println!("{key} = {}", next.get_key(key).unwrap_or_default());
         }
         ["unset", key] => {
-            let tool = key.strip_prefix("mcp.permissions.").context("only per-tool rules (mcp.permissions.TOOL) can be removed")?;
+            let tool =
+                key.strip_prefix("mcp.permissions.").context("only per-tool rules (mcp.permissions.TOOL) can be removed")?;
             let text = std::fs::read_to_string(&path)?;
             let mut doc: toml_edit::DocumentMut = text.parse()?;
             let removed = doc
@@ -953,7 +773,10 @@ async fn preset_command(rest: &[String]) -> anyhow::Result<()> {
     let vram = vram_gb();
     let gpu = vram.is_some();
     let power_path = assistant_core::paths::config_dir().join("power.json");
-    let mut power: serde_json::Value = std::fs::read(&power_path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_else(|| serde_json::json!({"profile": "normal", "idle_seconds": 300, "battery_idle_seconds": 0}));
+    let mut power: serde_json::Value = std::fs::read(&power_path)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_else(|| serde_json::json!({"profile": "normal", "idle_seconds": 300, "battery_idle_seconds": 0}));
     let idle = (power["idle_seconds"].as_u64().unwrap_or(300), power["battery_idle_seconds"].as_u64().unwrap_or(0));
     let cfg = assistant_core::Config::load()?;
     let installed = assistant_core::Config::scan_local_models();
@@ -970,13 +793,28 @@ async fn preset_command(rest: &[String]) -> anyhow::Result<()> {
                         serde_json::json!({"name": p.name(), "description": p.describe(), "model": v.model_name, "model_installed": find(v.model_file).is_some(), "ctx": v.ctx, "speech_device": v.tts_device, "idle_seconds": v.idle_seconds, "battery_idle_seconds": v.battery_idle_seconds, "max_calls": v.agent_max_calls})
                     })
                     .collect();
-                println!("{}", serde_json::json!({"current": current.map(Preset::name).unwrap_or("custom"), "recommended": recommended.name(), "why": why, "vram_gb": vram, "presets": all}));
+                println!(
+                    "{}",
+                    serde_json::json!({"current": current.map(Preset::name).unwrap_or("custom"), "recommended": recommended.name(), "why": why, "vram_gb": vram, "presets": all})
+                );
             } else {
                 println!("Current: {}", current.map(Preset::name).unwrap_or("custom"));
                 println!("Recommended for this computer: {} ({why})\n", recommended.name());
                 for p in Preset::ALL {
                     let v = p.values(gpu);
-                    println!("{:<9} {} {}k context, speech on the {}, {}.\n          {}", p.name(), v.model_name, v.ctx / 1024, if v.tts_device == "cuda" { "graphics card" } else { "processor" }, if v.idle_seconds == 0 { "stays loaded".to_string() } else { format!("unloads after {} s idle", v.idle_seconds) }, p.describe());
+                    println!(
+                        "{:<9} {} {}k context, speech on the {}, {}.\n          {}",
+                        p.name(),
+                        v.model_name,
+                        v.ctx / 1024,
+                        if v.tts_device == "cuda" { "graphics card" } else { "processor" },
+                        if v.idle_seconds == 0 {
+                            "stays loaded".to_string()
+                        } else {
+                            format!("unloads after {} s idle", v.idle_seconds)
+                        },
+                        p.describe()
+                    );
                 }
             }
         }
@@ -995,7 +833,11 @@ async fn preset_command(rest: &[String]) -> anyhow::Result<()> {
             assistant_core::config::atomic_write(&power_path, &serde_json::to_vec_pretty(&power)?)?;
             println!("Applied the {} preset.", preset.name());
             if model.is_none() {
-                let url = assistant_models::CURATED_MODELS.iter().find(|m| m.filename == v.model_file).map(|m| m.download_url).unwrap_or("");
+                let url = assistant_models::CURATED_MODELS
+                    .iter()
+                    .find(|m| m.filename == v.model_file)
+                    .map(|m| m.download_url)
+                    .unwrap_or("");
                 println!("{} isn't downloaded, so the model stays as it is. Download it with:\n  nixe-assistant models download {url}\nthen apply the preset again.", v.model_name);
             }
             let changed: Vec<&str> = keys.iter().map(|(k, _)| *k).collect();
@@ -1017,10 +859,19 @@ async fn reload_if_running() {
 async fn apply_change(keys: &[&str]) {
     match request(Control::Reload, 30_000).await {
         Ok(reply) => {
-            let pending: Vec<String> = reply["restart_required"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
+            let pending: Vec<String> = reply["restart_required"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                .unwrap_or_default();
             if keys.iter().any(|k| pending.iter().any(|p| k.starts_with(p.as_str()))) {
-                let ok = std::process::Command::new("systemctl").args(["--user", "restart", "nixe-assistantd.service"]).status().is_ok_and(|s| s.success());
-                eprintln!("{}", if ok { "restarted the assistant to apply it" } else { "saved; restart the assistant to apply it" });
+                let ok = std::process::Command::new("systemctl")
+                    .args(["--user", "restart", "nixe-assistantd.service"])
+                    .status()
+                    .is_ok_and(|s| s.success());
+                eprintln!(
+                    "{}",
+                    if ok { "restarted the assistant to apply it" } else { "saved; restart the assistant to apply it" }
+                );
             }
         }
         Err(e) => eprintln!("saved; the assistant isn't running ({e})"),
@@ -1060,10 +911,14 @@ async fn models_command(rest: &[String]) -> anyhow::Result<()> {
             // The graphics card's memory decides which models are offered.
             let vram_gb = vram_gb();
             let recommended: Vec<serde_json::Value> = models::recommended(vram_gb).into_iter().map(describe).collect();
-            let current_curated = models::CURATED_MODELS.iter().find(|m| current.file_name().is_some_and(|n| n == m.filename)).map(describe);
+            let current_curated =
+                models::CURATED_MODELS.iter().find(|m| current.file_name().is_some_and(|n| n == m.filename)).map(describe);
             let asr = assistant_core::paths::models_dir().join(assistant_core::asr::MODEL_NAME);
             let asr = serde_json::json!({"name": assistant_core::asr::MODEL_NAME, "installed": asr.join(assistant_core::asr::ENCODER).is_file()});
-            println!("{}", serde_json::json!({"current": current, "projector": cfg.vision.resolve(&current), "installed": local, "curated": curated, "recommended": recommended, "current_model": current_curated, "vram_gb": vram_gb, "asr": asr, "models_dir": assistant_core::paths::models_dir()}));
+            println!(
+                "{}",
+                serde_json::json!({"current": current, "projector": cfg.vision.resolve(&current), "installed": local, "curated": curated, "recommended": recommended, "current_model": current_curated, "vram_gb": vram_gb, "asr": asr, "models_dir": assistant_core::paths::models_dir()})
+            );
         }
         ["search", query @ ..] if !query.is_empty() => {
             let found = models::search_huggingface(&query.join(" ")).await?;
@@ -1082,8 +937,14 @@ async fn models_command(rest: &[String]) -> anyhow::Result<()> {
             // One JSON line per progress change, for a progress bar.
             while rx.changed().await.is_ok() {
                 let s = rx.borrow().clone();
-                println!("{}", serde_json::json!({"state": format!("{:?}", s.state).to_lowercase(), "bytes": s.downloaded_bytes, "total": s.total_bytes, "speed": s.speed_bytes_sec, "error": s.error}));
-                if matches!(s.state, models::DownloadState::Installed | models::DownloadState::Failed | models::DownloadState::Cancelled) {
+                println!(
+                    "{}",
+                    serde_json::json!({"state": format!("{:?}", s.state).to_lowercase(), "bytes": s.downloaded_bytes, "total": s.total_bytes, "speed": s.speed_bytes_sec, "error": s.error})
+                );
+                if matches!(
+                    s.state,
+                    models::DownloadState::Installed | models::DownloadState::Failed | models::DownloadState::Cancelled
+                ) {
                     break;
                 }
             }
@@ -1174,7 +1035,12 @@ async fn bench_duplex(live: bool) -> anyhow::Result<()> {
         onsets += seen.len();
         cut += seen.iter().filter(|s| s.0 == "stop" || s.0 == "redirect").count();
         audio.extend(first);
-        println!("reply {i}: {} onsets, verdicts {:?}, first audio {}", seen.len(), seen.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(), first.map(|f| format!("{f} ms")).unwrap_or("not measured".into()));
+        println!(
+            "reply {i}: {} onsets, verdicts {:?}, first audio {}",
+            seen.len(),
+            seen.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(),
+            first.map(|f| format!("{f} ms")).unwrap_or("not measured".into())
+        );
     }
     println!("\nFalse onsets: {onsets}; false interruptions: {cut} (target 0)\n");
     if !live {
@@ -1203,7 +1069,11 @@ async fn bench_duplex(live: bool) -> anyhow::Result<()> {
     }
     if !audio.is_empty() {
         audio.sort();
-        println!("\nFirst audio for the echo prompts (text turns, routing included): median {} ms of {}", audio[audio.len() / 2], audio.len());
+        println!(
+            "\nFirst audio for the echo prompts (text turns, routing included): median {} ms of {}",
+            audio[audio.len() / 2],
+            audio.len()
+        );
     }
     Ok(())
 }
@@ -1222,12 +1092,8 @@ fn fetch_asr_model() -> anyhow::Result<()> {
     let tmp = tempfile::tempdir_in(&dir)?;
     println!("Downloading {MODEL_NAME} (about 650 MB; NVIDIA Open Model License)…");
     let archive = tmp.path().join("model.tar.bz2");
-    let ok = std::process::Command::new("curl")
-        .args(["-fL", "--progress-bar", "-o"])
-        .arg(&archive)
-        .arg(MODEL_URL)
-        .status()?
-        .success();
+    let ok =
+        std::process::Command::new("curl").args(["-fL", "--progress-bar", "-o"]).arg(&archive).arg(MODEL_URL).status()?.success();
     anyhow::ensure!(ok, "the download failed");
     let ok = std::process::Command::new("tar").arg("xjf").arg(&archive).arg("-C").arg(tmp.path()).status()?.success();
     anyhow::ensure!(ok, "the archive could not be unpacked");

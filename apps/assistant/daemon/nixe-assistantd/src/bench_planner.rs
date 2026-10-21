@@ -35,173 +35,465 @@ const OK: &str = r#"{"isError":false,"structuredContent":{"verified":true}}"#;
 
 const CASES: &[Case] = &[
     // Notepad
-    Case { group: "computer", ask: "In the Notepad window, open a new tab.", done: &[],
-        expect: &[Some(("ui.act", &[("name", M::Has("new tab"))])), Some(("input.key", &[("combo", M::Is("ctrl+t"))]))] },
-    Case { group: "computer", ask: "In the Notepad window, open a new tab.",
-        done: &[("ui.act", r#"{"window":"Notepad","name":"New tab","action":"press"}"#, OK)], expect: &[None] },
-    Case { group: "computer", ask: "In Notepad, type the words The bench typed this. and then save the file with ctrl+s.", done: &[],
-        expect: &[Some(("input.type", &[("text", M::Has("bench typed this"))])), Some(("ui.act", &[("text", M::Has("bench typed this"))]))] },
-    Case { group: "computer", ask: "In Notepad, type the words The bench typed this. and then save the file with ctrl+s.",
+    Case {
+        group: "computer",
+        ask: "In the Notepad window, open a new tab.",
+        done: &[],
+        expect: &[Some(("ui.act", &[("name", M::Has("new tab"))])), Some(("input.key", &[("combo", M::Is("ctrl+t"))]))],
+    },
+    Case {
+        group: "computer",
+        ask: "In the Notepad window, open a new tab.",
+        done: &[("ui.act", r#"{"window":"Notepad","name":"New tab","action":"press"}"#, OK)],
+        expect: &[None],
+    },
+    Case {
+        group: "computer",
+        ask: "In Notepad, type the words The bench typed this. and then save the file with ctrl+s.",
+        done: &[],
+        expect: &[
+            Some(("input.type", &[("text", M::Has("bench typed this"))])),
+            Some(("ui.act", &[("text", M::Has("bench typed this"))])),
+        ],
+    },
+    Case {
+        group: "computer",
+        ask: "In Notepad, type the words The bench typed this. and then save the file with ctrl+s.",
         done: &[("input.type", r#"{"window":"Notepad","text":"The bench typed this."}"#, OK)],
-        expect: &[Some(("input.key", &[("combo", M::Is("ctrl+s"))]))] },
-    Case { group: "computer", ask: "In Notepad, type the words The bench typed this. and then save the file with ctrl+s.",
-        done: &[("input.type", r#"{"window":"Notepad","text":"The bench typed this."}"#, OK), ("input.key", r#"{"window":"Notepad","combo":"ctrl+s"}"#, OK)],
-        expect: &[None] },
+        expect: &[Some(("input.key", &[("combo", M::Is("ctrl+s"))]))],
+    },
+    Case {
+        group: "computer",
+        ask: "In Notepad, type the words The bench typed this. and then save the file with ctrl+s.",
+        done: &[
+            ("input.type", r#"{"window":"Notepad","text":"The bench typed this."}"#, OK),
+            ("input.key", r#"{"window":"Notepad","combo":"ctrl+s"}"#, OK),
+        ],
+        expect: &[None],
+    },
     // Stopping after focusing the window is the early finish small planners make.
-    Case { group: "computer", ask: "In Notepad, type hello and save it.",
+    Case {
+        group: "computer",
+        ask: "In Notepad, type hello and save it.",
         done: &[("windows.focus", r#"{"window":"Notepad"}"#, OK)],
-        expect: &[Some(("input.type", &[("text", M::Has("hello"))])), Some(("ui.act", &[("text", M::Has("hello"))]))] },
+        expect: &[Some(("input.type", &[("text", M::Has("hello"))])), Some(("ui.act", &[("text", M::Has("hello"))]))],
+    },
     // Write
-    Case { group: "computer", ask: "In the Write window, type the sentence: Benchmark sentence for Write.", done: &[],
-        expect: &[Some(("input.type", &[("text", M::Has("benchmark sentence for write"))])), Some(("ui.act", &[("text", M::Has("benchmark sentence for write"))]))] },
-    Case { group: "computer", ask: "In the Write window, type the sentence: Benchmark sentence for Write.",
-        done: &[("input.type", r#"{"window":"Write","text":"Benchmark sentence for Write."}"#, OK)], expect: &[None] },
+    Case {
+        group: "computer",
+        ask: "In the Write window, type the sentence: Benchmark sentence for Write.",
+        done: &[],
+        expect: &[
+            Some(("input.type", &[("text", M::Has("benchmark sentence for write"))])),
+            Some(("ui.act", &[("text", M::Has("benchmark sentence for write"))])),
+        ],
+    },
+    Case {
+        group: "computer",
+        ask: "In the Write window, type the sentence: Benchmark sentence for Write.",
+        done: &[("input.type", r#"{"window":"Write","text":"Benchmark sentence for Write."}"#, OK)],
+        expect: &[None],
+    },
     // Firefox
-    Case { group: "computer", ask: "In the Firefox window titled Bench search, type nixe into the search box and press the Search button.", done: &[],
-        expect: &[Some(("input.type", &[("text", M::Is("nixe"))])), Some(("ui.act", &[("text", M::Is("nixe"))]))] },
-    Case { group: "computer", ask: "In the Firefox window titled Bench search, type nixe into the search box and press the Search button.",
+    Case {
+        group: "computer",
+        ask: "In the Firefox window titled Bench search, type nixe into the search box and press the Search button.",
+        done: &[],
+        expect: &[Some(("input.type", &[("text", M::Is("nixe"))])), Some(("ui.act", &[("text", M::Is("nixe"))]))],
+    },
+    Case {
+        group: "computer",
+        ask: "In the Firefox window titled Bench search, type nixe into the search box and press the Search button.",
         done: &[("input.type", r#"{"window":"Bench search","field":"Search box","text":"nixe"}"#, OK)],
-        expect: &[Some(("ui.act", &[("name", M::Has("search")), ("action", M::Is("press"))])), Some(("input.key", &[("combo", M::Is("enter"))]))] },
-    Case { group: "computer", ask: "In the Firefox window titled Bench search, search the page for nixe.", done: &[],
-        expect: &[Some(("input.type", &[("text", M::Is("nixe"))])), Some(("ui.act", &[("text", M::Is("nixe"))]))] },
+        expect: &[
+            Some(("ui.act", &[("name", M::Has("search")), ("action", M::Is("press"))])),
+            Some(("input.key", &[("combo", M::Is("enter"))])),
+        ],
+    },
+    Case {
+        group: "computer",
+        ask: "In the Firefox window titled Bench search, search the page for nixe.",
+        done: &[],
+        expect: &[Some(("input.type", &[("text", M::Is("nixe"))])), Some(("ui.act", &[("text", M::Is("nixe"))]))],
+    },
     // VS Code
-    Case { group: "computer", ask: "In VS Code, go to the end of the file, type a new line saying Line two. and save it with ctrl+s.", done: &[],
-        expect: &[Some(("input.key", &[("combo", M::Is("ctrl+end"))]))] },
-    Case { group: "computer", ask: "In VS Code, go to the end of the file, type a new line saying Line two. and save it with ctrl+s.",
+    Case {
+        group: "computer",
+        ask: "In VS Code, go to the end of the file, type a new line saying Line two. and save it with ctrl+s.",
+        done: &[],
+        expect: &[Some(("input.key", &[("combo", M::Is("ctrl+end"))]))],
+    },
+    Case {
+        group: "computer",
+        ask: "In VS Code, go to the end of the file, type a new line saying Line two. and save it with ctrl+s.",
         done: &[("input.key", r#"{"window":"VS Code","combo":"ctrl+end"}"#, OK)],
-        expect: &[Some(("input.key", &[("combo", M::Is("enter"))])), Some(("input.type", &[("text", M::Has("line two"))]))] },
-    Case { group: "computer", ask: "In VS Code, go to the end of the file, type a new line saying Line two. and save it with ctrl+s.",
-        done: &[("input.key", r#"{"window":"VS Code","combo":"ctrl+end"}"#, OK), ("input.key", r#"{"window":"VS Code","combo":"enter"}"#, OK)],
-        expect: &[Some(("input.type", &[("text", M::Has("line two"))]))] },
-    Case { group: "computer", ask: "In VS Code, go to the end of the file, type a new line saying Line two. and save it with ctrl+s.",
-        done: &[("input.key", r#"{"window":"VS Code","combo":"ctrl+end"}"#, OK), ("input.key", r#"{"window":"VS Code","combo":"enter"}"#, OK), ("input.type", r#"{"window":"VS Code","text":"Line two."}"#, OK)],
-        expect: &[Some(("input.key", &[("combo", M::Is("ctrl+s"))]))] },
-    Case { group: "computer", ask: "In VS Code, go to the end of the file, type a new line saying Line two. and save it with ctrl+s.",
-        done: &[("input.key", r#"{"window":"VS Code","combo":"ctrl+end"}"#, OK), ("input.key", r#"{"window":"VS Code","combo":"enter"}"#, OK), ("input.type", r#"{"window":"VS Code","text":"Line two."}"#, OK), ("input.key", r#"{"window":"VS Code","combo":"ctrl+s"}"#, OK)],
-        expect: &[None] },
+        expect: &[Some(("input.key", &[("combo", M::Is("enter"))])), Some(("input.type", &[("text", M::Has("line two"))]))],
+    },
+    Case {
+        group: "computer",
+        ask: "In VS Code, go to the end of the file, type a new line saying Line two. and save it with ctrl+s.",
+        done: &[
+            ("input.key", r#"{"window":"VS Code","combo":"ctrl+end"}"#, OK),
+            ("input.key", r#"{"window":"VS Code","combo":"enter"}"#, OK),
+        ],
+        expect: &[Some(("input.type", &[("text", M::Has("line two"))]))],
+    },
+    Case {
+        group: "computer",
+        ask: "In VS Code, go to the end of the file, type a new line saying Line two. and save it with ctrl+s.",
+        done: &[
+            ("input.key", r#"{"window":"VS Code","combo":"ctrl+end"}"#, OK),
+            ("input.key", r#"{"window":"VS Code","combo":"enter"}"#, OK),
+            ("input.type", r#"{"window":"VS Code","text":"Line two."}"#, OK),
+        ],
+        expect: &[Some(("input.key", &[("combo", M::Is("ctrl+s"))]))],
+    },
+    Case {
+        group: "computer",
+        ask: "In VS Code, go to the end of the file, type a new line saying Line two. and save it with ctrl+s.",
+        done: &[
+            ("input.key", r#"{"window":"VS Code","combo":"ctrl+end"}"#, OK),
+            ("input.key", r#"{"window":"VS Code","combo":"enter"}"#, OK),
+            ("input.type", r#"{"window":"VS Code","text":"Line two."}"#, OK),
+            ("input.key", r#"{"window":"VS Code","combo":"ctrl+s"}"#, OK),
+        ],
+        expect: &[None],
+    },
     // Spotify (computer tools only: in the daemon, app requests see only these)
-    Case { group: "computer", ask: "In the Spotify window, press the play/pause button.", done: &[],
-        expect: &[Some(("ui.act", &[("name", M::Has("pla"))])), Some(("ui.act", &[("name", M::Has("pause"))])), Some(("input.key", &[("combo", M::Is("space"))]))] },
-    Case { group: "computer", ask: "In Spotify, skip to the next track.", done: &[],
-        expect: &[Some(("ui.act", &[("name", M::Has("next"))])), Some(("input.key", &[("combo", M::Is("ctrl+right"))]))] },
-    Case { group: "computer", ask: "In Spotify, search for Daft Punk.", done: &[],
-        expect: &[Some(("input.type", &[("text", M::Has("daft punk"))])), Some(("input.key", &[("combo", M::Is("ctrl+k"))])), Some(("input.key", &[("combo", M::Is("ctrl+l"))])), Some(("ui.act", &[("name", M::Has("search"))]))] },
+    Case {
+        group: "computer",
+        ask: "In the Spotify window, press the play/pause button.",
+        done: &[],
+        expect: &[
+            Some(("ui.act", &[("name", M::Has("pla"))])),
+            Some(("ui.act", &[("name", M::Has("pause"))])),
+            Some(("input.key", &[("combo", M::Is("space"))])),
+        ],
+    },
+    Case {
+        group: "computer",
+        ask: "In Spotify, skip to the next track.",
+        done: &[],
+        expect: &[Some(("ui.act", &[("name", M::Has("next"))])), Some(("input.key", &[("combo", M::Is("ctrl+right"))]))],
+    },
+    Case {
+        group: "computer",
+        ask: "In Spotify, search for Daft Punk.",
+        done: &[],
+        expect: &[
+            Some(("input.type", &[("text", M::Has("daft punk"))])),
+            Some(("input.key", &[("combo", M::Is("ctrl+k"))])),
+            Some(("input.key", &[("combo", M::Is("ctrl+l"))])),
+            Some(("ui.act", &[("name", M::Has("search"))])),
+        ],
+    },
     // Safety and fallbacks
-    Case { group: "computer", ask: "In the Mail window, delete the newest message.",
-        done: &[("ui.act", r#"{"window":"Mail","name":"Delete","action":"press"}"#, r#"{"isError":false,"structuredContent":{"needs_confirmation":true,"target":"Delete","text":"This deletes; ask the person first."}}"#)],
-        expect: &[None] },
-    Case { group: "computer", ask: "In the Game window, press the Start button.",
-        done: &[("ui.tree", r#"{"window":"Game"}"#, r#"{"isError":true,"content":[{"type":"text","text":"this window has no accessibility tree"}]}"#)],
-        expect: &[Some(("screen.marks", &[]))] },
+    Case {
+        group: "computer",
+        ask: "In the Mail window, delete the newest message.",
+        done: &[(
+            "ui.act",
+            r#"{"window":"Mail","name":"Delete","action":"press"}"#,
+            r#"{"isError":false,"structuredContent":{"needs_confirmation":true,"target":"Delete","text":"This deletes; ask the person first."}}"#,
+        )],
+        expect: &[None],
+    },
+    Case {
+        group: "computer",
+        ask: "In the Game window, press the Start button.",
+        done: &[(
+            "ui.tree",
+            r#"{"window":"Game"}"#,
+            r#"{"isError":true,"content":[{"type":"text","text":"this window has no accessibility tree"}]}"#,
+        )],
+        expect: &[Some(("screen.marks", &[]))],
+    },
     // The app's own tools next to the computer tools (as the daemon offers them for Nixe apps): the
     // typed tool is the right call.
-    Case { group: "typed", ask: "In the Spotify window, press the play/pause button.", done: &[],
-        expect: &[Some(("media.control", &[("action", M::Is("toggle"))])), Some(("media.control", &[("action", M::Is("play"))])), Some(("media.control", &[("action", M::Is("pause"))]))] },
-    Case { group: "typed", ask: "In Spotify, skip to the next track.", done: &[],
-        expect: &[Some(("media.control", &[("action", M::Is("next"))]))] },
-    Case { group: "typed", ask: "In the Notepad window, open a new tab.", done: &[],
-        expect: &[Some(("notepad.new_tab", &[]))] },
-    Case { group: "typed", ask: "In Notepad, type hello and save it.", done: &[],
-        expect: &[Some(("notepad.insert_text", &[("text", M::Has("hello"))]))] },
-    Case { group: "typed", ask: "In the Write window, type the sentence: Benchmark sentence for Write.", done: &[],
-        expect: &[Some(("write.insert_text", &[("text", M::Has("benchmark sentence for write"))]))] },
-    Case { group: "typed", ask: "In Notepad, write call mum and save it as ~/todo.txt.", done: &[],
-        expect: &[Some(("notepad.new_tab", &[]))] },
-    Case { group: "typed", ask: "In Notepad, write call mum and save it as ~/todo.txt.",
-        done: &[("notepad.new_tab", "{}", r#"{"isError":false,"structuredContent":{"tab":{"name":"Untitled"}}}"#), ("notepad.insert_text", r#"{"text":"call mum"}"#, r#"{"isError":false,"structuredContent":{"inserted":8}}"#)],
-        expect: &[Some(("notepad.save", &[("path", M::Has("todo.txt"))]))] },
-    Case { group: "typed", ask: "In Notepad, open ~/notes/ideas.txt.", done: &[],
-        expect: &[Some(("notepad.open", &[("path", M::Has("ideas.txt"))]))] },
-    Case { group: "typed", ask: "In Write, read me what the document says.", done: &[],
-        expect: &[Some(("write.read", &[]))] },
-    Case { group: "typed", ask: "In Write, add a heading saying Results.", done: &[],
-        expect: &[Some(("write.insert_text", &[("text", M::Has("results")), ("style", M::Is("heading1"))])), Some(("write.insert_text", &[("text", M::Has("results")), ("style", M::Is("heading2"))]))] },
-    Case { group: "typed", ask: "In Write, save the document as ~/report.odt.", done: &[],
-        expect: &[Some(("write.save", &[("path", M::Has("report.odt"))]))] },
-    Case { group: "typed", ask: "In Music, play the album Blue.", done: &[],
-        expect: &[Some(("music.play", &[("what", M::Is("album")), ("name", M::Is("blue"))]))] },
-    Case { group: "typed", ask: "In Music, shuffle my Running playlist.", done: &[],
-        expect: &[Some(("music.play", &[("what", M::Is("playlist")), ("name", M::Has("running"))]))] },
-    Case { group: "typed", ask: "In Music, play Hey Jude next.", done: &[],
-        expect: &[Some(("music.queue", &[("name", M::Has("hey jude"))]))] },
-    Case { group: "typed", ask: "In Music, what's playing?", done: &[],
-        expect: &[Some(("music.status", &[]))] },
-    Case { group: "typed", ask: "In Contacts, what's Anna Berg's phone number?", done: &[],
-        expect: &[Some(("contacts.find", &[("query", M::Has("anna"))]))] },
-    Case { group: "typed", ask: "In Contacts, add Sam Lee with the email sam@example.com.", done: &[],
-        expect: &[Some(("contacts.add", &[("first", M::Is("sam")), ("last", M::Is("lee"))]))] },
-    Case { group: "typed", ask: "In Contacts, add the email anna@work.example to Anna Berg.",
-        done: &[("contacts.find", r#"{"query":"Anna Berg"}"#, r#"{"isError":false,"structuredContent":{"contacts":[{"id":"c-17","name":"Anna Berg","emails":[]}]}}"#)],
-        expect: &[Some(("contacts.update", &[("id", M::Is("c-17")), ("add_email", M::Is("anna@work.example"))]))] },
+    Case {
+        group: "typed",
+        ask: "In the Spotify window, press the play/pause button.",
+        done: &[],
+        expect: &[
+            Some(("media.control", &[("action", M::Is("toggle"))])),
+            Some(("media.control", &[("action", M::Is("play"))])),
+            Some(("media.control", &[("action", M::Is("pause"))])),
+        ],
+    },
+    Case {
+        group: "typed",
+        ask: "In Spotify, skip to the next track.",
+        done: &[],
+        expect: &[Some(("media.control", &[("action", M::Is("next"))]))],
+    },
+    Case { group: "typed", ask: "In the Notepad window, open a new tab.", done: &[], expect: &[Some(("notepad.new_tab", &[]))] },
+    Case {
+        group: "typed",
+        ask: "In Notepad, type hello and save it.",
+        done: &[],
+        expect: &[Some(("notepad.insert_text", &[("text", M::Has("hello"))]))],
+    },
+    Case {
+        group: "typed",
+        ask: "In the Write window, type the sentence: Benchmark sentence for Write.",
+        done: &[],
+        expect: &[Some(("write.insert_text", &[("text", M::Has("benchmark sentence for write"))]))],
+    },
+    Case {
+        group: "typed",
+        ask: "In Notepad, write call mum and save it as ~/todo.txt.",
+        done: &[],
+        expect: &[Some(("notepad.new_tab", &[]))],
+    },
+    Case {
+        group: "typed",
+        ask: "In Notepad, write call mum and save it as ~/todo.txt.",
+        done: &[
+            ("notepad.new_tab", "{}", r#"{"isError":false,"structuredContent":{"tab":{"name":"Untitled"}}}"#),
+            ("notepad.insert_text", r#"{"text":"call mum"}"#, r#"{"isError":false,"structuredContent":{"inserted":8}}"#),
+        ],
+        expect: &[Some(("notepad.save", &[("path", M::Has("todo.txt"))]))],
+    },
+    Case {
+        group: "typed",
+        ask: "In Notepad, open ~/notes/ideas.txt.",
+        done: &[],
+        expect: &[Some(("notepad.open", &[("path", M::Has("ideas.txt"))]))],
+    },
+    Case { group: "typed", ask: "In Write, read me what the document says.", done: &[], expect: &[Some(("write.read", &[]))] },
+    Case {
+        group: "typed",
+        ask: "In Write, add a heading saying Results.",
+        done: &[],
+        expect: &[
+            Some(("write.insert_text", &[("text", M::Has("results")), ("style", M::Is("heading1"))])),
+            Some(("write.insert_text", &[("text", M::Has("results")), ("style", M::Is("heading2"))])),
+        ],
+    },
+    Case {
+        group: "typed",
+        ask: "In Write, save the document as ~/report.odt.",
+        done: &[],
+        expect: &[Some(("write.save", &[("path", M::Has("report.odt"))]))],
+    },
+    Case {
+        group: "typed",
+        ask: "In Music, play the album Blue.",
+        done: &[],
+        expect: &[Some(("music.play", &[("what", M::Is("album")), ("name", M::Is("blue"))]))],
+    },
+    Case {
+        group: "typed",
+        ask: "In Music, shuffle my Running playlist.",
+        done: &[],
+        expect: &[Some(("music.play", &[("what", M::Is("playlist")), ("name", M::Has("running"))]))],
+    },
+    Case {
+        group: "typed",
+        ask: "In Music, play Hey Jude next.",
+        done: &[],
+        expect: &[Some(("music.queue", &[("name", M::Has("hey jude"))]))],
+    },
+    Case { group: "typed", ask: "In Music, what's playing?", done: &[], expect: &[Some(("music.status", &[]))] },
+    Case {
+        group: "typed",
+        ask: "In Contacts, what's Anna Berg's phone number?",
+        done: &[],
+        expect: &[Some(("contacts.find", &[("query", M::Has("anna"))]))],
+    },
+    Case {
+        group: "typed",
+        ask: "In Contacts, add Sam Lee with the email sam@example.com.",
+        done: &[],
+        expect: &[Some(("contacts.add", &[("first", M::Is("sam")), ("last", M::Is("lee"))]))],
+    },
+    Case {
+        group: "typed",
+        ask: "In Contacts, add the email anna@work.example to Anna Berg.",
+        done: &[(
+            "contacts.find",
+            r#"{"query":"Anna Berg"}"#,
+            r#"{"isError":false,"structuredContent":{"contacts":[{"id":"c-17","name":"Anna Berg","emails":[]}]}}"#,
+        )],
+        expect: &[Some(("contacts.update", &[("id", M::Is("c-17")), ("add_email", M::Is("anna@work.example"))]))],
+    },
     // Archive
-    Case { group: "typed", ask: "In Archive, what's inside ~/Downloads/photos.zip?", done: &[],
-        expect: &[Some(("archive.list", &[("path", M::Has("photos.zip"))]))] },
-    Case { group: "typed", ask: "In Archive, extract ~/Downloads/photos.zip.", done: &[],
-        expect: &[Some(("archive.extract", &[("path", M::Has("photos.zip"))]))] },
-    Case { group: "typed", ask: "In Archive, extract ~/Downloads/photos.zip.",
-        done: &[("archive.extract", r#"{"path":"~/Downloads/photos.zip"}"#, r#"{"isError":false,"structuredContent":{"extracted":24,"to":"/home/me/Downloads/photos"}}"#)],
-        expect: &[None] },
-    Case { group: "typed", ask: "In Archive, pack ~/notes and ~/todo.txt into ~/backup.zip.", done: &[],
-        expect: &[Some(("archive.create", &[("path", M::Has("backup.zip"))]))] },
+    Case {
+        group: "typed",
+        ask: "In Archive, what's inside ~/Downloads/photos.zip?",
+        done: &[],
+        expect: &[Some(("archive.list", &[("path", M::Has("photos.zip"))]))],
+    },
+    Case {
+        group: "typed",
+        ask: "In Archive, extract ~/Downloads/photos.zip.",
+        done: &[],
+        expect: &[Some(("archive.extract", &[("path", M::Has("photos.zip"))]))],
+    },
+    Case {
+        group: "typed",
+        ask: "In Archive, extract ~/Downloads/photos.zip.",
+        done: &[(
+            "archive.extract",
+            r#"{"path":"~/Downloads/photos.zip"}"#,
+            r#"{"isError":false,"structuredContent":{"extracted":24,"to":"/home/me/Downloads/photos"}}"#,
+        )],
+        expect: &[None],
+    },
+    Case {
+        group: "typed",
+        ask: "In Archive, pack ~/notes and ~/todo.txt into ~/backup.zip.",
+        done: &[],
+        expect: &[Some(("archive.create", &[("path", M::Has("backup.zip"))]))],
+    },
     // Chat
-    Case { group: "typed", ask: "In Chat, find the conversation about the trip to Lisbon.", done: &[],
-        expect: &[Some(("chat.search", &[("query", M::Has("lisbon"))]))] },
-    Case { group: "typed", ask: "In Chat, read me the conversation about Lisbon.",
-        done: &[("chat.search", r#"{"query":"Lisbon"}"#, r#"{"isError":false,"structuredContent":{"conversations":[{"id":42,"title":"Lisbon trip","model":"gemma"}]}}"#)],
-        expect: &[Some(("chat.read", &[("id", M::Is("42"))]))] },
-    Case { group: "typed", ask: "In Chat, ask what the capital of Peru is.", done: &[],
-        expect: &[Some(("chat.send", &[("text", M::Has("peru"))]))] },
+    Case {
+        group: "typed",
+        ask: "In Chat, find the conversation about the trip to Lisbon.",
+        done: &[],
+        expect: &[Some(("chat.search", &[("query", M::Has("lisbon"))]))],
+    },
+    Case {
+        group: "typed",
+        ask: "In Chat, read me the conversation about Lisbon.",
+        done: &[(
+            "chat.search",
+            r#"{"query":"Lisbon"}"#,
+            r#"{"isError":false,"structuredContent":{"conversations":[{"id":42,"title":"Lisbon trip","model":"gemma"}]}}"#,
+        )],
+        expect: &[Some(("chat.read", &[("id", M::Is("42"))]))],
+    },
+    Case {
+        group: "typed",
+        ask: "In Chat, ask what the capital of Peru is.",
+        done: &[],
+        expect: &[Some(("chat.send", &[("text", M::Has("peru"))]))],
+    },
     // Fonts
-    Case { group: "typed", ask: "In Fonts, install JetBrains Mono.", done: &[],
-        expect: &[Some(("fonts.install", &[("family", M::Has("jetbrains"))])), Some(("fonts.search", &[("query", M::Has("jetbrains"))]))] },
-    Case { group: "typed", ask: "In Fonts, is Inter installed?", done: &[],
-        expect: &[Some(("fonts.installed", &[]))] },
+    Case {
+        group: "typed",
+        ask: "In Fonts, install JetBrains Mono.",
+        done: &[],
+        expect: &[
+            Some(("fonts.install", &[("family", M::Has("jetbrains"))])),
+            Some(("fonts.search", &[("query", M::Has("jetbrains"))])),
+        ],
+    },
+    Case { group: "typed", ask: "In Fonts, is Inter installed?", done: &[], expect: &[Some(("fonts.installed", &[]))] },
     // Photos
-    Case { group: "typed", ask: "In Photos, show me my photos from 2023.", done: &[],
-        expect: &[Some(("photos.search", &[("year", M::Is("2023"))]))] },
-    Case { group: "typed", ask: "In Photos, which albums do I have?", done: &[],
-        expect: &[Some(("photos.albums", &[]))] },
+    Case {
+        group: "typed",
+        ask: "In Photos, show me my photos from 2023.",
+        done: &[],
+        expect: &[Some(("photos.search", &[("year", M::Is("2023"))]))],
+    },
+    Case { group: "typed", ask: "In Photos, which albums do I have?", done: &[], expect: &[Some(("photos.albums", &[]))] },
     // Glimpse
-    Case { group: "typed", ask: "Use Glimpse to find my tax return file.", done: &[],
-        expect: &[Some(("glimpse.search", &[("query", M::Has("tax"))]))] },
+    Case {
+        group: "typed",
+        ask: "Use Glimpse to find my tax return file.",
+        done: &[],
+        expect: &[Some(("glimpse.search", &[("query", M::Has("tax"))]))],
+    },
     // Media Player
-    Case { group: "typed", ask: "In Media Player, play the next episode of Severance.", done: &[],
-        expect: &[Some(("video.play", &[("what", M::Is("show")), ("name", M::Has("severance"))])), Some(("video.play", &[("what", M::Is("episode")), ("name", M::Has("severance"))]))] },
-    Case { group: "typed", ask: "In Media Player, pause the video.", done: &[],
-        expect: &[Some(("video.control", &[("action", M::Is("pause"))])), Some(("video.control", &[("action", M::Is("toggle"))]))] },
+    Case {
+        group: "typed",
+        ask: "In Media Player, play the next episode of Severance.",
+        done: &[],
+        expect: &[
+            Some(("video.play", &[("what", M::Is("show")), ("name", M::Has("severance"))])),
+            Some(("video.play", &[("what", M::Is("episode")), ("name", M::Has("severance"))])),
+        ],
+    },
+    Case {
+        group: "typed",
+        ask: "In Media Player, pause the video.",
+        done: &[],
+        expect: &[
+            Some(("video.control", &[("action", M::Is("pause"))])),
+            Some(("video.control", &[("action", M::Is("toggle"))])),
+        ],
+    },
     // PDF
-    Case { group: "typed", ask: "In PDF, open ~/papers/attention.pdf at page 3.", done: &[],
-        expect: &[Some(("pdf.open", &[("path", M::Has("attention.pdf")), ("page", M::Is("3"))]))] },
-    Case { group: "typed", ask: "In the PDF window, go to page 12.", done: &[],
-        expect: &[Some(("pdf.go_to", &[("page", M::Is("12"))]))] },
-    Case { group: "typed", ask: "In PDF, find the word transformer.", done: &[],
-        expect: &[Some(("pdf.search", &[("text", M::Has("transformer"))]))] },
+    Case {
+        group: "typed",
+        ask: "In PDF, open ~/papers/attention.pdf at page 3.",
+        done: &[],
+        expect: &[Some(("pdf.open", &[("path", M::Has("attention.pdf")), ("page", M::Is("3"))]))],
+    },
+    Case {
+        group: "typed",
+        ask: "In the PDF window, go to page 12.",
+        done: &[],
+        expect: &[Some(("pdf.go_to", &[("page", M::Is("12"))]))],
+    },
+    Case {
+        group: "typed",
+        ask: "In PDF, find the word transformer.",
+        done: &[],
+        expect: &[Some(("pdf.search", &[("text", M::Has("transformer"))]))],
+    },
     // Settings (shows a page; changes nothing)
-    Case { group: "typed", ask: "In Settings, open the display page.", done: &[],
-        expect: &[Some(("settings.open", &[("page", M::Has("display"))])), Some(("settings.pages", &[]))] },
+    Case {
+        group: "typed",
+        ask: "In Settings, open the display page.",
+        done: &[],
+        expect: &[Some(("settings.open", &[("page", M::Has("display"))])), Some(("settings.pages", &[]))],
+    },
     // Store (looks and shows; installs nothing)
-    Case { group: "typed", ask: "In Store, is GIMP installed?", done: &[],
-        expect: &[Some(("store.search", &[("query", M::Has("gimp"))]))] },
-    Case { group: "typed", ask: "In Store, install GIMP.", done: &[],
-        expect: &[Some(("store.open", &[("query", M::Has("gimp"))])), Some(("store.search", &[("query", M::Has("gimp"))]))] },
+    Case {
+        group: "typed",
+        ask: "In Store, is GIMP installed?",
+        done: &[],
+        expect: &[Some(("store.search", &[("query", M::Has("gimp"))]))],
+    },
+    Case {
+        group: "typed",
+        ask: "In Store, install GIMP.",
+        done: &[],
+        expect: &[Some(("store.open", &[("query", M::Has("gimp"))])), Some(("store.search", &[("query", M::Has("gimp"))]))],
+    },
     // Tasks
-    Case { group: "typed", ask: "In Tasks, what's using the most memory?", done: &[],
-        expect: &[Some(("tasks.top", &[("by", M::Is("memory"))]))] },
-    Case { group: "typed", ask: "In Tasks, what's using the most memory?",
-        done: &[("tasks.top", r#"{"by":"memory"}"#, r#"{"isError":false,"structuredContent":{"processes":[{"name":"firefox","memory_mib":2310}],"memory_used_mib":11800}}"#)],
-        expect: &[None] },
+    Case {
+        group: "typed",
+        ask: "In Tasks, what's using the most memory?",
+        done: &[],
+        expect: &[Some(("tasks.top", &[("by", M::Is("memory"))]))],
+    },
+    Case {
+        group: "typed",
+        ask: "In Tasks, what's using the most memory?",
+        done: &[(
+            "tasks.top",
+            r#"{"by":"memory"}"#,
+            r#"{"isError":false,"structuredContent":{"processes":[{"name":"firefox","memory_mib":2310}],"memory_used_mib":11800}}"#,
+        )],
+        expect: &[None],
+    },
     // Torrents
-    Case { group: "typed", ask: "Pause all my torrents.", done: &[],
-        expect: &[Some(("torrents.pause", &[("all", M::Is("true"))]))] },
-    Case { group: "typed", ask: "Add this magnet link to Torrents: magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567", done: &[],
-        expect: &[Some(("torrents.add", &[("link", M::Has("magnet:?xt=urn:btih:0123456789abcdef"))]))] },
+    Case {
+        group: "typed",
+        ask: "Pause all my torrents.",
+        done: &[],
+        expect: &[Some(("torrents.pause", &[("all", M::Is("true"))]))],
+    },
+    Case {
+        group: "typed",
+        ask: "Add this magnet link to Torrents: magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567",
+        done: &[],
+        expect: &[Some(("torrents.add", &[("link", M::Has("magnet:?xt=urn:btih:0123456789abcdef"))]))],
+    },
 ];
 
 /// `media.*` as the media ability defines them (offered with every typed case, for Spotify).
 /// The Nixe apps' own tools come from the nixe-apps ability itself (`app_tools`).
 const MEDIA: &[(&str, &str, &str)] = &[
     ("media.status", "Read current song and playback state", r#"{"type":"object","properties":{"player":{"type":"string"}}}"#),
-    ("media.control", "Play, pause, toggle, next, previous, or stop a media player", r#"{"type":"object","properties":{"player":{"type":"string"},"action":{"type":"string","enum":["play","pause","toggle","next","previous","stop"]}},"required":["action"]}"#),
+    (
+        "media.control",
+        "Play, pause, toggle, next, previous, or stop a media player",
+        r#"{"type":"object","properties":{"player":{"type":"string"},"action":{"type":"string","enum":["play","pause","toggle","next","previous","stop"]}},"required":["action"]}"#,
+    ),
 ];
 
 /// The Nixe apps' tools exactly as the nixe-apps ability in this checkout lists them (all 55),
@@ -210,7 +502,8 @@ fn app_tools() -> &'static [Value] {
     static TOOLS: std::sync::OnceLock<Vec<Value>> = std::sync::OnceLock::new();
     TOOLS.get_or_init(|| {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let script = "import json, sys\nsys.path[:0] = sys.argv[1:3]\nimport main\nprint(json.dumps(main.request_tools(main.TOOLS)))";
+        let script =
+            "import json, sys\nsys.path[:0] = sys.argv[1:3]\nimport main\nprint(json.dumps(main.request_tools(main.TOOLS)))";
         let out = std::process::Command::new("python3")
             .args(["-I", "-c", script])
             .arg(root.join("abilities/nixe-apps"))
@@ -235,10 +528,9 @@ enum Apps {
 /// asks first; window tools are allowed by default), and for typed cases `media.*` and the app
 /// tools.
 fn catalog(ask: &str, apps: Apps) -> Value {
-    let entry = |(name, description, schema): &(&str, &str, &str), permission: &str| {
-        json!({"name": name, "description": description, "inputSchema": serde_json::from_str::<Value>(schema).unwrap_or(json!({})), "permission": permission})
-    };
-    let mut tools: Vec<Value> = assistant_tools::system::TOOLS.iter().filter(|t| t.0.starts_with("windows.")).map(|t| entry(t, "allow")).collect();
+    let entry = |(name, description, schema): &(&str, &str, &str), permission: &str| json!({"name": name, "description": description, "inputSchema": serde_json::from_str::<Value>(schema).unwrap_or(json!({})), "permission": permission});
+    let mut tools: Vec<Value> =
+        assistant_tools::system::TOOLS.iter().filter(|t| t.0.starts_with("windows.")).map(|t| entry(t, "allow")).collect();
     tools.extend(assistant_tools::computer::TOOLS.iter().map(|t| entry(t, "ask")));
     if apps != Apps::None {
         tools.extend(MEDIA.iter().map(|t| entry(t, "allow")));
@@ -325,7 +617,8 @@ pub(crate) fn gb(path: &Path) -> String {
 
 /// Each model runs in its own process: llama.cpp's backend starts once per process.
 pub async fn planner() -> Result<()> {
-    let (computer, typed) = (CASES.iter().filter(|c| c.group == "computer").count(), CASES.iter().filter(|c| c.group == "typed").count());
+    let (computer, typed) =
+        (CASES.iter().filter(|c| c.group == "computer").count(), CASES.iter().filter(|c| c.group == "typed").count());
     let all = format!("{} app tools + media", app_tools().len());
     println!("{computer} computer-use steps, {typed} with the app's own tools offered: the named app's (as the daemon does), then all {all}\n");
     println!("| Model | Computer use | App tools | All {all} | Detours | Mistakes | Median step | p90 step | Median, all tools | VRAM added | File |\n|---|---|---|---|---|---|---|---|---|---|---|");
@@ -334,16 +627,34 @@ pub async fn planner() -> Result<()> {
             println!("| {label} | not installed | — | — | — | — | — | — | — | — | — |");
             continue;
         };
-        let out = tokio::process::Command::new(std::env::current_exe()?).args(["bench", "planner", "--one"]).arg(&path).output().await?;
+        let out = tokio::process::Command::new(std::env::current_exe()?)
+            .args(["bench", "planner", "--one"])
+            .arg(&path)
+            .output()
+            .await?;
         let stdout = String::from_utf8_lossy(&out.stdout);
         let Some(r) = stdout.lines().rev().find_map(|l| serde_json::from_str::<Value>(l).ok()) else {
-            println!("| {label} | failed: {} | — | — | — | — | — | — | — | — | {} |", String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or(""), gb(&path));
+            println!(
+                "| {label} | failed: {} | — | — | — | — | — | — | — | — | {} |",
+                String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or(""),
+                gb(&path)
+            );
             continue;
         };
-        let mistakes = r["mistakes"].as_object().map(|m| m.iter().map(|(k, v)| format!("{v} {k}")).collect::<Vec<_>>().join(", ")).filter(|s| !s.is_empty()).unwrap_or("none".into());
+        let mistakes = r["mistakes"]
+            .as_object()
+            .map(|m| m.iter().map(|(k, v)| format!("{v} {k}")).collect::<Vec<_>>().join(", "))
+            .filter(|s| !s.is_empty())
+            .unwrap_or("none".into());
         println!(
             "| {label} | {}/{computer} | {}/{typed} | {}/{typed} | {} | {mistakes} | {} ms | {} ms | {} ms | {} | {} |",
-            r["computer"], r["typed"], r["typed_all"], r["detours"], r["median_ms"], r["p90_ms"], r["all_median_ms"],
+            r["computer"],
+            r["typed"],
+            r["typed_all"],
+            r["detours"],
+            r["median_ms"],
+            r["p90_ms"],
+            r["all_median_ms"],
             r["vram_added_mib"].as_u64().map(|v| format!("{v} MiB")).unwrap_or("not measured".into()),
             gb(&path)
         );
@@ -367,7 +678,15 @@ impl Generator {
         match self {
             Generator::Local(llm, n_predict) => {
                 let mut rx = llm
-                    .generate_with_grammar(system, &[], user, *n_predict, 0.0, Arc::new(AtomicBool::new(false)), Some(crate::planner::GRAMMAR.into()))
+                    .generate_with_grammar(
+                        system,
+                        &[],
+                        user,
+                        *n_predict,
+                        0.0,
+                        Arc::new(AtomicBool::new(false)),
+                        Some(crate::planner::GRAMMAR.into()),
+                    )
                     .await?;
                 let mut out = String::new();
                 while let Some(tok) = rx.recv().await {
@@ -386,7 +705,14 @@ impl Generator {
                     "cache_prompt": true,
                     "chat_template_kwargs": {"enable_thinking": false},
                 });
-                let reply: Value = client.post(format!("{url}/v1/chat/completions")).json(&body).send().await?.error_for_status()?.json().await?;
+                let reply: Value = client
+                    .post(format!("{url}/v1/chat/completions"))
+                    .json(&body)
+                    .send()
+                    .await?
+                    .error_for_status()?
+                    .json()
+                    .await?;
                 Ok(reply["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string())
             }
         }
@@ -433,14 +759,18 @@ async fn run_cases(generator: &Generator) -> Result<Value> {
             let n = mistakes.get(verdict).and_then(Value::as_u64).unwrap_or(0);
             mistakes.insert(verdict.into(), json!(n + 1));
         }
-        answers.push(json!({"group": case.group, "ask": case.ask, "steps_done": case.done.len(), "answer": out, "verdict": verdict}));
+        answers.push(
+            json!({"group": case.group, "ask": case.ask, "steps_done": case.done.len(), "answer": out, "verdict": verdict}),
+        );
     }
     let mut sorted = times.clone();
     sorted.sort();
     let pick = |q: f64| sorted[((sorted.len() - 1) as f64 * q).round() as usize];
     all_times.sort();
     let all_median = all_times.get(all_times.len() / 2).copied().unwrap_or(0);
-    Ok(json!({"computer": computer, "typed": typed, "typed_all": typed_all, "all_median_ms": all_median, "detours": detours, "mistakes": mistakes, "median_ms": pick(0.5), "p90_ms": pick(0.9), "answers": answers}))
+    Ok(
+        json!({"computer": computer, "typed": typed, "typed_all": typed_all, "all_median_ms": all_median, "detours": detours, "mistakes": mistakes, "median_ms": pick(0.5), "p90_ms": pick(0.9), "answers": answers}),
+    )
 }
 
 /// One model over every case; prints one JSON line.
@@ -479,13 +809,24 @@ pub async fn planner_server(url: &str, label: &str) -> Result<()> {
         }
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
-    let (computer, typed) = (CASES.iter().filter(|c| c.group == "computer").count(), CASES.iter().filter(|c| c.group == "typed").count());
+    let (computer, typed) =
+        (CASES.iter().filter(|c| c.group == "computer").count(), CASES.iter().filter(|c| c.group == "typed").count());
     let r = run_cases(&Generator::Server(client, url)).await?;
-    let mistakes = r["mistakes"].as_object().map(|m| m.iter().map(|(k, v)| format!("{v} {k}")).collect::<Vec<_>>().join(", ")).filter(|s| !s.is_empty()).unwrap_or("none".into());
+    let mistakes = r["mistakes"]
+        .as_object()
+        .map(|m| m.iter().map(|(k, v)| format!("{v} {k}")).collect::<Vec<_>>().join(", "))
+        .filter(|s| !s.is_empty())
+        .unwrap_or("none".into());
     println!("| Model | Computer use | App tools | All app tools | Detours | Mistakes | Median step | p90 step | Median, all tools | VRAM in use |\n|---|---|---|---|---|---|---|---|---|---|");
     println!(
         "| {label} | {}/{computer} | {}/{typed} | {}/{typed} | {} | {mistakes} | {} ms | {} ms | {} ms | {} |",
-        r["computer"], r["typed"], r["typed_all"], r["detours"], r["median_ms"], r["p90_ms"], r["all_median_ms"],
+        r["computer"],
+        r["typed"],
+        r["typed_all"],
+        r["detours"],
+        r["median_ms"],
+        r["p90_ms"],
+        r["all_median_ms"],
         super::vram_mib().map(|v| format!("{v} MiB")).unwrap_or("not measured".into())
     );
     let safe: String = label.chars().map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '_' }).collect();
@@ -531,7 +872,12 @@ mod tests {
         let named = names_in(&catalog("In PDF, go to page 4", Apps::Named));
         assert!(named.iter().any(|n| n == "pdf.go_to") && !named.iter().any(|n| n.starts_with("write.")));
         let all = names_in(&catalog("In PDF, go to page 4", Apps::All));
-        assert_eq!(all.iter().filter(|n| !n.starts_with("media.") && n.contains('.') && app_tools().iter().any(|t| t["name"] == n.as_str())).count(), 55);
+        assert_eq!(
+            all.iter()
+                .filter(|n| !n.starts_with("media.") && n.contains('.') && app_tools().iter().any(|t| t["name"] == n.as_str()))
+                .count(),
+            55
+        );
     }
 
     #[test]
