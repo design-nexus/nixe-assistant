@@ -164,6 +164,9 @@ pub fn describe(tool: &str, args: &Value) -> String {
         "write.export_pdf" => format!("Export the Write document as {}", clip(s(args, "path"), 80)),
         "write.open" => format!("Open {} in Write", clip(s(args, "path"), 80)),
         "contacts.add" => format!("Add {} {} to Contacts", s(args, "first"), s(args, "last")).trim_end().to_string(),
+        "contacts.add_to_list" => format!("Add a contact to the list “{}”", clip(s(args, "list"), 60)),
+        "theater.mark_watched" if args["watched"].as_bool() == Some(false) => "Mark a title unwatched in Theater".into(),
+        "theater.mark_watched" => "Mark a title watched in Theater".into(),
         "contacts.update" => {
             let what: Vec<&str> = [("first", "name"), ("last", "name"), ("company", "company"), ("title", "job title"), ("birthday", "birthday"), ("notes", "notes"), ("add_email", "email"), ("add_phone", "phone"), ("favorite", "favourite")]
                 .into_iter()

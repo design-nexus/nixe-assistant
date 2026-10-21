@@ -75,7 +75,7 @@ const PLUGIN_EDITS: &[&str] = &[
 
 const PLUGIN_PREFIXES: &[&str] =
     &["routines.", "projects.", "calendar.", "file_search.", "media.", "power.", "history.", "notes.", "reminders.", "notepad.", "write.", "music.", "contacts.", "archive.", "chat.", "fonts.", "photos.", "glimpse.",
-      "video.", "pdf.", "settings.", "store.", "tasks.", "torrents."];
+      "video.", "theater.", "pdf.", "settings.", "store.", "tasks.", "torrents."];
 
 const DESKTOP_PREFIXES: &[&str] = &["hypr.", "toggle.", "display.", "theme.", "windows.", "workspaces.", "monitors."];
 
@@ -120,7 +120,9 @@ impl Capability {
             "history.undo" | "history.undo_task" => return Self::PluginData,
             // Nixe apps worked directly: reading a file in, typing into a document, saving.
             "notepad.open" | "write.open" | "archive.list" | "archive.open" | "photos.open" | "pdf.open" => return Self::FileRead,
-            "notepad.insert_text" | "write.insert_text" | "contacts.add" | "contacts.update" | "chat.send" => return Self::PluginEdit,
+            "notepad.insert_text" | "write.insert_text" | "contacts.add" | "contacts.update" | "contacts.add_to_list" | "theater.mark_watched" | "chat.send" => {
+                return Self::PluginEdit;
+            }
             "notepad.save" | "write.save" | "write.export_pdf" | "archive.extract" | "archive.create" => return Self::FileWrite,
             // Reach the network with what they're given.
             "fonts.install" | "torrents.add" => return Self::External,
