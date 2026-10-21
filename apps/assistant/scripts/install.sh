@@ -82,8 +82,8 @@ if [[ $("$helper" --version 2>/dev/null || echo 0) -lt $want ]] || ! cmp -s "$po
   fi
 fi
 systemctl --user daemon-reload
-systemctl --user disable nixe-assistant-stt.service nixe-assistant-hud.service
-systemctl --user enable nixe-assistantd.service
+# Preserve existing service enablement during migration.
+# Existing daemon enablement is retained.
 if [[ $start_after == 1 ]]; then systemctl --user restart nixe-assistantd.service; fi
 if [[ -f "$bind_file" ]]; then
   bound=0
@@ -96,7 +96,7 @@ if [[ -f "$bind_file" ]]; then
 fi
 if [[ $start_after != 1 ]]; then
   trap - ERR
-  printf 'Installed (not started: it was stopped). Start it with: nixe-assistant start. Backup: %s\n' "$backup"
+  printf 'Installed without starting or restarting Assistant. Backup: %s\n' "$backup"
   exit 0
 fi
 healthy=0
