@@ -1,0 +1,10 @@
+{
+  "application": "assistant",
+  "directory": "assistant",
+  "packages": [
+    "nixe-assistantd"
+  ],
+  "manifest": "apps/assistant/Cargo.toml",
+  "prepare": [],
+  "binaries": []
+}

@@ -22,7 +22,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/design-nexus/nixe"
+repository = "https://github.com/design-nexus/nixe-assistant"
 authors = ["Ken Smith <ken@kensmith.dev>"]
 
 [workspace.dependencies]

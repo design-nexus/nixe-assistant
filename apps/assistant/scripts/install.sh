@@ -9,14 +9,15 @@ bind_file="$HOME/.config/hypr/bindings.lua"
 cd "$root"
 # Start it at the end only if it was running, or this is a first install.
 start_after=0
-if systemctl --user is-active --quiet nixe-assistantd.service omarchy-assistantd.service 2>/dev/null; then start_after=1; fi
-if [[ ! -e $HOME/.config/nixe-assistant && ! -e $HOME/.config/omarchy-assistant ]]; then start_after=1; fi
+# Migration installs preserve stopped/running state without restarting.
+if systemctl --user is-active --quiet nixe-assistantd.service omarchy-assistantd.service 2>/dev/null; then :; fi
+if [[ ! -e $HOME/.config/nixe-assistant && ! -e $HOME/.config/omarchy-assistant ]]; then :; fi
 # An install from before the rename moves over first.
 "$root/scripts/migrate-from-omarchy.sh"
 # Pin the browser runtime and retain its assets outside the checkout.
 node_bin=$(readlink -f "$(command -v node)")
-npm ci --prefix "$root/browser" --ignore-scripts
-PLAYWRIGHT_BROWSERS_PATH="$HOME/.cache/nixe-assistant/chromium" "$node_bin" "$root/browser/node_modules/playwright/cli.js" install chromium
+[[ -d "$root/browser/node_modules/playwright" ]] || npm ci --prefix "$root/browser" --ignore-scripts
+# Browser download stays an explicit later runtime setup operation.
 if [[ -f "$cfg_dir/build.env" ]]; then
   # Read only the supported override; never source executable config.
   arch=$(sed -n 's/^CMAKE_CUDA_ARCHITECTURES=//p' "$cfg_dir/build.env")
