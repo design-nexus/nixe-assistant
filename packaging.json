@@ -10,5 +10,19 @@
   ],
   "manifest": "apps/assistant/Cargo.toml",
   "prepare": [],
-  "binaries": []
+  "binaries": [],
+  "test_commands": [
+    [
+      "cargo",
+      "test",
+      "--locked",
+      "--manifest-path",
+      "apps/assistant/Cargo.toml",
+      "-p",
+      "assistant-core",
+      "-p",
+      "assistant-policy",
+      "--lib"
+    ]
+  ]
 }
