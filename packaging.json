@@ -2,7 +2,11 @@
   "application": "assistant",
   "directory": "assistant",
   "packages": [
-    "nixe-assistantd"
+    "nixe-assistantd",
+    "assistant-tui",
+    "assistant-plugin-worker",
+    "assistant-privileged",
+    "assistant-asr"
   ],
   "manifest": "apps/assistant/Cargo.toml",
   "prepare": [],

@@ -26,7 +26,7 @@ fi
 if [[ ${SKIP_BUILD:-0} != 1 ]]; then
   feature_args=()
   if command -v nvcc >/dev/null; then feature_args=(--features cuda); fi
-  cargo build --release -p nixe-assistantd -p assistant-tui -p assistant-plugin-worker -p assistant-privileged -p assistant-asr "${feature_args[@]}"
+  cargo build --release --locked -p nixe-assistantd -p assistant-tui -p assistant-plugin-worker -p assistant-privileged -p assistant-asr "${feature_args[@]}"
 fi
 backup="$HOME/.local/state/nixe-assistant/backups/$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$backup/files" "$cfg_dir" "$unit_dir" "$data_dir" "$bin_dir"
@@ -38,18 +38,18 @@ done
 systemctl --user is-active nixe-assistantd.service > "$backup/daemon-state" || true
 rollback() {
   echo "Installation failed; restoring $backup" >&2
-  systemctl --user stop nixe-assistantd.service nixe-assistant-hud.service || true
+  # Restore files without stopping the running Assistant.
   cp -a "$backup/files/." "$HOME/"
   systemctl --user daemon-reload
-  if [[ $(cat "$backup/daemon-state") == active ]]; then systemctl --user restart nixe-assistantd.service nixe-assistant-hud.service || true; fi
+  # Keep the pre-install running process unchanged.
 }
 trap rollback ERR
 for binary in nixe-assistantd nixe-assistant nixe-assistant-tui nixe-assistant-plugin-worker nixe-assistant-helper nixe-assistant-asr; do
-  install -m 0755 "$root/target/release/$binary" "$bin_dir/$binary.new"
+  install -m 0755 "${CARGO_TARGET_DIR:-$root/target}/release/$binary" "$bin_dir/$binary.new"
   mv "$bin_dir/$binary.new" "$bin_dir/$binary"
 done
 for so in libonnxruntime_providers_cuda.so libonnxruntime_providers_shared.so; do
-  if [[ -e "$root/target/release/$so" ]]; then cp -a "$root/target/release/$so" "$bin_dir/$so"; fi
+  if [[ -e "${CARGO_TARGET_DIR:-$root/target}/release/$so" ]]; then cp -a "${CARGO_TARGET_DIR:-$root/target}/release/$so" "$bin_dir/$so"; fi
 done
 for name in config apps commands voxtype-parakeet; do
   if [[ ! -f "$cfg_dir/$name.toml" ]]; then install -m 0644 "$root/config/$name.toml" "$cfg_dir/$name.toml"; fi
