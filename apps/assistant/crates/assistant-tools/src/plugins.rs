@@ -988,6 +988,7 @@ pub async fn migrate(cfg: &Config, worker: &Path, checkout: &Path) -> Result<()>
         "history",
         "nixe-apps",
         "passwords",
+        "mail",
     ] {
         let folder = package_dir().join(id);
         let source = checkout.join("abilities").join(id);

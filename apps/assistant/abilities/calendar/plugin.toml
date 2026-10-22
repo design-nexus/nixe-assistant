@@ -1,10 +1,10 @@
 manifest_version = 1
 id = "calendar"
-version = "1.1.0"
-description = "Local calendar with timezone-aware events and ICS export"
+version = "1.2.0"
+description = "Calendar: Nixe Calendar's calendars when it's installed, else a local calendar with ICS export"
 executable = "python3"
 args = ["./main.py"]
-tools = ["calendar.list", "calendar.next", "calendar.read", "calendar.create", "calendar.edit", "calendar.delete", "calendar.export", "calendar.undo"]
+tools = ["calendar.list", "calendar.next", "calendar.read", "calendar.search", "calendar.free_slots", "calendar.create", "calendar.edit", "calendar.delete", "calendar.export", "calendar.undo"]
 
 [[routes]]
 pattern = "^(?i:(?:what\\x27s|what is) next on my calendar)$"
@@ -16,5 +16,6 @@ pattern = "^(?i:list (?:my )?calendar events)$"
 tool = "calendar.list"
 template = true
 
-# What it may reach (see docs/PLUGINS.md). Empty: no network, no home folder.
+# What it may reach (see docs/PLUGINS.md).
 [sandbox]
+unconfined = "hands calendar requests to Nixe Calendar, starting it when needed"

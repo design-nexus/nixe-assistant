@@ -71,11 +71,15 @@ const PLUGIN_EDITS: &[&str] = &[
     "power.normal",
     "power.configure",
     "power.unload",
+    // Task lists synced to the user's accounts (Nixe Reminders).
+    "reminders.complete",
+    "reminders.edit",
+    "reminders.delete",
 ];
 
 const PLUGIN_PREFIXES: &[&str] =
     &["routines.", "projects.", "calendar.", "file_search.", "media.", "power.", "history.", "notes.", "reminders.", "notepad.", "write.", "music.", "contacts.", "archive.", "chat.", "fonts.", "photos.", "glimpse.",
-      "video.", "theater.", "pdf.", "settings.", "store.", "tasks.", "torrents."];
+      "video.", "theater.", "pdf.", "settings.", "store.", "tasks.", "torrents.", "mail."];
 
 const DESKTOP_PREFIXES: &[&str] = &["hypr.", "toggle.", "display.", "theme.", "windows.", "workspaces.", "monitors."];
 
@@ -96,6 +100,7 @@ const DESKTOP: &[&str] = &[
 const PASSIVE_VERBS: &[&str] = &[
     "cancel", "stop", "list", "get", "read", "search", "status", "current", "preview", "snapshot", "tabs", "now", "lookup",
     "find", "show", "query", "scroll", "active", "devices", "installed", "albums", "pages", "top", "tabs",
+    "inbox", "today", "next", "free",
 ];
 
 impl Capability {
@@ -126,6 +131,8 @@ impl Capability {
             "notepad.save" | "write.save" | "write.export_pdf" | "archive.extract" | "archive.create" => return Self::FileWrite,
             // Reach the network with what they're given.
             "fonts.install" | "torrents.add" => return Self::External,
+            // Mail goes out only from the user's own press of Send; nothing here sends it.
+            "mail.send" => return Self::Disabled,
             _ => {}
         }
         if tool.starts_with("admin.") {
@@ -311,5 +318,23 @@ mod tests {
         assert_eq!(Capability::of("torrents.add"), Capability::External);
         assert_eq!(Capability::of("tasks.top"), Capability::PluginData);
         assert!(Capability::reads_private("pdf.read") && Capability::reads_private("photos.search"));
+    }
+
+    #[test]
+    fn mail_calendar_and_reminders() {
+        // Mail's reads bring in other people's words, marked untrusted.
+        for tool in ["mail.search", "mail.inbox", "mail.read"] {
+            assert_eq!(Capability::of(tool), Capability::PluginData);
+            assert!(Capability::reads_private(tool) && Capability::brings_in_untrusted(tool), "{tool}");
+        }
+        // Showing a conversation or opening a message to send isn't a read.
+        assert!(!Capability::reads_private("mail.draft") && !Capability::reads_private("mail.open"));
+        assert_eq!(Capability::of("mail.send"), Capability::Disabled);
+        for tool in ["reminders.complete", "reminders.edit", "reminders.delete", "calendar.create", "calendar.edit", "calendar.delete"] {
+            assert_eq!(Capability::of(tool), Capability::PluginEdit, "{tool}");
+        }
+        for tool in ["reminders.today", "reminders.lists", "calendar.next", "calendar.free_slots", "calendar.search"] {
+            assert!(Capability::of(tool).passive(tool), "{tool}");
+        }
     }
 }

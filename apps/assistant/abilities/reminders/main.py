@@ -1,3 +1,6 @@
+"""Timers and one-time reminders kept by the assistant. When Nixe Reminders is
+installed, reminders go to its task lists (every account's, through Evolution Data
+Server) under the same names; timers, snoozes and spoken requests stay here."""
 import datetime as dt
 import re
 import sqlite3
@@ -6,6 +9,8 @@ import time
 import uuid
 from zoneinfo import ZoneInfo
 from assistant_plugin import Plugin, tool, data_path
+import nixe_app
+from desktop_plugin import request_tools
 
 TEXT = {'type': 'string', 'minLength': 1, 'maxLength': 4096}
 ID = {'type': 'string', 'minLength': 1, 'maxLength': 128}
@@ -15,7 +20,23 @@ TOOLS = [tool('reminders.timer', 'Set a timer and acknowledge the exact deadline
          tool('reminders.list', 'List pending reminders'),
          tool('reminders.cancel', 'Cancel a reminder', {'id': ID}, ['id']),
          tool('reminders.snooze', 'Snooze a reminder', {'id': ID, 'seconds': SECONDS}, ['id', 'seconds']),
-         tool('reminders.voice', 'Parse an explicit timer or reminder phrase; return clarification for ambiguous times', {'request': TEXT}, ['request'])]
+         tool('reminders.voice', 'Parse an explicit timer or reminder phrase; return clarification for ambiguous times', {'request': TEXT}, ['request']),
+         tool('reminders.lists', 'The reminder lists'),
+         tool('reminders.today', 'Pending reminders due today or overdue'),
+         tool('reminders.search', 'Pending reminders whose text contains the words', {'query': TEXT}, ['query']),
+         tool('reminders.complete', 'Mark a reminder done', {'id': ID}, ['id']),
+         tool('reminders.edit', 'Change a reminder\'s text or its timezone-aware RFC3339 deadline', {'id': ID, 'text': TEXT, 'deadline': TEXT}, ['id']),
+         tool('reminders.delete', 'Delete a reminder', {'id': ID}, ['id'])]
+
+APP = ('io.github.design_nexus.nixe.Reminders', 'nixe-reminders')
+APP_TOOLS = {'reminders.lists', 'reminders.today', 'reminders.list', 'reminders.search', 'reminders.create',
+             'reminders.complete', 'reminders.edit', 'reminders.delete'}
+FROM_APP = nixe_app.describe(APP[1], APP_TOOLS)
+if FROM_APP is not None:
+    FROM_APP = request_tools(FROM_APP)
+# Every declared tool is offered: the app's where it has them; timers, snoozes and
+# spoken requests stay local.
+OFFERED = TOOLS if FROM_APP is None else [t for t in TOOLS if t['name'] not in APP_TOOLS] + FROM_APP
 
 def connect():
     db = sqlite3.connect(data_path('reminders.sqlite3'), timeout=5)
@@ -77,6 +98,8 @@ def handle(name, args, cancelled):
     global PENDING
     if cancelled.is_set():
         raise ValueError('cancelled')
+    if FROM_APP is not None and name in APP_TOOLS:
+        return nixe_app.call(*APP, name, args, cancelled)
     if name == 'reminders.voice':
         request = args['request']
         followup = request.strip().lower().replace(' ', '')
@@ -92,11 +115,44 @@ def handle(name, args, cancelled):
                 return args
             PENDING = None
         name = args.pop('operation', 'reminders.timer' if 'seconds' in args else 'reminders.create')
+        # A dated reminder goes to Nixe Reminders' lists when it's installed.
+        if FROM_APP is not None and name == 'reminders.create':
+            result = nixe_app.call(*APP, 'reminders.create', {'title': args['text'], 'due': args['deadline']}, cancelled)
+            return {**result, 'acknowledgement': f"Added {args['text']} to Reminders for {args['deadline']}."} if isinstance(result, dict) else result
     db = connect()
     try:
         with db:
             if name == 'reminders.list':
                 return {'reminders': [{**dict(r), 'text': r['text'][:512]} for r in db.execute('SELECT * FROM reminders WHERE status="pending" ORDER BY deadline LIMIT 100')]}
+            if name == 'reminders.lists':
+                return {'lists': [{'name': 'Assistant reminders', 'pending': db.execute('SELECT count(*) FROM reminders WHERE status="pending"').fetchone()[0]}]}
+            if name in ('reminders.today', 'reminders.search'):
+                rows = [dict(r) for r in db.execute('SELECT * FROM reminders WHERE status="pending" ORDER BY deadline LIMIT 500')]
+                if name == 'reminders.today':
+                    end = dt.datetime.combine(dt.datetime.now(timezone()).date() + dt.timedelta(days=1), dt.time(0), timezone()).timestamp()
+                    rows = [r for r in rows if r['deadline'] < end]
+                else:
+                    words = args['query'].lower().split()
+                    rows = [r for r in rows if all(w in r['text'].lower() for w in words)]
+                return {'reminders': [{**r, 'text': r['text'][:512]} for r in rows[:100]]}
+            if name in ('reminders.complete', 'reminders.delete'):
+                status = 'done' if name == 'reminders.complete' else 'cancelled'
+                if not db.execute('UPDATE reminders SET status=? WHERE id=? AND status="pending"', (status, args['id'])).rowcount:
+                    raise ValueError('reminder not found')
+                return {'id': args['id'], status: True}
+            if name == 'reminders.edit':
+                row = db.execute('SELECT * FROM reminders WHERE id=? AND status="pending"', (args['id'],)).fetchone()
+                if row is None:
+                    raise ValueError('reminder not found')
+                text, deadline = args.get('text', row['text']), row['deadline']
+                resolved = row['resolved']
+                if 'deadline' in args:
+                    when = dt.datetime.fromisoformat(args['deadline'].replace('Z', '+00:00'))
+                    if when.tzinfo is None:
+                        raise ValueError('timezone/UTC offset required')
+                    deadline, resolved = when.timestamp(), when.isoformat()
+                db.execute('UPDATE reminders SET text=?, deadline=?, resolved=? WHERE id=?', (text, deadline, resolved, args['id']))
+                return {'id': args['id'], 'text': text, 'deadline': resolved}
             if name == 'reminders.cancel':
                 changed = db.execute('UPDATE reminders SET status="cancelled" WHERE id=?', (args['id'],)).rowcount
                 if not changed:
@@ -160,7 +216,7 @@ class Delivery:
             time.sleep(1)
 
 if __name__ == '__main__':
-    plugin = Plugin('reminders', TOOLS, handle)
+    plugin = Plugin('reminders', OFFERED, handle)
     delivery = Delivery(plugin)
     plugin.event_ack = delivery.ack
     threading.Thread(target=delivery.run, daemon=True).start()

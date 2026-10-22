@@ -1,10 +1,10 @@
 manifest_version = 1
 id = "reminders"
-version = "1.1.0"
-description = "Persistent local reminders"
+version = "1.2.0"
+description = "Timers and reminders: Nixe Reminders' task lists when it's installed, else kept locally"
 executable = "python3"
 args = ["./main.py"]
-tools = ["reminders.timer", "reminders.create", "reminders.list", "reminders.cancel", "reminders.snooze", "reminders.voice"]
+tools = ["reminders.timer", "reminders.create", "reminders.list", "reminders.cancel", "reminders.snooze", "reminders.voice", "reminders.lists", "reminders.today", "reminders.search", "reminders.complete", "reminders.edit", "reminders.delete"]
 
 [[routes]]
 pattern = "^(?i:(?P<request>(?:set (?:a |an |the )?timer for|remind me (?:in|today|tomorrow)).+))$"
@@ -21,5 +21,6 @@ pattern = "^(?i:(?P<request>a ?m|p ?m))$"
 tool = "reminders.voice"
 template = true
 
-# What it may reach (see docs/PLUGINS.md). Empty: no network, no home folder.
+# What it may reach (see docs/PLUGINS.md).
 [sandbox]
+unconfined = "hands reminders to Nixe Reminders' task lists, starting it when needed"
