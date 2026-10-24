@@ -22,6 +22,8 @@ TOOLS = [
     tool('calendar.free_slots', 'Free time on a day (YYYY-MM-DD) between 9 and 17 unless given, at least 30 minutes unless given',
          {'date': NAME, 'minutes': {'type': 'integer', 'minimum': 5, 'maximum': 1440}, 'from_hour': {'type': 'integer', 'minimum': 0, 'maximum': 23},
           'to_hour': {'type': 'integer', 'minimum': 1, 'maximum': 24}}, ['date']),
+    tool('calendar.suggest_times', 'Times an event this long (minutes) fits, weekdays 9 to 17, from a date (YYYY-MM-DD) or now. Suggestions only; nothing is booked',
+         {'minutes': {'type': 'integer', 'minimum': 5, 'maximum': 1440}, 'from': NAME, 'count': {'type': 'integer', 'minimum': 1, 'maximum': 20}}, ['minutes']),
 ]
 def timestamp(value):
     parsed = dt.datetime.fromisoformat(value)
@@ -38,10 +40,23 @@ def fold(line):
     return '\r\n'.join(parts + [part])
 APP = ('io.github.design_nexus.nixe.Calendar', 'nixe-calendar')
 APP_TOOLS = {'calendar.list', 'calendar.read', 'calendar.next', 'calendar.search', 'calendar.free_slots',
-             'calendar.create', 'calendar.edit', 'calendar.delete'}
+             'calendar.suggest_times', 'calendar.create', 'calendar.edit', 'calendar.delete'}
 FROM_APP = nixe_app.describe(APP[1], APP_TOOLS)
 # Every declared tool is offered: the app's where it has them, the local export and undo.
 OFFERED = None if FROM_APP is None else FROM_APP + [t for t in TOOLS if t['name'] not in APP_TOOLS]
+
+def free_slots(rows, day, from_hour, to_hour, need):
+    """Free (start, end) timestamps on `day` between the hours (local time), each at least `need` seconds."""
+    begin = dt.datetime.combine(day, dt.time(from_hour)).astimezone().timestamp()
+    finish = dt.datetime.combine(day, dt.time(0)).astimezone().timestamp() + 3600 * to_hour
+    free, at = [], begin
+    for row in rows:
+        start, end = max(timestamp(row['start']), begin), min(timestamp(row['end']), finish)
+        if end <= begin or start >= finish: continue
+        if start - at >= need: free.append((at, start))
+        at = max(at, end)
+    if finish - at >= need: free.append((at, finish))
+    return free
 
 def handle(name, args, cancelled):
     if FROM_APP is not None and name in APP_TOOLS:
@@ -66,20 +81,24 @@ def handle(name, args, cancelled):
             words = args['query'].lower().split()
             text = lambda row: ' '.join([row.get('title', ''), row.get('location', ''), row.get('description', '')]).lower()
             return {'events': [row for row in rows if all(w in text(row) for w in words)][:100], 'provider': 'local'}
+        iso = lambda t: dt.datetime.fromtimestamp(t).astimezone().isoformat(timespec='minutes')
         if name == 'calendar.free_slots':
             day = dt.date.fromisoformat(args['date'])
-            zone = dt.datetime.now().astimezone().tzinfo
-            begin = dt.datetime.combine(day, dt.time(args.get('from_hour', 9)), zone).timestamp()
-            finish = dt.datetime.combine(day, dt.time(0), zone).timestamp() + 3600 * args.get('to_hour', 17)
-            need, free, at = 60 * args.get('minutes', 30), [], begin
-            for row in rows:
-                start, end = max(timestamp(row['start']), begin), min(timestamp(row['end']), finish)
-                if end <= begin or start >= finish: continue
-                if start - at >= need: free.append((at, start))
-                at = max(at, end)
-            if finish - at >= need: free.append((at, finish))
-            iso = lambda t: dt.datetime.fromtimestamp(t, zone).isoformat(timespec='minutes')
+            free = free_slots(rows, day, args.get('from_hour', 9), args.get('to_hour', 17), 60 * args.get('minutes', 30))
             return {'free': [{'start': iso(a), 'end': iso(b)} for a, b in free], 'provider': 'local'}
+        if name == 'calendar.suggest_times':
+            need, count = 60 * args['minutes'], args.get('count', 5)
+            now = -(-dt.datetime.now().timestamp() // 900) * 900  # the next quarter hour
+            day = dt.date.fromisoformat(args['from']) if args.get('from') else dt.date.today()
+            times = []
+            for offset in range(28):
+                date = day + dt.timedelta(days=offset)
+                if date.weekday() >= 5: continue
+                for a, b in free_slots(rows, date, 9, 17, need):
+                    a = max(a, now)
+                    if b - a >= need: times.append({'start': iso(a), 'end': iso(a + need)})
+                if len(times) >= count: break
+            return {'times': times[:count], 'provider': 'local'}
         if name == 'calendar.export':
             utc = lambda value: dt.datetime.fromtimestamp(timestamp(value), dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
             lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Nixe Assistant//Local Calendar 1//EN', 'CALSCALE:GREGORIAN']

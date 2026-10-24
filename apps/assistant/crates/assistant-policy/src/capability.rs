@@ -100,7 +100,7 @@ const DESKTOP: &[&str] = &[
 const PASSIVE_VERBS: &[&str] = &[
     "cancel", "stop", "list", "get", "read", "search", "status", "current", "preview", "snapshot", "tabs", "now", "lookup",
     "find", "show", "query", "scroll", "active", "devices", "installed", "albums", "pages", "top", "tabs",
-    "inbox", "today", "next", "free",
+    "inbox", "today", "next", "free", "suggest",
 ];
 
 impl Capability {
@@ -333,7 +333,7 @@ mod tests {
         for tool in ["reminders.complete", "reminders.edit", "reminders.delete", "calendar.create", "calendar.edit", "calendar.delete"] {
             assert_eq!(Capability::of(tool), Capability::PluginEdit, "{tool}");
         }
-        for tool in ["reminders.today", "reminders.lists", "calendar.next", "calendar.free_slots", "calendar.search"] {
+        for tool in ["reminders.today", "reminders.lists", "calendar.next", "calendar.free_slots", "calendar.suggest_times", "calendar.search"] {
             assert!(Capability::of(tool).passive(tool), "{tool}");
         }
     }
