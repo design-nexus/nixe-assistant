@@ -11,6 +11,12 @@ hold Alt+Space → speak → warm Parakeet → (desktop command | local GGUF) �
 
 Primary metric: time from finishing a sentence to hearing the first word back.
 
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/design-nexus/nixe-assistant/main/install.sh | bash
+```
+
 ## Status
 
 Spoken loop is up: Alt+Space PTT, warm Parakeet STT (F9 stays Whisper), llama.cpp
