@@ -9,11 +9,13 @@ pub struct Config {
     pub assistant: AssistantCfg,
     pub stt: SttCfg,
     pub llm: LlmCfg,
+    pub embeddings: EmbeddingsCfg,
     pub vision: VisionCfg,
     pub computer: ComputerCfg,
     pub tts: TtsCfg,
     pub vad: VadCfg,
     pub audio: AudioCfg,
+    pub events: EventsCfg,
     pub barge_in: BargeInCfg,
     pub duplex: DuplexCfg,
     pub wake_word: WakeWordCfg,
@@ -31,11 +33,50 @@ pub struct Config {
     pub system: SystemCfg,
 }
 
+/// Optional model server transport, owned by Assistant rather than individual apps.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct EmbeddingsCfg {
+    pub enabled: bool,
+    /// Explicit loopback URL for a model server's compatible embeddings endpoint.
+    pub endpoint: String,
+    pub model: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct SystemCfg {
     /// systemd user units the assistant may start, stop and restart without asking.
     pub user_units: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EventsCfg {
+    pub enabled: bool,
+    pub rate_limit_secs: u64,
+    pub duplicate_window_secs: u64,
+    pub preferences: std::collections::BTreeMap<String, EventPreference>,
+}
+
+impl Default for EventsCfg {
+    fn default() -> Self {
+        Self { enabled: true, rate_limit_secs: 30, duplicate_window_secs: 300, preferences: Default::default() }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EventPreference {
+    pub notify: bool,
+    pub speak: bool,
+    pub explain: bool,
+}
+
+impl Default for EventPreference {
+    fn default() -> Self {
+        Self { notify: true, speak: false, explain: false }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,11 +88,7 @@ pub struct ConversationCfg {
 }
 impl Default for ConversationCfg {
     fn default() -> Self {
-        Self {
-            enabled: true,
-            follow_up_secs: 10,
-            idle_secs: 60,
-        }
+        Self { enabled: true, follow_up_secs: 10, idle_secs: 60 }
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,10 +99,7 @@ pub struct DictationCfg {
 }
 impl Default for DictationCfg {
     fn default() -> Self {
-        Self {
-            enabled: true,
-            idle_secs: 120,
-        }
+        Self { enabled: true, idle_secs: 120 }
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,9 +138,7 @@ impl Default for TerminalCfg {
             timeout_secs: 120,
             commands: Default::default(),
             sandbox_network: true,
-            sandbox_read_only: ["~/.cargo", "~/.rustup", "~/.local/bin", "~/go", "~/.npm"]
-                .map(String::from)
-                .into(),
+            sandbox_read_only: ["~/.cargo", "~/.rustup", "~/.local/bin", "~/go", "~/.npm"].map(String::from).into(),
         }
     }
 }
@@ -123,12 +155,7 @@ pub struct AssistantCfg {
 
 impl Default for AssistantCfg {
     fn default() -> Self {
-        Self {
-            name: "Echo".into(),
-            persona_id: String::new(),
-            mode: "push-to-talk".into(),
-            prompt: default_assistant_prompt(),
-        }
+        Self { name: "Echo".into(), persona_id: String::new(), mode: "push-to-talk".into(), prompt: default_assistant_prompt() }
     }
 }
 
@@ -190,8 +217,24 @@ impl Default for ComputerCfg {
         Self {
             deny_classes: Vec::new(),
             confirm_words: [
-                "send", "submit", "buy", "pay", "purchase", "order", "checkout", "delete", "remove", "erase", "post",
-                "publish", "confirm", "transfer", "unsubscribe", "uninstall", "format", "wipe",
+                "send",
+                "submit",
+                "buy",
+                "pay",
+                "purchase",
+                "order",
+                "checkout",
+                "delete",
+                "remove",
+                "erase",
+                "post",
+                "publish",
+                "confirm",
+                "transfer",
+                "unsubscribe",
+                "uninstall",
+                "format",
+                "wipe",
             ]
             .iter()
             .map(|w| w.to_string())
@@ -283,6 +326,8 @@ impl Default for LlmCfg {
 pub struct TtsCfg {
     pub provider: String,
     pub voice: String,
+    /// Installed Kokoro voice applied to every persona while set.
+    pub voice_override: String,
     pub speed: f32,
     pub device: String,
     pub variant: String,
@@ -295,6 +340,7 @@ impl Default for TtsCfg {
         Self {
             provider: "kokoro".into(),
             voice: "af_heart".into(),
+            voice_override: String::new(),
             speed: 1.0,
             device: "cuda".into(),
             variant: "fp32".into(),
@@ -356,6 +402,8 @@ pub struct AudioCfg {
     pub playback_rate: u32,
     pub source: String,
     pub sink: String,
+    pub duck_external: bool,
+    pub duck_gain: f32,
 }
 
 impl Default for AudioCfg {
@@ -365,6 +413,8 @@ impl Default for AudioCfg {
             playback_rate: 24_000,
             source: "default".into(),
             sink: "default".into(),
+            duck_external: true,
+            duck_gain: 0.35,
         }
     }
 }
@@ -381,13 +431,7 @@ pub struct BargeInCfg {
 
 impl Default for BargeInCfg {
     fn default() -> Self {
-        Self {
-            enabled: true,
-            grace_ms: 500,
-            threshold: 0.08,
-            hangover_ms: 160,
-            aec: true,
-        }
+        Self { enabled: true, grace_ms: 500, threshold: 0.08, hangover_ms: 160, aec: true }
     }
 }
 
@@ -421,12 +465,41 @@ impl Default for DuplexCfg {
             on_speech: "pause".into(),
             duck_gain: 0.25,
             stop_phrases: list(&[
-                "stop", "wait", "hold on", "hang on", "never mind", "nevermind", "cancel", "enough", "that's enough",
-                "be quiet", "quiet", "shut up", "stop talking", "pause",
+                "stop",
+                "wait",
+                "hold on",
+                "hang on",
+                "never mind",
+                "nevermind",
+                "cancel",
+                "enough",
+                "that's enough",
+                "be quiet",
+                "quiet",
+                "shut up",
+                "stop talking",
+                "pause",
             ]),
             backchannels: list(&[
-                "mm hm", "mhm", "mm", "hmm", "uh huh", "yeah", "yep", "yes", "okay", "ok", "right", "sure", "i see",
-                "got it", "alright", "all right", "cool", "nice", "great",
+                "mm hm",
+                "mhm",
+                "mm",
+                "hmm",
+                "uh huh",
+                "yeah",
+                "yep",
+                "yes",
+                "okay",
+                "ok",
+                "right",
+                "sure",
+                "i see",
+                "got it",
+                "alright",
+                "all right",
+                "cool",
+                "nice",
+                "great",
             ]),
             noise_ms: 1500,
             min_rms: 0.003,
@@ -514,11 +587,7 @@ impl WakeWordCfg {
     }
 
     pub fn prefix_list(&self) -> Vec<String> {
-        self.prefixes
-            .iter()
-            .map(|s| s.trim().to_lowercase())
-            .filter(|s| !s.is_empty())
-            .collect()
+        self.prefixes.iter().map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()).collect()
     }
 }
 
@@ -572,12 +641,7 @@ impl Default for ClockCfg {
                 "tell me the date".into(),
                 "what date is it".into(),
             ],
-            strip_tails: vec![
-                "please".into(),
-                "now".into(),
-                "right now".into(),
-                "for me".into(),
-            ],
+            strip_tails: vec!["please".into(), "now".into(), "right now".into(), "for me".into()],
         }
     }
 }
@@ -654,11 +718,25 @@ fn normalize_ask(text: &str) -> String {
 #[serde(default)]
 pub struct UiCfg {
     pub enabled: bool,
+    pub aura_style: String,
+    pub aura_visibility: String,
+    pub aura_intensity: f64,
+    pub aura_thickness: f64,
+    pub aura_monitors: Vec<String>,
+    pub canvas_enabled: bool,
 }
 
 impl Default for UiCfg {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            aura_style: "edge-flow".into(),
+            aura_visibility: "activity".into(),
+            aura_intensity: 0.65,
+            aura_thickness: 5.0,
+            aura_monitors: Vec::new(),
+            canvas_enabled: true,
+        }
     }
 }
 
@@ -732,10 +810,7 @@ pub enum PlanMode {
 
 impl AgentCfg {
     pub fn budget(&self) -> assistant_policy::Budget {
-        assistant_policy::Budget {
-            max_calls: self.max_calls,
-            max_active_ms: self.max_active_secs * 1000,
-        }
+        assistant_policy::Budget { max_calls: self.max_calls, max_active_ms: self.max_active_secs * 1000 }
     }
 }
 
@@ -863,11 +938,7 @@ pub struct HttpCfg {
 
 impl Default for HttpCfg {
     fn default() -> Self {
-        Self {
-            enabled: true,
-            bind: "127.0.0.1".into(),
-            port: 8765,
-        }
+        Self { enabled: true, bind: "127.0.0.1".into(), port: 8765 }
     }
 }
 
@@ -962,8 +1033,9 @@ impl Config {
             return Ok(cfg);
         }
         let text = fs::read_to_string(path)?;
-        let cfg: Self = toml::from_str(&text)?;
+        let mut cfg: Self = toml::from_str(&text)?;
         cfg.validate()?;
+        if !cfg.tts.voice_override.is_empty() { cfg.tts.voice = cfg.tts.voice_override.clone(); }
         Ok(cfg)
     }
 
@@ -977,20 +1049,15 @@ impl Config {
         let mut existing = if path.exists() {
             let text = fs::read_to_string(path)?;
             let _: Config = toml::from_str(&text)?;
-            text.parse::<toml_edit::DocumentMut>()
-                .map_err(|e| crate::Error::msg(e.to_string()))?
+            text.parse::<toml_edit::DocumentMut>().map_err(|e| crate::Error::msg(e.to_string()))?
         } else {
             toml_edit::DocumentMut::new()
         };
-        let mut updated = toml::to_string_pretty(self)?
-            .parse::<toml_edit::DocumentMut>()
-            .map_err(|e| crate::Error::msg(e.to_string()))?;
+        let mut updated =
+            toml::to_string_pretty(self)?.parse::<toml_edit::DocumentMut>().map_err(|e| crate::Error::msg(e.to_string()))?;
         tidy_floats(updated.as_table_mut());
         merge_table(existing.as_table_mut(), updated.as_table());
-        if let Some(table) = existing
-            .get_mut("location")
-            .and_then(toml_edit::Item::as_table_mut)
-        {
+        if let Some(table) = existing.get_mut("location").and_then(toml_edit::Item::as_table_mut) {
             if self.location.latitude.is_none() {
                 table.remove("latitude");
             }
@@ -1003,6 +1070,23 @@ impl Config {
 
     pub fn validate(&self) -> crate::Result<()> {
         let fail = |s: &str| Err(crate::Error::msg(s));
+        if !["full", "edge-flow"].contains(&self.ui.aura_style.as_str())
+            || !["activity", "persistent"].contains(&self.ui.aura_visibility.as_str())
+            || !(0.0..=1.0).contains(&self.ui.aura_intensity)
+            || !(1.0..=24.0).contains(&self.ui.aura_thickness)
+        {
+            return fail("invalid Aura settings");
+        }
+        if self.events.rate_limit_secs > 3600
+            || self.events.duplicate_window_secs > 86_400
+            || self
+                .events
+                .preferences
+                .keys()
+                .any(|k| k.is_empty() || k.len() > 128 || !k.bytes().all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c)))
+        {
+            return fail("invalid events settings");
+        }
         if !(0.0..=1.0).contains(&self.duplex.duck_gain) {
             return fail("duplex.duck_gain must be between 0 and 1");
         }
@@ -1015,9 +1099,7 @@ impl Config {
         if !["pause", "duck"].contains(&self.duplex.on_speech.as_str()) {
             return fail("duplex.on_speech must be pause or duck");
         }
-        self.location
-            .validate()
-            .map_err(|e| crate::Error::msg(e.to_string()))?;
+        self.location.validate().map_err(|e| crate::Error::msg(e.to_string()))?;
         if self.conversation.follow_up_secs > 60
             || !(10..=600).contains(&self.conversation.idle_secs)
             || !(10..=600).contains(&self.dictation.idle_secs)
@@ -1027,11 +1109,7 @@ impl Config {
         }
         if self.browser.node.trim().is_empty()
             || self.browser.worker.trim().is_empty()
-            || self
-                .terminal
-                .commands
-                .values()
-                .any(|args| args.is_empty() || args.iter().any(|a| a.contains('\0')))
+            || self.terminal.commands.values().any(|args| args.is_empty() || args.iter().any(|a| a.contains('\0')))
         {
             return fail("invalid browser or configured command");
         }
@@ -1078,6 +1156,9 @@ impl Config {
         {
             return fail("invalid TTS settings");
         }
+        if self.tts.voice_override.len() > 80
+            || !self.tts.voice_override.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        { return fail("invalid TTS voice override"); }
         if chrono::format::StrftimeItems::new(&self.clock.time_format)
             .chain(chrono::format::StrftimeItems::new(&self.clock.date_format))
             .any(|item| matches!(item, chrono::format::Item::Error))
@@ -1097,43 +1178,27 @@ impl Config {
         if self.audio.capture_rate != 16_000 || self.audio.playback_rate != 24_000 {
             return fail("audio requires 16000 capture / 24000 playback");
         }
-        if self
-            .http
-            .bind
-            .parse::<std::net::IpAddr>()
-            .map(|a| !a.is_loopback())
-            .unwrap_or(true)
-            || self.http.port == 0
-        {
+        if !self.audio.duck_gain.is_finite() || !(0.05..=1.0).contains(&self.audio.duck_gain) {
+            return fail("audio duck_gain must be between 0.05 and 1.0");
+        }
+        if self.http.bind.parse::<std::net::IpAddr>().map(|a| !a.is_loopback()).unwrap_or(true) || self.http.port == 0 {
             return fail("HTTP must bind a loopback IP and nonzero port");
         }
         let p = &self.permissions;
-        for policy in [
-            &p.shell,
-            &p.launch_app,
-            &p.volume,
-            &p.files_read,
-            &p.files_write,
-            &p.shutdown,
-            &p.admin,
-        ]
-        .into_iter()
-        .chain(self.mcp.permissions.values())
+        for policy in [&p.shell, &p.launch_app, &p.volume, &p.files_read, &p.files_write, &p.shutdown, &p.admin]
+            .into_iter()
+            .chain(self.mcp.permissions.values())
         {
             if assistant_policy::Decision::parse(policy).is_none() {
                 return fail("permission must be allow, confirm (or ask), or deny");
             }
         }
-        if !(1..=32).contains(&self.agent.max_calls)
-            || !(10..=1800).contains(&self.agent.max_active_secs)
-        {
+        if !(1..=32).contains(&self.agent.max_calls) || !(10..=1800).contains(&self.agent.max_active_secs) {
             return fail("agent max_calls must be 1–32 and max_active_secs 10–1800");
         }
         for (name, server) in &self.mcp.servers {
             if name.is_empty()
-                || !name
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || "_-".contains(c))
+                || !name.chars().all(|c| c.is_ascii_alphanumeric() || "_-".contains(c))
                 || server.command.trim().is_empty()
             {
                 return fail("invalid MCP server name or command");
@@ -1148,9 +1213,7 @@ impl Config {
         let mut restart = Vec::new();
         macro_rules! deferred {
             ($section:ident, $field:ident) => {
-                if serde_json::to_value(&self.$section.$field).ok()
-                    != serde_json::to_value(&running.$section.$field).ok()
-                {
+                if serde_json::to_value(&self.$section.$field).ok() != serde_json::to_value(&running.$section.$field).ok() {
                     restart.push(concat!(stringify!($section), ".", stringify!($field)).into());
                     next.$section.$field = running.$section.$field.clone();
                 }
@@ -1179,6 +1242,8 @@ impl Config {
         deferred!(audio, sink);
         deferred!(audio, capture_rate);
         deferred!(audio, playback_rate);
+        deferred!(audio, duck_external);
+        deferred!(audio, duck_gain);
         deferred!(barge_in, aec);
         deferred!(http, enabled);
         deferred!(http, bind);
@@ -1192,16 +1257,20 @@ impl Config {
         (next, restart)
     }
 
-    /// Activates a persona profile: updates name, prompt, TTS voice, wake prefixes, and aliases.
+    /// Activates a persona, loading its separate voice profile and optional global override.
     pub fn activate_persona(&mut self, persona: &crate::Persona) {
         self.assistant.persona_id = persona.id.clone();
         self.assistant.name = persona.name.clone();
         if !persona.prompt.is_empty() {
             self.assistant.prompt = persona.prompt.clone();
         }
-        if !persona.voice.is_empty() {
-            self.tts.voice = persona.voice.clone();
-        }
+        self.tts.voice = if !self.tts.voice_override.is_empty() {
+            self.tts.voice_override.clone()
+        } else {
+            crate::VoiceProfile::load(&persona.id).ok().flatten()
+                .filter(|profile| profile.provider == "kokoro")
+                .map(|profile| profile.voice).unwrap_or_else(|| persona.voice.clone())
+        };
         if !persona.prefixes.is_empty() {
             self.wake_word.prefixes = persona.prefixes.clone();
         }
@@ -1225,9 +1294,7 @@ impl Config {
         candidates.retain(|path| {
             path.file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| {
-                    !name.to_lowercase().contains("mmproj") && !name.contains("-of-")
-                })
+                .is_some_and(|name| !name.to_lowercase().contains("mmproj") && !name.contains("-of-"))
         });
         candidates.sort();
         candidates.dedup();
@@ -1249,11 +1316,9 @@ impl Config {
             "smollm2-1.7b-instruct-q4_k_m.gguf",
         ];
         for filename in PREFERRED {
-            if let Some(path) = models.iter().find(|p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.eq_ignore_ascii_case(filename))
-            }) {
+            if let Some(path) =
+                models.iter().find(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.eq_ignore_ascii_case(filename)))
+            {
                 return path.clone();
             }
         }
@@ -1270,10 +1335,7 @@ impl Config {
     }
 
     pub fn system_prompt(&self) -> String {
-        let mut s = self
-            .assistant
-            .prompt
-            .replace("{name}", &self.assistant.name);
+        let mut s = self.assistant.prompt.replace("{name}", &self.assistant.name);
         if s.trim().is_empty() {
             s = default_assistant_prompt().replace("{name}", &self.assistant.name);
         }
@@ -1281,11 +1343,8 @@ impl Config {
         s.push_str(" Short answers are the default, not a limit: when asked for something longer, such as a story, an explanation or a list, give it in full and never refuse because of length.");
         s.push_str(" For a user in the United States, always use imperial units: Fahrenheit, miles, miles per hour, feet, and pounds. Do not default to metric for US locations.");
         if self.clock.enabled && self.clock.inject_prompt && !self.clock.prompt.is_empty() {
-            let line = self
-                .clock
-                .prompt
-                .replace("{time}", &self.clock.format_time())
-                .replace("{date}", &self.clock.format_date());
+            let line =
+                self.clock.prompt.replace("{time}", &self.clock.format_time()).replace("{date}", &self.clock.format_date());
             s.push(' ');
             s.push_str(&line);
         }
@@ -1311,10 +1370,7 @@ fn scan_dir(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<PathBuf>) 
 }
 
 pub fn default_toml() -> &'static str {
-    include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../config/config.toml"
-    ))
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/config.toml"))
 }
 
 /// Settings are single precision: 0.4 serializes as 0.4000000059604645. Written back in
@@ -1333,17 +1389,11 @@ fn tidy_floats(table: &mut toml_edit::Table) {
 
 pub fn merge_table(dst: &mut toml_edit::Table, src: &toml_edit::Table) {
     for (key, value) in src.iter() {
-        if let (Some(a), Some(b)) = (
-            dst.get_mut(key).and_then(|i| i.as_table_mut()),
-            value.as_table(),
-        ) {
+        if let (Some(a), Some(b)) = (dst.get_mut(key).and_then(|i| i.as_table_mut()), value.as_table()) {
             merge_table(a, b);
         } else if dst.get(key).map(ToString::to_string) != Some(value.to_string()) {
             let mut replacement = value.clone();
-            if let (Some(old), Some(new)) = (
-                dst.get(key).and_then(|i| i.as_value()),
-                replacement.as_value_mut(),
-            ) {
+            if let (Some(old), Some(new)) = (dst.get(key).and_then(|i| i.as_value()), replacement.as_value_mut()) {
                 *new.decor_mut() = old.decor().clone();
             }
             dst.insert(key, replacement);
@@ -1410,7 +1460,12 @@ mod tests {
     #[test]
     fn projector_matches_its_model() {
         let dir = tempfile::tempdir().unwrap();
-        for f in ["gemma-4-E4B-it-Q4_K_M.gguf", "Qwen3.5-9B-Q4_K_M.gguf", "mmproj-gemma-4-E4B-it-BF16.gguf", "mmproj-Qwen3.5-9B-BF16.gguf"] {
+        for f in [
+            "gemma-4-E4B-it-Q4_K_M.gguf",
+            "Qwen3.5-9B-Q4_K_M.gguf",
+            "mmproj-gemma-4-E4B-it-BF16.gguf",
+            "mmproj-Qwen3.5-9B-BF16.gguf",
+        ] {
             std::fs::write(dir.path().join(f), b"x").unwrap();
         }
         let v = VisionCfg::default();
@@ -1462,11 +1517,7 @@ mod tests {
         assert!(cfg.wake_word.phrases.iter().any(|p| p == "echo"));
         assert!(cfg.clock.enabled);
         assert!(cfg.clock.inject_prompt);
-        assert!(cfg
-            .clock
-            .time_phrases
-            .iter()
-            .any(|p| p == "what time is it"));
+        assert!(cfg.clock.time_phrases.iter().any(|p| p == "what time is it"));
         assert_eq!(cfg.vad.backend, "silero");
         assert!((cfg.vad.threshold - 0.5).abs() < f32::EPSILON);
     }
@@ -1476,16 +1527,12 @@ mod tests {
         let clock = ClockCfg::default();
         let spoken = clock.spoken_reply("what time is it?").expect("time phrase");
         assert!(spoken.starts_with("It's "), "{spoken}");
-        let spoken = clock
-            .spoken_reply("what's the time please")
-            .expect("apostrophe and tail");
+        let spoken = clock.spoken_reply("what's the time please").expect("apostrophe and tail");
         assert!(spoken.starts_with("It's "), "{spoken}");
         let spoken = clock.spoken_reply("what day is it").expect("date phrase");
         assert!(spoken.starts_with("It's "), "{spoken}");
         assert!(clock.spoken_reply("open terminal").is_none());
-        assert!(clock
-            .spoken_reply("what time does the store close")
-            .is_none());
+        assert!(clock.spoken_reply("what time does the store close").is_none());
     }
 
     #[test]
@@ -1494,10 +1541,7 @@ mod tests {
         let prompt = cfg.system_prompt();
         assert!(prompt.contains("current local time"), "{prompt}");
         assert!(prompt.contains(&cfg.clock.format_time()), "{prompt}");
-        assert!(
-            !prompt.to_lowercase().contains("catch a command"),
-            "{prompt}"
-        );
+        assert!(!prompt.to_lowercase().contains("catch a command"), "{prompt}");
     }
 }
 
@@ -1508,7 +1552,8 @@ mod safety_tests {
     fn saves_preserve_user_data_and_refuse_corruption() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        fs::write(&path,"# User comment\n[assistant]\nname = 'Old' # name comment\ncustom = 'keep me'\n[future]\nvalue = 42\n").unwrap();
+        fs::write(&path, "# User comment\n[assistant]\nname = 'Old' # name comment\ncustom = 'keep me'\n[future]\nvalue = 42\n")
+            .unwrap();
         let mut cfg = Config::load_from(&path).unwrap();
         cfg.assistant.name = "New".into();
         cfg.save_to(&path).unwrap();

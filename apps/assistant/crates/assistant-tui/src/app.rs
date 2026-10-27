@@ -86,6 +86,7 @@ pub struct App {
     pub selected_feature_idx: usize,
     pub selected_voice_idx: usize,
     pub voices: Vec<&'static str>,
+    pub voice_labels: std::collections::BTreeMap<String, String>,
     pub personas: Vec<Persona>,
     pub saved_personas: Vec<Persona>,
     pub selected_persona_idx: usize,
@@ -144,6 +145,11 @@ impl App {
         let theme = crate::theme::resolve(&theme_id, omarchy.as_ref());
         let mut config = Config::load()?;
         let personas = Persona::load_all()?;
+        let voice_labels = personas.iter().map(|p| {
+            let voice = assistant_core::VoiceProfile::load(&p.id).ok().flatten()
+                .map(|profile| profile.voice).unwrap_or_else(|| p.voice.clone());
+            (p.id.clone(), voice)
+        }).collect();
         if config.assistant.persona_id.is_empty() {
             if let Some(p) = personas
                 .iter()
@@ -152,7 +158,7 @@ impl App {
                 config.assistant.persona_id = p.id.clone();
             }
         }
-        let voices = vec![
+        let mut voices = vec![
             "af_heart",
             "af_bella",
             "af_sarah",
@@ -165,9 +171,12 @@ impl App {
             "bm_george",
             "bm_lewis",
         ];
+        let installed = assistant_core::installed_kokoro_voices();
+        if !installed.is_empty() { voices.retain(|voice| installed.iter().any(|item| item == voice)); }
+        if voices.is_empty() { voices.push("af_heart"); }
         let selected_voice_idx = voices
             .iter()
-            .position(|v| *v == config.tts.voice)
+            .position(|v| *v == if config.tts.voice_override.is_empty() { &config.tts.voice } else { &config.tts.voice_override })
             .unwrap_or(0);
         let selected_persona_idx = personas
             .iter()
@@ -200,6 +209,7 @@ impl App {
             selected_feature_idx: 0,
             selected_voice_idx,
             voices,
+            voice_labels,
             saved_personas: personas.clone(),
             personas,
             selected_persona_idx,
@@ -318,6 +328,7 @@ impl App {
         self.operation_busy = true;
         let config = self.config.clone();
         let personas = self.personas.clone();
+        let voice_labels = self.voice_labels.clone();
         let old = self.saved_personas.clone();
         let tx = self.tx.clone();
         let apps = self.apps_text.clone();
@@ -327,6 +338,7 @@ impl App {
             let result = tokio::task::spawn_blocking({
                 let config = config.clone();
                 let personas = personas.clone();
+                let voice_labels = voice_labels.clone();
                 let apps = apps.clone();
                 let commands = commands.clone();
                 move || {
@@ -338,6 +350,13 @@ impl App {
                     )?;
                     for p in &personas {
                         p.save()?;
+                        if let Some(voice) = voice_labels.get(&p.id) {
+                            let mut profile = assistant_core::VoiceProfile::ensure_for(p)?;
+                            if &profile.voice != voice {
+                                profile.voice = voice.clone();
+                                profile.save()?;
+                            }
+                        }
                     }
                     for p in old {
                         if !personas.iter().any(|new| new.id == p.id) {
@@ -767,13 +786,7 @@ impl App {
     pub fn cycle_voice(&mut self) {
         self.selected_voice_idx = (self.selected_voice_idx + 1) % self.voices.len();
         self.config.tts.voice = self.voices[self.selected_voice_idx].into();
-        if let Some(p) = self
-            .personas
-            .iter_mut()
-            .find(|p| p.id == self.config.assistant.persona_id)
-        {
-            p.voice = self.config.tts.voice.clone();
-        }
+        self.config.tts.voice_override = self.config.tts.voice.clone();
         self.changed();
     }
     pub fn selected_persona(&self) -> Option<&Persona> {
@@ -799,6 +812,7 @@ impl App {
             return;
         }
         self.personas.push(p);
+        if let Some(p) = self.personas.last() { self.voice_labels.insert(p.id.clone(), p.voice.clone()); }
         self.selected_persona_idx = self.personas.len() - 1;
         self.changed();
     }
@@ -808,7 +822,8 @@ impl App {
                 self.set_toast("Cannot delete a built-in or active persona");
                 return;
             }
-            self.personas.remove(self.selected_persona_idx);
+            let removed = self.personas.remove(self.selected_persona_idx);
+            self.voice_labels.remove(&removed.id);
             self.selected_persona_idx = self.selected_persona_idx.saturating_sub(1);
             self.changed();
         }

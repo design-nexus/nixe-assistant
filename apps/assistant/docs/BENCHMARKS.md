@@ -147,10 +147,96 @@ warm-up, one phrase per call (how the assistant feeds Kokoro), assistant stopped
 | VibeVoice Realtime 0.5B (SDPA) | GPU | 475 ms | 1047 ms | 2174 ms | 0.21 / 0.18 | 2.7 GB |
 | Qwen3-TTS 0.6B CustomVoice | GPU | 1243–1671 ms | 2781–3282 ms | 5595–7872 ms | ~0.6 | 2.4 GB |
 | Qwen3-TTS 1.7B CustomVoice | GPU | 962–1274 ms | 3022–3363 ms | 6029–6855 ms | ~0.6 | 4.3 GB |
+| Chatterbox Turbo (reference clip) | GPU | 646 ms | 982 ms | 1734 ms | 0.20 / 0.18 | 3.3 GB |
 
 Kokoro stays: as fast as the best, on the CPU, leaving the GPU to the language model. Gepard
-and VibeVoice can stream (not measured here; Gepard's needs its vLLM build). Qwen3-TTS has no
-English-native female voice (Serena and Vivian were tried).
+and VibeVoice can stream (not measured here; Gepard's needs its vLLM build). The Qwen
+CustomVoice presets tested here lacked a suitable English-native female voice;
+that finding does not apply to Qwen's reference-audio cloning model.
+
+Chatterbox Turbo was tested later with its 0.1.7 runtime, Torch 2.11 CUDA 12.8
+for this RTX 5080, a 16 s reference clip, and the Assistant daemon resident.
+Cold load was 17.4 s. The numbers above are full phrase completion times, not
+streaming first audio. Voice likeness still needs a listening trial against an
+approved developer reference; the sample trial WAVs are in `benchmarks/trials/results/`.
+
+### Cloned-voice comparison (2026-10-27)
+
+The earlier Qwen rows above used **CustomVoice presets**, not cloning. A separate
+comparison used Qwen3-TTS 0.6B/1.7B **Base** and Chatterbox Turbo with the same
+8.08-second reference WAV and transcript from Qwen's published cloning example.
+All three generated the same three phrases, three runs per phrase after warm-up,
+with the Assistant daemon resident. Qwen's reference conditioning was computed
+once and reused for each phrase, as its API recommends.
+
+| Clone backend | Short median | Typical median | Long median | Ready after start | Peak allocated VRAM |
+|---|---:|---:|---:|---:|---:|
+| Chatterbox Turbo | **488 ms** | **901 ms** | **1536 ms** | 12.1 s | 3198 MiB |
+| Qwen3-TTS 0.6B Base | 1333 ms | 2846 ms | 5518 ms | 19.4 s | **2629 MiB** |
+| Qwen3-TTS 1.7B Base | 1052 ms | 2506 ms | 5438 ms | **10.1 s** | 4552 MiB |
+
+Ready time includes model load and, for Qwen, reference prompt preparation; it
+is order-sensitive because the 1.7B run benefited from warmed libraries and
+caches. The timed phrase calls return complete WAVs, so this table does not
+measure streaming first-audio latency. The installed Parakeet recognizer heard
+50/50 intended words from each Qwen sample set and 48/50 from Chatterbox (two
+errors in the long phrase). That is one generated sample per phrase and is only
+an intelligibility check; naturalness and speaker likeness require listening.
+The WAVs and JSON measurements are in `benchmarks/trials/results/` with the
+`shared-ref` suffix, along with `clone-intelligibility-shared-ref.json`.
+
+## Gemma 4 E4B versus Nemotron 3.5 Bolt E4B (2026-10-27)
+
+The same local planner suite ran against both Q4_K_M GGUF models at 12,288 context:
+105 fixed next-step decisions across computer control and named application tools.
+Detailed results are in `benchmarks/bolt-results/`.
+
+| Model | Computer steps | Named app steps | All app tools | Detours | Median / p90 |
+|---|---:|---:|---:|---:|---:|
+| Gemma 4 E4B | 18/21 | 39/42 | 38/42 | 2 | 793 / 1123 ms |
+| Nemotron 3.5 Bolt E4B | 14/21 | 40/42 | 37/42 | 5 | 777 / 1139 ms |
+
+These are next-step scores from a fixed local suite, not end-to-end task success.
+Gemma remains the default because Bolt loses four computer steps for no material
+latency gain. The Gemma planner run's VRAM delta is invalid: a separate daemon
+started during that run. Conversation timing and memory are measured separately.
+
+`nyx-assistant bench conversation MODEL.gguf` used the same four local prompts,
+12,288 context, 512-token cap, and inference settings, with the existing daemon
+resident (5,483 MiB baseline VRAM). Responses and per-case timings are saved as
+`gemma-conversation.json` and `bolt-conversation.json` in that results directory.
+
+| Model | Load | First token, first case | Generation chunks/s | Added VRAM | Process RSS |
+|---|---:|---:|---:|---:|---:|
+| Gemma 4 E4B | 4550 ms | 192 ms | 99–109 | 4452 MiB | 3543 MiB |
+| Nemotron 3.5 Bolt E4B | 5211 ms | 166 ms | 93–105 | 4606 MiB | 4347 MiB |
+
+Chunks/s is the inference stream rate, an approximation of token throughput.
+Both kept the stated persona and remembered the multi-turn fact. Bolt gave a
+more useful disk diagnosis (`/tmp` or build mount plus inode usage); Gemma gave
+inode and quota checks but missed the likely different filesystem. Four
+conversation prompts are too few to choose a default.
+
+### Fresh neutral task set
+
+`benchmarks/fresh_neutral.py` contains 24 new desktop next-action cases and
+acceptable calls fixed before either model ran. It uses an already installed
+llama-server with the same Q4_K_M models, 12,288 context, temperature 0, no
+persona prompt, and no worked examples. The neutral system message contains
+only the available tools and response format. Raw answers are in
+`benchmarks/bolt-results/*-fresh-neutral.json`.
+
+| Model | Correct next actions | Median response |
+|---|---:|---:|
+| Gemma 4 E4B | 15/24 | 164 ms |
+| Nemotron 3.5 Bolt E4B | 15/24 | 166 ms |
+
+Gemma alone passed finding Photos' Export control and reading the Save As
+dialog. Bolt alone passed refreshing the Browser page and finishing after an
+already completed window read. Both missed seven cases, including handling a
+confirmation-required result. The simplified neutral tool catalog is less
+specific than the Assistant's production catalog, and this set measures only
+one next action per case. It does not establish a default-model winner.
 
 ## Ternary Bonsai 2 as the planner (2026-10-18)
 

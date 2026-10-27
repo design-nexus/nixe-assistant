@@ -34,6 +34,10 @@ pub fn personas_dir() -> PathBuf {
     config_dir().join("personas")
 }
 
+pub fn voices_dir() -> PathBuf {
+    config_dir().join("voices")
+}
+
 pub fn apps_path() -> PathBuf {
     config_dir().join("apps.toml")
 }

@@ -21,10 +21,10 @@ class Plugin:
         with self.lock:
             print(raw, flush=True)
 
-    def event(self, event_id, title, text, speech=None):
+    def event(self, event_id, title, text, speech=None, kind='generic'):
         self.write({'jsonrpc': '2.0', 'method': 'notifications/assistant/event',
                     'params': {'version': 1, 'id': event_id, 'title': title,
-                               'text': text, 'speech': speech}})
+                               'text': text, 'speech': speech, 'kind': kind}})
 
     async def request(self, message, cancelled):
         ident = message['id']

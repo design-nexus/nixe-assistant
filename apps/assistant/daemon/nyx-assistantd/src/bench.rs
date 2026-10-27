@@ -6,6 +6,8 @@
 
 #[path = "bench_planner.rs"]
 pub mod planner;
+#[path = "bench_conversation.rs"]
+pub mod conversation;
 
 use anyhow::{bail, Context, Result};
 use assistant_ipc::{request, send_until_done, Command, Control};

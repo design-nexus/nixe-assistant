@@ -154,6 +154,7 @@ pub fn app_tool_prefixes(text: &str) -> Vec<&'static str> {
         ("settings", "settings."),
         ("store", "store."),
         ("tasks", "tasks."),
+        ("notes", "notes."),
     ] {
         if place(name) {
             out.push(prefix);

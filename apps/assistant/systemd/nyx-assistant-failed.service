@@ -1,6 +1,7 @@
 [Unit]
-Description=Tell the user Nyx Assistant stopped after repeated crashes
+Description=Tell the user Assistant stopped after repeated crashes
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/notify-send -u critical -a "Nyx Assistant" "Nyx Assistant stopped" "It crashed repeatedly. See: journalctl --user -u nyx-assistantd"
+ExecStartPre=-%h/.local/bin/nyx-assistant event-spool nyx-assistantd.service
+ExecStart=/usr/bin/notify-send -u critical -a Assistant "Assistant stopped" "It crashed repeatedly. See: journalctl --user -u nyx-assistantd"

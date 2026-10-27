@@ -202,11 +202,11 @@ class Delivery:
                     self.overdue = [r['id'] for r in db.execute('SELECT id FROM reminders WHERE status="pending" AND deadline<=?', (self.started,))]
                 overdue = [dict(r) for r in db.execute('SELECT * FROM reminders WHERE status="pending" AND deadline<=?', (self.started,)) if r['id'] in self.overdue]
                 due = [dict(r) for r in db.execute('SELECT * FROM reminders WHERE status="pending" AND deadline>? AND deadline<=?', (self.started, time.time()))]
-            events = [('overdue', f'{len(overdue)} overdue reminders: ' + '; '.join(r['text'][:120] for r in overdue[:5]), None)] if overdue else []
-            events += [(r['id'], r['text'], r['text']) for r in due]
-            for ident, text, speech in events:
+            events = [('overdue', f'{len(overdue)} overdue reminders: ' + '; '.join(r['text'][:120] for r in overdue[:5]), None, 'reminder.overdue')] if overdue else []
+            events += [(r['id'], r['text'], r['text'], 'reminder.due') for r in due]
+            for ident, text, speech, kind in events:
                 if time.time() - self.last.get(ident, 0) >= 30:
-                    self.plugin.event(ident, 'Reminders', text, speech)
+                    self.plugin.event(ident, 'Reminders', text, speech, kind)
                     self.last[ident] = time.time()
         finally:
             db.close()

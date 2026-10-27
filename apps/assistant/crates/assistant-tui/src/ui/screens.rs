@@ -391,7 +391,8 @@ fn personas_pane(frame: &mut Frame, app: &mut App, area: Rect) {
         .personas
         .iter()
         .map(|p| {
-            let mut spans = vec![Span::styled(p.name.clone(), plain(t)), Span::styled(format!("  {}", p.voice), muted(t))];
+            let voice = app.voice_labels.get(&p.id).cloned().unwrap_or_else(|| p.voice.clone());
+            let mut spans = vec![Span::styled(p.name.clone(), plain(t)), Span::styled(format!("  {voice}"), muted(t))];
             if p.id == app.config.assistant.persona_id {
                 spans.push(Span::styled("  ● active", Style::default().fg(t.green)));
             }
@@ -447,7 +448,8 @@ fn persona_details(frame: &mut Frame, app: &mut App, area: Rect) {
     if !active {
         lines.push(Line::from(key(&t, "Enter", "use this persona")));
     }
-    lines.push(kv(&t, "Voice", p.voice.clone(), data(&t)));
+    let voice = app.voice_labels.get(&p.id).cloned().unwrap_or_else(|| p.voice.clone());
+    lines.push(kv(&t, "Voice", voice, data(&t)));
     lines.push(Line::from(vec![
         Span::styled(format!("{:<13}", "Wake word"), muted(&t)),
         on_off(&t, app.config.wake_word.enabled),

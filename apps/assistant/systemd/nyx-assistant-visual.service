@@ -1,0 +1,14 @@
+[Unit]
+Description=Assistant Aura and Canvas
+After=graphical-session.target nyx-assistantd.service
+PartOf=graphical-session.target nyx-assistantd.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/nyx-assistant-visual
+Restart=on-failure
+RestartSec=2
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
+
+[Install]
+WantedBy=nyx-assistantd.service

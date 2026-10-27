@@ -811,11 +811,13 @@ impl App {
             "Next persona voice" => {
                 let voices = self.voices.clone();
                 let active = self.config.assistant.persona_id.clone();
-                if let Some(p) = self.personas.get_mut(self.selected_persona_idx) {
-                    let index = voices.iter().position(|v| *v == p.voice).unwrap_or(0);
-                    p.voice = voices[(index + 1) % voices.len()].into();
-                    if p.id == active {
-                        self.config.tts.voice = p.voice.clone();
+                if let Some(p) = self.personas.get(self.selected_persona_idx) {
+                    let current = self.voice_labels.get(&p.id).map(String::as_str).unwrap_or(&p.voice);
+                    let index = voices.iter().position(|v| *v == current).unwrap_or(0);
+                    let next = voices[(index + 1) % voices.len()].to_string();
+                    self.voice_labels.insert(p.id.clone(), next.clone());
+                    if p.id == active && self.config.tts.voice_override.is_empty() {
+                        self.config.tts.voice = next;
                     }
                     self.changed();
                 }

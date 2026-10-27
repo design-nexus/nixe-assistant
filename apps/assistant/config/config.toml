@@ -26,6 +26,7 @@ n_ubatch = 512
 [tts]
 provider = "kokoro"
 voice = "af_heart"
+voice_override = "" # optional installed Kokoro voice used for every persona
 speed = 1.0
 device = "cuda"
 variant = "fp32"
@@ -48,6 +49,18 @@ capture_rate = 16000
 playback_rate = 24000
 source = "default"
 sink = "default"
+duck_external = true # Lower other playback streams only while Assistant speaks.
+duck_gain = 0.35 # Fraction of each stream's own volume; restored afterward.
+
+[events]
+enabled = true
+rate_limit_secs = 30
+duplicate_window_secs = 300
+# Each event type can override notification, speech and local explanation.
+# [events.preferences."reminder.due"]
+# notify = true
+# speak = true
+# explain = false
 
 [barge_in]
 enabled = true
@@ -128,6 +141,12 @@ strip_tails = ["please", "now", "right now", "for me"]
 
 [ui]
 enabled = true
+aura_style = "edge-flow" # "edge-flow" or "full"
+aura_visibility = "activity" # "activity" or "persistent"
+aura_intensity = 0.65
+aura_thickness = 5.0
+aura_monitors = [] # empty means all displays; otherwise list connector names
+canvas_enabled = true
 
 # Each rule is "allow", "confirm" (or "ask") or "deny". A deny always wins over an allow,
 # here or in [mcp.permissions]. Generated terminal commands and scripts always ask,

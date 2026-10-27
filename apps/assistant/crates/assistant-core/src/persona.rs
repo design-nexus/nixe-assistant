@@ -548,6 +548,8 @@ impl Persona {
             personas = Self::prebuilts();
         }
 
+        for persona in &personas { crate::VoiceProfile::ensure_for(persona)?; }
+
         Ok(personas)
     }
 
@@ -587,6 +589,7 @@ impl Persona {
         crate::config::merge_table(doc.as_table_mut(), updated.as_table());
         let text = doc.to_string();
         crate::config::atomic_write(&path, text.as_bytes())?;
+        crate::VoiceProfile::ensure_for(self)?;
         Ok(())
     }
 

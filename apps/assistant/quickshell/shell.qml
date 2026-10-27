@@ -40,18 +40,11 @@ ShellRoot {
     property var theme: ({})
     property int fontBase: 12
 
-    readonly property bool showHud: hudEnabled && connected && daemonState !== "offline"
-        && (approvalId.length > 0 || holdVisible
-            || (daemonState !== "idle" && daemonState !== "")
-            || errorText.length > 0)
+    readonly property bool showHud: hudEnabled && connected && approvalId.length > 0
 
     // False while the assistant types or clicks in another app (its keys must reach that app).
     property bool computerInput: false
-    readonly property bool grabKeys: hudEnabled && connected && !computerInput && (approvalId.length > 0 || (sessionMode === "wake" && daemonState === "listening")
-        || (sessionMode === "wake" && daemonState === "transcribing")
-        || daemonState === "thinking"
-        || daemonState === "executing"
-        || daemonState === "speaking")
+    readonly property bool grabKeys: hudEnabled && connected && !computerInput && approvalId.length > 0
 
     // Omarchy bar uses the fontconfig "monospace" alias so `omarchy font set` applies.
     readonly property string hudFont: "monospace"
@@ -357,7 +350,7 @@ ShellRoot {
 
     PanelWindow {
         id: panel
-        visible: root.hudEnabled && root.connected
+        visible: root.showHud
         color: "transparent"
         anchors {
             top: true

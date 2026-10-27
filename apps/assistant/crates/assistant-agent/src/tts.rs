@@ -2,9 +2,65 @@ use anyhow::{Context, Result};
 use assistant_core::config::Config;
 use assistant_core::paths;
 use loqui::{Engine, Format, KokoroVariant, SpeakRequest, TtsConfig, TtsDevice};
-use std::io::Cursor;
+use std::io::{BufRead, BufReader, Cursor, Write};
+use std::os::fd::AsRawFd;
 use std::path::Path;
+use std::path::PathBuf;
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
+
+#[derive(Clone, PartialEq, Eq)]
+struct CloneSpec { reference: PathBuf }
+
+struct CloneWorker {
+    child: Child,
+    input: ChildStdin,
+    output: BufReader<ChildStdout>,
+}
+
+impl Drop for CloneWorker {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl CloneWorker {
+    fn start() -> Result<Self> {
+        let root = paths::data_dir().join("voice-engines/chatterbox");
+        let python = root.join(".venv/bin/python");
+        let script = root.join("worker.py");
+        anyhow::ensure!(python.is_file() && script.is_file(), "Chatterbox runtime is not installed");
+        let mut child = Command::new(python)
+            .arg(script)
+            .env("HF_HUB_OFFLINE", "1")
+            .env("TRANSFORMERS_OFFLINE", "1")
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit())
+            .spawn().context("start local Chatterbox worker")?;
+        let input = child.stdin.take().context("Chatterbox stdin")?;
+        let output = BufReader::new(child.stdout.take().context("Chatterbox stdout")?);
+        Ok(Self { child, input, output })
+    }
+
+    fn speak(&mut self, text: &str, spec: &CloneSpec) -> Result<Vec<f32>> {
+        std::fs::create_dir_all(paths::runtime_dir())?;
+        let output = tempfile::NamedTempFile::new_in(paths::runtime_dir())?;
+        let request = serde_json::json!({"text":text,"reference":spec.reference,"output":output.path()});
+        writeln!(self.input, "{request}")?;
+        self.input.flush()?;
+        let mut fd = libc::pollfd { fd: self.output.get_ref().as_raw_fd(), events: libc::POLLIN, revents: 0 };
+        // SAFETY: fd points to the child stdout; poll only reads the descriptor state.
+        anyhow::ensure!(unsafe { libc::poll(&mut fd, 1, 120_000) } > 0, "Chatterbox response timed out");
+        let mut line = String::new();
+        anyhow::ensure!(self.output.read_line(&mut line)? > 0, "Chatterbox worker exited");
+        let response: serde_json::Value = serde_json::from_str(&line).context("Chatterbox response")?;
+        anyhow::ensure!(response["ok"] == true, "Chatterbox: {}", response["error"].as_str().unwrap_or("unknown failure"));
+        anyhow::ensure!(response["sample_rate"] == 24_000, "Chatterbox sample rate changed");
+        let bytes = std::fs::read(output.path())?;
+        anyhow::ensure!(bytes.len() % 4 == 0, "Chatterbox PCM is malformed");
+        Ok(bytes.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect())
+    }
+}
 
 fn cuda_skip_stamp() -> std::path::PathBuf {
     paths::cache_dir().join("kokoro-cuda-skip")
@@ -78,6 +134,8 @@ pub struct KokoroProvider {
     device: String,
     variant: String,
     lock: Mutex<()>,
+    clone_spec: std::sync::RwLock<Option<CloneSpec>>,
+    clone_worker: Mutex<Option<CloneWorker>>,
 }
 
 impl KokoroProvider {
@@ -129,14 +187,18 @@ impl KokoroProvider {
             (eng, "cpu".to_string())
         };
         tracing::info!(ms = t0.elapsed().as_millis(), active_device = %active_device, "Kokoro ready");
-        Ok(Self {
+        let provider = Self {
             engine,
             voice: std::sync::RwLock::new(cfg.tts.voice.clone()),
             speed: std::sync::RwLock::new(cfg.tts.speed),
             device: active_device,
             variant: cfg.tts.variant.clone(),
             lock: Mutex::new(()),
-        })
+            clone_spec: std::sync::RwLock::new(None),
+            clone_worker: Mutex::new(None),
+        };
+        provider.configure(cfg)?;
+        Ok(provider)
     }
 
     pub fn device(&self) -> &str {
@@ -154,6 +216,10 @@ impl KokoroProvider {
             .unwrap_or_else(|e| e.into_inner().clone())
     }
 
+    pub fn active_backend(&self) -> &'static str {
+        if self.clone_spec.read().unwrap_or_else(|e| e.into_inner()).is_some() { "chatterbox" } else { "kokoro" }
+    }
+
     pub fn set_voice(&self, voice: &str, speed: f32) {
         if let Ok(mut v) = self.voice.write() {
             *v = voice.to_string();
@@ -163,12 +229,50 @@ impl KokoroProvider {
         }
     }
 
+    /// A clone is selected only by an explicit persona profile. An installed voice override
+    /// always selects Kokoro and unloads any cloned-voice worker.
+    pub fn configure(&self, cfg: &Config) -> Result<()> {
+        self.set_voice(&cfg.tts.voice, cfg.tts.speed);
+        let next = if cfg.tts.voice_override.is_empty() && !cfg.assistant.persona_id.is_empty() {
+            assistant_core::VoiceProfile::load(&cfg.assistant.persona_id)?
+                .filter(|profile| profile.provider == "chatterbox")
+                .and_then(|profile| profile.reference_audio.map(|reference| CloneSpec { reference }))
+        } else { None };
+        let mut spec = self.clone_spec.write().unwrap_or_else(|e| e.into_inner());
+        if *spec != next {
+            *self.clone_worker.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            *spec = next;
+        }
+        Ok(())
+    }
+
     pub fn speak(&self, text: &str) -> Result<Vec<f32>> {
-        self.speak_with(
+        let clone = self.clone_spec.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let clone_requested = clone.is_some();
+        if let Some(spec) = clone {
+            let mut worker = self.clone_worker.lock().unwrap_or_else(|e| e.into_inner());
+            let result = (|| {
+                if worker.is_none() { *worker = Some(CloneWorker::start()?); }
+                worker.as_mut().unwrap().speak(text, &spec)
+            })();
+            match result {
+                Ok(audio) => return Ok(audio),
+                Err(error) => {
+                    tracing::warn!(%error, "cloned voice unavailable; using Kokoro fallback");
+                    *worker = None;
+                }
+            }
+        }
+        let result = self.speak_with(
             text,
             &self.voice(),
             *self.speed.read().unwrap_or_else(|e| e.into_inner()),
-        )
+        );
+        if clone_requested && result.is_err() && self.voice() != "af_heart" {
+            tracing::warn!("persona Kokoro fallback unavailable; using af_heart");
+            return self.speak_with(text, "af_heart", 1.0);
+        }
+        result
     }
     pub fn speak_with(&self, text: &str, voice: &str, speed: f32) -> Result<Vec<f32>> {
         if !speed.is_finite() || !(0.5..=2.0).contains(&speed) {

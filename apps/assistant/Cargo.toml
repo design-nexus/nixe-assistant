@@ -15,6 +15,7 @@ members = [
     "crates/assistant-asr",
     "crates/assistant-desktop",
     "crates/assistant-models",
+    "crates/assistant-visual",
     "daemon/nyx-assistantd",
 ]
 

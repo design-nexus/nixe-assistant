@@ -1,5 +1,5 @@
 [Unit]
-Description=Nyx Assistant HUD overlay
+Description=Assistant approval overlay
 After=graphical-session.target nyx-assistantd.service
 PartOf=graphical-session.target nyx-assistantd.service
 StopWhenUnneeded=yes

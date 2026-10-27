@@ -6,6 +6,7 @@ so they can be measured on this computer before anything is wired in.
 | Trial | What it is | Compared with | Weights | Licence |
 |---|---|---|---|---|
 | Qwen3-TTS 0.6B / 1.7B CustomVoice | Speech synthesis, nine built-in voices | Kokoro | 2.5 / 4.5 GB | Apache 2.0 |
+| Chatterbox Turbo | Reference-audio voice cloning for developer-provided personas | Kokoro, Qwen3-TTS | 4.0 GB repository | MIT |
 | Gepard 1.1 | Speech synthesis made for live dialogue; clones a voice from a clip | Kokoro | 1.1 GB + 0.5 GB codec | Apache 2.0 |
 | VibeVoice Realtime 0.5B (Microsoft) | Streaming speech synthesis, English, preset voices | Kokoro | 2.0 GB (+ Qwen2.5's tokenizer files) | MIT |
 | TYGER | Turn-taking: when to answer, stop, or say "mm-hm" (Nemotron ASR + a small GRU) | the rules in `duplex.rs` | 2.6 GB | OpenMDW 1.1 |

@@ -55,6 +55,10 @@ pub enum Capability {
 
 const PLUGIN_EDITS: &[&str] = &[
     "notes.edit",
+    "notes.vault_create",
+    "notes.vault_append",
+    "notes.vault_replace",
+    "notes.clip",
     "notes.delete",
     "routines.save",
     "routines.delete",
@@ -123,6 +127,7 @@ impl Capability {
             "capture.screen" | "capture.clipboard" => return Self::Capture,
             "passwords.find" | "passwords.copy" => return Self::Secrets,
             "history.undo" | "history.undo_task" => return Self::PluginData,
+            "notes.vault_search" | "notes.vault_read" | "notes.vault_open" | "notes.vault_proposal_status" => return Self::FileRead,
             // Nyx apps worked directly: reading a file in, typing into a document, saving.
             "notepad.open" | "write.open" | "archive.list" | "archive.open" | "photos.open" | "pdf.open" => return Self::FileRead,
             "notepad.insert_text" | "write.insert_text" | "contacts.add" | "contacts.update" | "contacts.add_to_list" | "theater.mark_watched" | "chat.send" => {
@@ -135,7 +140,9 @@ impl Capability {
             "mail.send" => return Self::Disabled,
             _ => {}
         }
-        if tool.starts_with("admin.") {
+        if tool.starts_with("diagnostics.") {
+            Self::Inspect
+        } else if tool.starts_with("admin.") {
             Self::Privileged
         } else if ["ui.", "screen.", "input."].iter().any(|p| tool.starts_with(p)) {
             Self::ComputerUse
@@ -302,6 +309,9 @@ mod tests {
 
     #[test]
     fn nyx_app_tools() {
+        assert_eq!(Capability::of("notes.vault_replace"),Capability::PluginEdit);
+        assert!(Capability::reads_private("notes.vault_read"));
+        assert!(Capability::brings_in_untrusted("notes.vault_search"));
         assert_eq!(Capability::of("notepad.read"), Capability::PluginData);
         assert_eq!(Capability::of("write.new_document"), Capability::PluginData);
         assert_eq!(Capability::of("notepad.open"), Capability::FileRead);

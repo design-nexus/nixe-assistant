@@ -4,6 +4,9 @@ After=pipewire.service
 Wants=pipewire.service
 PartOf=nyx-assistantd.service
 StopWhenUnneeded=yes
+StartLimitIntervalSec=120
+StartLimitBurst=5
+OnFailure=nyx-assistant-stt-failed.service
 
 [Service]
 Type=simple

@@ -6,6 +6,7 @@
 #   run.sh qwen [0.6B|1.7B] [VOICE]  per-phrase synthesis, Qwen3-TTS CustomVoice (default 0.6B, aiden)
 #   run.sh gepard [REFERENCE.wav]    per-phrase synthesis, Gepard 1.1 (voice from the clip)
 #   run.sh vibevoice [VOICE]         per-phrase synthesis, VibeVoice Realtime 0.5B (default en-Emma_woman)
+#   run.sh chatterbox REFERENCE.wav  per-phrase synthesis, Chatterbox Turbo with a permitted reference clip
 #   run.sh tyger NAME                TYGER on the take results/takes/NAME-{mic,playback}.wav
 #   run.sh bonsai 9B|27B [PQ2_0|PTQ1_0]  Ternary Bonsai 2 on Prism's llama.cpp: the planner bench and speed
 set -euo pipefail
@@ -17,7 +18,7 @@ for a in "$@"; do
     if [[ $a == --with-assistant ]]; then keep=1; else args+=("$a"); fi
 done
 set -- "${args[@]}"
-what=${1:?usage: run.sh qwen|gepard|vibevoice|tyger …}
+what=${1:?usage: run.sh qwen|gepard|vibevoice|chatterbox|tyger …}
 shift
 
 need() { [[ -f $1/.done || -d $1 ]] || { echo "not set up: $1 (run setup.sh)"; exit 1; }; }
@@ -49,6 +50,11 @@ case $what in
     vibevoice)
         need "$TRIALS/vibevoice/.venv"
         "$TRIALS/vibevoice/.venv/bin/python" "$here/tts_bench.py" vibevoice "$TRIALS/vibevoice/weights/Realtime-0.5B" ${1:+--speaker "$1"}
+        ;;
+    chatterbox)
+        ref=${1:?run.sh chatterbox REFERENCE.wav}
+        need "$TRIALS/chatterbox/.venv"
+        "$TRIALS/chatterbox/.venv/bin/python" "$here/tts_bench.py" chatterbox turbo --reference "$ref"
         ;;
     tyger)
         name=${1:?run.sh tyger NAME (a take from record_pair.sh)}

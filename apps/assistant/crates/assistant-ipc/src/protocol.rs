@@ -54,6 +54,24 @@ pub fn parse_command(line: &str) -> Option<Command> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Control {
+    /// Versioned, tool-free local model API for suite applications.
+    ModelCapabilities,
+    ModelConfigureEmbeddings {
+        enabled: bool,
+        endpoint: String,
+        model: String,
+    },
+    ModelGenerate {
+        system: String,
+        text: String,
+        #[serde(default)]
+        max_tokens: Option<i32>,
+        #[serde(default)]
+        temperature: Option<f32>,
+    },
+    ModelEmbed {
+        input: Vec<String>,
+    },
     Plugins {
         action: String,
         id: Option<String>,

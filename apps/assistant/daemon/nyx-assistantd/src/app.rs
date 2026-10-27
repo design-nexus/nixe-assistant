@@ -1,3 +1,5 @@
+#[path = "model_api.rs"]
+mod model_api;
 #[path = "extensions.rs"]
 mod extensions;
 use extensions::{ActionRecord, PowerSettings};
@@ -7,6 +9,9 @@ mod approvals;
 mod duplex;
 #[path = "interaction.rs"]
 mod interaction;
+#[path = "proactive.rs"]
+#[allow(dead_code)]
+mod proactive;
 use crate::session::{classify, Mode, RequestKind, Session};
 use anyhow::{Context, Result};
 use assistant_agent::{is_filler, route_with, strip_wake, Intent, KokoroProvider, PhraseChunker};
@@ -87,6 +92,7 @@ pub async fn run(cfg: Config) -> Result<()> {
         tool_mode: AtomicBool::new(false),
         pending: approvals::Pending::default(),
         activity: std::sync::Mutex::new(std::collections::VecDeque::new()),
+        proactive: proactive::Hub::default(),
         restart_required: std::sync::Mutex::new(Vec::new()),
         reload_lock: Mutex::new(()),
         cfg: std::sync::Mutex::new(cfg),
@@ -278,6 +284,7 @@ struct App {
     /// Approval answers: (allow, for the rest of the task).
     pending: approvals::Pending,
     activity: std::sync::Mutex<std::collections::VecDeque<Value>>,
+    proactive: proactive::Hub,
     restart_required: std::sync::Mutex<Vec<String>>,
     reload_lock: Mutex<()>,
     cfg: std::sync::Mutex<Config>,
@@ -446,6 +453,7 @@ impl App {
             "power": self.power_json(),
             "silero_loaded": self.silero.lock().unwrap_or_else(|e| e.into_inner()).is_some(),
             "tts_device": self.tts.device(),
+            "tts_backend": self.tts.active_backend(),
             "tts_variant": self.tts.variant(),
             "tts_voice": self.tts.voice(),
             "muted": self.muted.load(Ordering::SeqCst),
@@ -495,7 +503,7 @@ impl App {
                 plugins.change("reload", &id, &next).await?;
             }
         }
-        self.tts.set_voice(&next.tts.voice, next.tts.speed);
+        self.tts.configure(&next)?;
         // A preset (or an edit) may have changed when the models unload.
         *self.power.lock().unwrap() = PowerSettings::load();
         *self.apps.lock().await = apps;
@@ -514,6 +522,10 @@ impl App {
 
     async fn control(self: &Arc<Self>, action: Control) -> Result<Value> {
         match action {
+            Control::ModelCapabilities => Ok(model_api::capabilities(&self.cfg())),
+            Control::ModelConfigureEmbeddings {enabled,endpoint,model} => model_api::configure(self,enabled,endpoint,model),
+            Control::ModelGenerate { system, text, max_tokens, temperature } => model_api::generate(self,system,text,max_tokens,temperature).await,
+            Control::ModelEmbed { input } => model_api::embed(&self.cfg(),input).await,
             Control::Plugins { action, id } => {
                 let plugins = self.registry.plugins.as_ref().context("plugin manager unavailable")?;
                 if action == "list" || action == "inspect" {
@@ -566,7 +578,7 @@ impl App {
                 data["daemon"] = self.health_json();
                 Ok(data)
             }
-            Control::Activity => Ok(json!({"turns":*self.activity.lock().unwrap()})),
+            Control::Activity => Ok(json!({"turns":*self.activity.lock().unwrap(),"events":self.proactive.recent()})),
             Control::Perf => {
                 let cfg = self.cfg();
                 Ok(json!({
@@ -2059,6 +2071,13 @@ impl App {
     pub(super) fn task_changed(&self, task: &Task) {
         self.registry.audit.task(task);
         self.emit(Event::Task { task: task_json(task) });
+        if matches!(task.state, TaskState::Completed | TaskState::PartiallyCompleted | TaskState::Failed) {
+            let kind = if task.state == TaskState::Completed { "task.completed" } else { "task.failed" };
+            let title = if task.state == TaskState::Completed { "Task completed" } else { "Task needs attention" };
+            let detail = task.detail.as_deref().unwrap_or("");
+            let text = if detail.is_empty() { task.request.chars().take(240).collect() } else { detail.chars().take(240).collect() };
+            self.proactive.submit(proactive::Notice { source: "assistant".into(), kind: kind.into(), id: format!("{}:{}",task.id,task.state.as_str()), title: title.into(), text, speech: None, spool: None });
+        }
     }
 
     pub(super) fn task_move(&self, task: &TaskRef, next: TaskState) -> Result<()> {

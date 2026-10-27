@@ -1,6 +1,6 @@
 manifest_version = 1
 id = "reminders"
-version = "1.2.0"
+version = "1.2.1"
 description = "Timers and reminders: Nyx Reminders' task lists when it's installed, else kept locally"
 executable = "python3"
 args = ["./main.py"]

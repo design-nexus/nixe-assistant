@@ -13,12 +13,14 @@ pub mod state;
 pub mod telemetry;
 pub mod timing;
 pub mod weather;
+pub mod voice;
 
 pub use apps::{AppLaunch, AppsFile};
 pub use commands::{CommandPhrase, CommandsFile, WorkspaceCommands};
 pub use config::Config;
 pub use event::Event;
 pub use persona::{sync_plugin_manifest, Persona};
+pub use voice::{VoiceProfile, installed_kokoro_voices};
 pub use state::{AssistantState, StateMachine};
 pub use timing::TurnTiming;
 

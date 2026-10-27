@@ -11,6 +11,8 @@ assistant-core.workspace = true
 assistant-inference.workspace = true
 assistant-tools.workspace = true
 hound.workspace = true
+tempfile.workspace = true
+libc = "0.2"
 serde_json.workspace = true
 loqui = { version = "0.3.0", features = ["cuda"] }
 thiserror.workspace = true

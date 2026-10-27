@@ -87,6 +87,11 @@ pub const TOOLS: &[(&str, &str, &str)] = &[
         r#"{"type":"object","properties":{"device":{"type":"string","maxLength":256}},"required":["device"],"additionalProperties":false}"#,
     ),
     (
+        "audio.select_input",
+        "Select Assistant's microphone by name from audio.devices, or default. The capture and echo-cancel streams use it after an Assistant restart.",
+        r#"{"type":"object","properties":{"device":{"type":"string","maxLength":256}},"required":["device"],"additionalProperties":false}"#,
+    ),
+    (
         "system.power_profile",
         "Read, or set, the power profile: power-saver, balanced or performance.",
         r#"{"type":"object","properties":{"profile":{"enum":["power-saver","balanced","performance"]}},"additionalProperties":false}"#,
@@ -309,6 +314,17 @@ pub async fn call(name: &str, args: &Value) -> Option<Result<Value>> {
             Ok(json!({"device": device, "verified": verified}))
         }
         .await,
+        "audio.select_input" => async {
+            let device = s("device");
+            ensure!(device == "default" || device_name_ok(device), "invalid input name");
+            if device != "default" {
+                ensure!(audio_list("sources").await?.iter().any(|d| d["name"] == device), "no microphone named {device}; see audio.devices");
+            }
+            let mut cfg = assistant_core::Config::load()?;
+            cfg.audio.source = device.into();
+            cfg.save()?;
+            Ok(json!({"device":device,"saved":true,"restart_required":true,"note":"Assistant will use this microphone after its next restart; the current capture and echo-cancel streams stay together until then."}))
+        }.await,
         "system.power_profile" => async {
             match args["profile"].as_str() {
                 None => Ok(json!({"profile": run("powerprofilesctl", &["get"]).await?.trim()})),

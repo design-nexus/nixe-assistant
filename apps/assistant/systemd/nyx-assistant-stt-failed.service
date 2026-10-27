@@ -1,0 +1,6 @@
+[Unit]
+Description=Record a failed Assistant speech service event
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/nyx-assistant event-spool nyx-assistant-stt.service

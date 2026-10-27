@@ -26,12 +26,12 @@ fi
 if [[ ${SKIP_BUILD:-0} != 1 ]]; then
   feature_args=()
   if command -v nvcc >/dev/null; then feature_args=(--features cuda); fi
-  cargo build --release --locked -p nyx-assistantd -p assistant-tui -p assistant-plugin-worker -p assistant-privileged -p assistant-asr "${feature_args[@]}"
+  cargo build --release --locked -p nyx-assistantd -p assistant-tui -p assistant-plugin-worker -p assistant-privileged -p assistant-asr -p assistant-visual "${feature_args[@]}"
 fi
 backup="$HOME/.local/state/nyx-assistant/backups/$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$backup/files" "$cfg_dir" "$unit_dir" "$data_dir" "$bin_dir"
 chmod 0700 "$backup"
-assets=(.local/bin/nyx-assistant-plugin-worker .local/bin/nyx-assistant-helper .local/bin/nyx-assistant-asr .local/share/nyx-assistant/abilities .local/share/nyx-assistant/plugin-data .local/bin/nyx-assistant-node .local/share/nyx-assistant/browser .local/bin/nyx-assistantd .local/bin/nyx-assistant .local/bin/nyx-assistant-tui .local/bin/libonnxruntime_providers_cuda.so .local/bin/libonnxruntime_providers_shared.so .config/nyx-assistant .config/systemd/user/nyx-assistantd.service .config/systemd/user/nyx-assistant-hud.service .config/systemd/user/nyx-assistant-stt.service .config/systemd/user/nyx-assistant-failed.service .local/share/nyx-assistant/quickshell .config/hypr/bindings.lua .config/omarchy/plugins .config/omarchy/shell.json)
+assets=(.local/bin/nyx-assistant-plugin-worker .local/bin/nyx-assistant-helper .local/bin/nyx-assistant-asr .local/bin/nyx-assistant-visual .local/share/nyx-assistant/abilities .local/share/nyx-assistant/plugin-data .local/bin/nyx-assistant-node .local/share/nyx-assistant/browser .local/bin/nyx-assistantd .local/bin/nyx-assistant .local/bin/nyx-assistant-tui .local/bin/libonnxruntime_providers_cuda.so .local/bin/libonnxruntime_providers_shared.so .config/nyx-assistant .config/systemd/user/nyx-assistantd.service .config/systemd/user/nyx-assistant-hud.service .config/systemd/user/nyx-assistant-visual.service .config/systemd/user/nyx-assistant-stt.service .config/systemd/user/nyx-assistant-failed.service .config/systemd/user/nyx-assistant-stt-failed.service .local/share/nyx-assistant/quickshell .config/hypr/bindings.lua .config/omarchy/plugins .config/omarchy/shell.json)
 for asset in "${assets[@]}"; do
   if [[ -e "$HOME/$asset" ]]; then mkdir -p "$backup/files/$(dirname "$asset")"; cp -a "$HOME/$asset" "$backup/files/$asset"; fi
 done
@@ -44,7 +44,7 @@ rollback() {
   # Keep the pre-install running process unchanged.
 }
 trap rollback ERR
-for binary in nyx-assistantd nyx-assistant nyx-assistant-tui nyx-assistant-plugin-worker nyx-assistant-helper nyx-assistant-asr; do
+for binary in nyx-assistantd nyx-assistant nyx-assistant-tui nyx-assistant-plugin-worker nyx-assistant-helper nyx-assistant-asr nyx-assistant-visual; do
   install -m 0755 "${CARGO_TARGET_DIR:-$root/target}/release/$binary" "$bin_dir/$binary.new"
   mv "$bin_dir/$binary.new" "$bin_dir/$binary"
 done
@@ -56,14 +56,17 @@ for name in config apps commands voxtype-parakeet; do
 done
 mkdir -p "$data_dir/browser"
 cp -a "$root/browser/." "$data_dir/browser/"
+mkdir -p "$data_dir/voice-engines/chatterbox"
+install -m 0644 "$root/voice-workers/chatterbox.py" "$data_dir/voice-engines/chatterbox/worker.py"
 printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$node_bin" > "$bin_dir/nyx-assistant-node.new"
 chmod 0755 "$bin_dir/nyx-assistant-node.new"
 mv "$bin_dir/nyx-assistant-node.new" "$bin_dir/nyx-assistant-node"
 "$bin_dir/nyx-assistant" migrate
+"$bin_dir/nyx-assistant" persona >/dev/null
 "$bin_dir/nyx-assistant" plugins migrate "$root"
 mkdir -p "$data_dir/quickshell"
 cp -a "$root/quickshell/." "$data_dir/quickshell/"
-for unit in nyx-assistantd nyx-assistant-hud nyx-assistant-stt nyx-assistant-failed; do install -m 0644 "$root/systemd/$unit.service" "$unit_dir/$unit.service"; done
+for unit in nyx-assistantd nyx-assistant-hud nyx-assistant-visual nyx-assistant-stt nyx-assistant-failed nyx-assistant-stt-failed; do install -m 0644 "$root/systemd/$unit.service" "$unit_dir/$unit.service"; done
 "$root/scripts/install-plugin.sh"
 # The streaming speech model is a separate, explicit download; without it, speech falls back to Voxtype.
 if [[ ! -f "$data_dir/models/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25/encoder.int8.onnx" ]]; then
@@ -82,6 +85,7 @@ if [[ $("$helper" --version 2>/dev/null || echo 0) -lt $want ]] || ! cmp -s "$po
   fi
 fi
 systemctl --user daemon-reload
+systemctl --user enable nyx-assistant-visual.service
 # Preserve existing service enablement during migration.
 # Existing daemon enablement is retained.
 if [[ $start_after == 1 ]]; then systemctl --user restart nyx-assistantd.service; fi

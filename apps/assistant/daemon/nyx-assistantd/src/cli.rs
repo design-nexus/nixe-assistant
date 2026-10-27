@@ -6,6 +6,9 @@ mod planner;
 #[path = "session.rs"]
 #[allow(dead_code)]
 mod session;
+#[path = "proactive.rs"]
+#[allow(dead_code)]
+mod proactive;
 
 use anyhow::Context;
 use assistant_ipc::{request, send_and_listen, send_command, send_until_done, stream_events, Command, Control};
@@ -16,6 +19,11 @@ async fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
     let cmd = args.next().unwrap_or_else(|| "help".into());
     match cmd.as_str() {
+        "event-spool" => {
+            let unit = args.next().context("service unit required")?;
+            anyhow::ensure!(args.next().is_none(), "one service unit expected");
+            proactive::spool_failure(&unit)?;
+        }
         "plugins" => {
             use assistant_tools::plugins;
             let action = args.next().unwrap_or_else(|| "list".into());
@@ -304,6 +312,10 @@ async fn main() -> anyhow::Result<()> {
                 _ => bench::planner::planner().await?,
             }
         }
+        "bench" if std::env::args().nth(2).as_deref() == Some("conversation") => {
+            let model = std::env::args().nth(3).ok_or_else(|| anyhow::anyhow!("usage: bench conversation MODEL.gguf"))?;
+            bench::conversation::one(std::path::Path::new(&model)).await?;
+        }
         "bench" if std::env::args().nth(2).as_deref() == Some("tts") => {
             bench::tts().await?;
         }
@@ -584,7 +596,7 @@ async fn main() -> anyhow::Result<()> {
                         cfg.save()?;
                         assistant_core::sync_plugin_manifest(p)?;
                         println!("{}", request(Control::Reload, 30_000).await?);
-                        println!("Activated persona: {} (voice: {}, {} aliases)", p.name, p.voice, p.aliases.len());
+                        println!("Activated persona: {} (voice: {}, {} aliases)", p.name, cfg.tts.voice, p.aliases.len());
                     } else {
                         eprintln!("Persona '{}' not found. Available personas:", target);
                         for p in personas {
@@ -606,6 +618,30 @@ async fn main() -> anyhow::Result<()> {
                     p.save()?;
                     println!("Created persona '{}' (id: {}) with {} generated aliases.", p.name, p.id, p.aliases.len());
                 }
+                Some("voices") => {
+                    let voices = assistant_core::installed_kokoro_voices();
+                    if voices.is_empty() { println!("No Kokoro voices installed yet."); }
+                    else { for voice in voices { println!("{voice}"); } }
+                }
+                Some("voice-override") => {
+                    let chosen = args.next().unwrap_or_default();
+                    if chosen.is_empty() { anyhow::bail!("usage: nyx-assistant persona voice-override <installed voice|clear>"); }
+                    let mut cfg = assistant_core::Config::load()?;
+                    let voice = if chosen == "clear" { String::new() } else { chosen };
+                    if !voice.is_empty() && !assistant_core::installed_kokoro_voices().contains(&voice) {
+                        anyhow::bail!("voice {voice} is not installed; run `nyx-assistant persona voices`");
+                    }
+                    cfg.tts.voice_override = voice;
+                    let personas = assistant_core::Persona::load_all()?;
+                    if let Some(persona) = personas.iter().find(|p| p.id == cfg.assistant.persona_id || p.name.eq_ignore_ascii_case(&cfg.assistant.name)) {
+                        cfg.activate_persona(persona);
+                    } else if !cfg.tts.voice_override.is_empty() {
+                        cfg.tts.voice = cfg.tts.voice_override.clone();
+                    }
+                    cfg.save()?;
+                    println!("{}", request(Control::Reload, 30_000).await?);
+                    println!("Active voice: {}", cfg.tts.voice);
+                }
                 Some("aliases") => {
                     let target = args.next();
                     let personas = assistant_core::Persona::load_all()?;
@@ -614,7 +650,7 @@ async fn main() -> anyhow::Result<()> {
                     } else {
                         let cfg = assistant_core::Config::load()?;
                         personas.iter().find(|p| {
-                            p.name.eq_ignore_ascii_case(&cfg.assistant.name) || p.id.eq_ignore_ascii_case(&cfg.assistant.name)
+                            p.id == cfg.assistant.persona_id || p.name.eq_ignore_ascii_case(&cfg.assistant.name)
                         })
                     };
                     if let Some(p) = p {
@@ -636,7 +672,7 @@ async fn main() -> anyhow::Result<()> {
                     let mut personas = assistant_core::Persona::load_all()?;
                     let mut cfg = assistant_core::Config::load()?;
                     let pos = personas.iter().position(|p| {
-                        p.name.eq_ignore_ascii_case(&cfg.assistant.name) || p.id.eq_ignore_ascii_case(&cfg.assistant.name)
+                        p.id == cfg.assistant.persona_id || p.name.eq_ignore_ascii_case(&cfg.assistant.name)
                     });
                     if let Some(idx) = pos {
                         let p = &mut personas[idx];
@@ -659,14 +695,18 @@ async fn main() -> anyhow::Result<()> {
                     println!("Saved Assistant Personas:");
                     for p in personas {
                         let is_active =
-                            p.name.eq_ignore_ascii_case(&cfg.assistant.name) || p.id.eq_ignore_ascii_case(&cfg.assistant.name);
+                            p.id == cfg.assistant.persona_id || p.name.eq_ignore_ascii_case(&cfg.assistant.name);
                         let badge = if is_active { "[ACTIVE] " } else { "         " };
-                        println!("  {}{} (id: {:<7} voice: {:<11} aliases: {})", badge, p.name, p.id, p.voice, p.aliases.len());
+                        let voice = assistant_core::VoiceProfile::load(&p.id)?.map(|profile| profile.voice).unwrap_or(p.voice.clone());
+                        println!("  {}{} (id: {:<7} voice: {:<11} aliases: {})", badge, p.name, p.id, voice, p.aliases.len());
                     }
+                    if !cfg.tts.voice_override.is_empty() { println!("Voice override: {}", cfg.tts.voice_override); }
                     println!("\nCommands: nyx-assistant persona set <name>");
                     println!("          nyx-assistant persona new <name>");
                     println!("          nyx-assistant persona aliases [name]");
                     println!("          nyx-assistant persona add-alias <alias>");
+                    println!("          nyx-assistant persona voices");
+                    println!("          nyx-assistant persona voice-override <voice|clear>");
                 }
             }
         }
@@ -1137,7 +1177,7 @@ fn print_help() {
            tool-mode on|off, approve ID [--task], deny ID\n\
            tasks [--limit N] [--json], tasks show ID, tasks cancel ID, tasks undo [ID]\n\
          Commands:\n\
-           persona [set/new/aliases/add-alias]  manage saved assistant personas\n\
+           persona [set/new/aliases/add-alias/voices/voice-override]  manage personas and installed voices\n\
            ptt-start      start push-to-talk capture\n\
            ptt-stop       stop capture (key-up)\n\
            cancel         interrupt the current turn\n\

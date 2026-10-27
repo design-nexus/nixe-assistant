@@ -1,8 +1,10 @@
 """Per-phrase speech synthesis, as the assistant uses it: one phrase in, its audio out.
 
     <env>/bin/python tts_bench.py qwen   WEIGHTS [--speaker NAME]
+    <env>/bin/python tts_bench.py qwen-clone WEIGHTS --reference CLIP.wav --ref-text TRANSCRIPT
     <env>/bin/python tts_bench.py gepard WEIGHTS [--reference CLIP.wav]
     <env>/bin/python tts_bench.py vibevoice WEIGHTS [--speaker NAME]
+    <env>/bin/python tts_bench.py chatterbox turbo --reference CLIP.wav
 
 Times a short first phrase (what decides when the first word is heard), a typical phrase
 and a long one, three times each after a warm-up, and writes the median time, real-time
@@ -38,6 +40,24 @@ def qwen(weights: str, speaker: str | None):
         return wavs[0], sr
 
     return speak, {"speaker": voice, "speakers": speakers}
+
+
+def qwen_clone(weights: str, reference: str | None, ref_text: str | None):
+    if not reference or not Path(reference).is_file() or not ref_text:
+        raise ValueError("Qwen voice clone needs --reference WAV and --ref-text transcript")
+    import torch
+    from qwen_tts import Qwen3TTSModel
+
+    model = Qwen3TTSModel.from_pretrained(weights, device_map="cuda:0", dtype=torch.bfloat16)
+    prep_start = time.perf_counter()
+    prompt = model.create_voice_clone_prompt(ref_audio=reference, ref_text=ref_text, x_vector_only_mode=False)
+    prep_s = time.perf_counter() - prep_start
+
+    def speak(text):
+        wavs, sr = model.generate_voice_clone(text=text, language="English", voice_clone_prompt=prompt)
+        return wavs[0], sr
+
+    return speak, {"reference": str(Path(reference).resolve()), "ref_text": ref_text, "prompt_prep_s": round(prep_s, 2)}
 
 
 def gepard(weights: str, reference: str | None):
@@ -90,12 +110,28 @@ def vibevoice(weights: str, speaker: str | None):
     return speak, {"speaker": name, "attention": "sdpa", "voices": sorted(p.stem for p in voices.glob("en-*.pt"))}
 
 
+def chatterbox(reference: str | None):
+    if not reference or not Path(reference).is_file():
+        raise ValueError("Chatterbox needs an existing --reference WAV clip")
+    from chatterbox.tts_turbo import ChatterboxTurboTTS
+
+    model = ChatterboxTurboTTS.from_pretrained(device="cuda")
+
+    def speak(text):
+        wav = model.generate(text, audio_prompt_path=reference)
+        return wav.squeeze().detach().float().cpu().numpy(), model.sr
+
+    return speak, {"reference": str(Path(reference).resolve())}
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("backend", choices=["qwen", "gepard", "vibevoice"])
+    ap.add_argument("backend", choices=["qwen", "qwen-clone", "gepard", "vibevoice", "chatterbox"])
     ap.add_argument("weights")
     ap.add_argument("--speaker")
     ap.add_argument("--reference")
+    ap.add_argument("--ref-text")
+    ap.add_argument("--tag", help="append a label to the result name")
     a = ap.parse_args()
 
     import numpy as np
@@ -104,10 +140,10 @@ def main():
 
     out = Path(__file__).resolve().parent / "results"
     out.mkdir(exist_ok=True)
-    name = f"{a.backend}-{Path(a.weights.rstrip('/')).name}" + (f"-{a.speaker}" if a.speaker else "")
+    name = f"{a.backend}-{Path(a.weights.rstrip('/')).name}" + (f"-{a.speaker}" if a.speaker else "") + (f"-{a.tag}" if a.tag else "")
     torch.cuda.reset_peak_memory_stats()
     t = time.perf_counter()
-    loaders = {"qwen": lambda: qwen(a.weights, a.speaker), "gepard": lambda: gepard(a.weights, a.reference), "vibevoice": lambda: vibevoice(a.weights, a.speaker)}
+    loaders = {"qwen": lambda: qwen(a.weights, a.speaker), "qwen-clone": lambda: qwen_clone(a.weights, a.reference, a.ref_text), "gepard": lambda: gepard(a.weights, a.reference), "vibevoice": lambda: vibevoice(a.weights, a.speaker), "chatterbox": lambda: chatterbox(a.reference)}
     speak, info = loaders[a.backend]()
     load_s = time.perf_counter() - t
     speak("Warming up.")

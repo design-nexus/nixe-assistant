@@ -34,6 +34,7 @@ pub struct AudioEngine {
     play: Arc<Mutex<PlayState>>,
     echo_module: Option<u32>,
     echo_wire: Option<Arc<AtomicBool>>,
+    duck: Option<crate::duck::Ducker>,
 }
 
 struct AecCapture {
@@ -64,9 +65,14 @@ pub const UNTAGGED: u64 = u64::MAX;
 
 impl AudioEngine {
     pub fn start(cfg: &Config) -> Result<Self> {
+        let mut audio_cfg = cfg.audio.clone();
+        if audio_cfg.source != "default" && !source_available(&audio_cfg.source) {
+            tracing::warn!(source = %audio_cfg.source, "selected microphone unavailable; using default source for this session");
+            audio_cfg.source = "default".into();
+        }
         let mut echo_wire = None;
         let echo_module = if cfg.barge_in.aec {
-            match load_assistant_echo_cancel(&cfg.audio) {
+            match load_assistant_echo_cancel(&audio_cfg) {
                 Ok((id, wire)) => {
                     tracing::info!(id, "echo-cancel loaded");
                     echo_wire = Some(wire);
@@ -105,7 +111,8 @@ impl AudioEngine {
         }));
         let play_thread = play.clone();
         let (ready_tx, ready_rx) = oneshot::channel::<Result<pw::channel::Sender<PwCmd>>>();
-        let audio_cfg = cfg.audio.clone();
+        let duck_gain = audio_cfg.duck_gain;
+        let duck_external = audio_cfg.duck_external;
 
         std::thread::Builder::new()
             .name("assistant-pipewire".into())
@@ -128,6 +135,8 @@ impl AudioEngine {
             .blocking_recv()
             .map_err(|_| anyhow::anyhow!("pipewire thread dropped"))??;
 
+        let duck = duck_external.then(|| crate::duck::start(queued.clone(), duck_gain));
+
         Ok(Self {
             cmd,
             samples_rx: Mutex::new(Some(samples_rx)),
@@ -139,6 +148,7 @@ impl AudioEngine {
             play,
             echo_module,
             echo_wire,
+            duck,
         })
     }
 
@@ -241,6 +251,7 @@ impl AudioEngine {
 
 impl Drop for AudioEngine {
     fn drop(&mut self) {
+        self.duck.take();
         let _ = self.cmd.send(PwCmd::Shutdown);
         if let Some(run) = self.echo_wire.take() {
             run.store(false, Ordering::Relaxed);
@@ -249,6 +260,11 @@ impl Drop for AudioEngine {
             unload_echo_module(id);
         }
     }
+}
+
+fn source_available(name: &str) -> bool {
+    let Ok(output) = std::process::Command::new("pactl").args(["list", "short", "sources"]).output() else { return false };
+    output.status.success() && String::from_utf8_lossy(&output.stdout).lines().any(|line| line.split_whitespace().nth(1) == Some(name))
 }
 
 const EC_SOURCE: &str = "assistant-echo-cancel";
@@ -355,21 +371,6 @@ fn default_sink_name() -> Result<String> {
         anyhow::bail!("pactl get-default-sink empty");
     }
     Ok(name)
-}
-
-fn default_source_name() -> Option<String> {
-    let out = std::process::Command::new("pactl")
-        .args(["get-default-source"])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if name.is_empty() || name == EC_SOURCE || name.contains("echo-cancel") {
-        return None;
-    }
-    Some(name)
 }
 
 /// Pulse `monitor_mode` still creates an idle sink and plays it to the speakers,
@@ -509,7 +510,7 @@ fn pw_thread(
     // HUD / PTT PCM: hardware mic. AEC source is a second stream used only
     // for barge-in so TTS echo does not trip the energy detector.
     let source = if audio.source == "default" {
-        default_source_name()
+        None // Let the session manager follow changes to the default microphone.
     } else {
         Some(audio.source)
     };

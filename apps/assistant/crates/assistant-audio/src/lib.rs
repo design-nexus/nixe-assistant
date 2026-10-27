@@ -1,4 +1,5 @@
 mod engine;
+mod duck;
 mod playq;
 mod silero;
 mod vad;
