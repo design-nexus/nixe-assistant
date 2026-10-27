@@ -1,4 +1,4 @@
-"""Timers and one-time reminders kept by the assistant. When Nixe Reminders is
+"""Timers and one-time reminders kept by the assistant. When Nyx Reminders is
 installed, reminders go to its task lists (every account's, through Evolution Data
 Server) under the same names; timers, snoozes and spoken requests stay here."""
 import datetime as dt
@@ -9,7 +9,7 @@ import time
 import uuid
 from zoneinfo import ZoneInfo
 from assistant_plugin import Plugin, tool, data_path
-import nixe_app
+import nyx_app
 from desktop_plugin import request_tools
 
 TEXT = {'type': 'string', 'minLength': 1, 'maxLength': 4096}
@@ -28,10 +28,10 @@ TOOLS = [tool('reminders.timer', 'Set a timer and acknowledge the exact deadline
          tool('reminders.edit', 'Change a reminder\'s text or its timezone-aware RFC3339 deadline', {'id': ID, 'text': TEXT, 'deadline': TEXT}, ['id']),
          tool('reminders.delete', 'Delete a reminder', {'id': ID}, ['id'])]
 
-APP = ('io.github.design_nexus.nixe.Reminders', 'nixe-reminders')
+APP = ('io.github.design_nexus.nyx.Reminders', 'nyx-reminders')
 APP_TOOLS = {'reminders.lists', 'reminders.today', 'reminders.list', 'reminders.search', 'reminders.create',
              'reminders.complete', 'reminders.edit', 'reminders.delete'}
-FROM_APP = nixe_app.describe(APP[1], APP_TOOLS)
+FROM_APP = nyx_app.describe(APP[1], APP_TOOLS)
 if FROM_APP is not None:
     FROM_APP = request_tools(FROM_APP)
 # Every declared tool is offered: the app's where it has them; timers, snoozes and
@@ -99,7 +99,7 @@ def handle(name, args, cancelled):
     if cancelled.is_set():
         raise ValueError('cancelled')
     if FROM_APP is not None and name in APP_TOOLS:
-        return nixe_app.call(*APP, name, args, cancelled)
+        return nyx_app.call(*APP, name, args, cancelled)
     if name == 'reminders.voice':
         request = args['request']
         followup = request.strip().lower().replace(' ', '')
@@ -115,9 +115,9 @@ def handle(name, args, cancelled):
                 return args
             PENDING = None
         name = args.pop('operation', 'reminders.timer' if 'seconds' in args else 'reminders.create')
-        # A dated reminder goes to Nixe Reminders' lists when it's installed.
+        # A dated reminder goes to Nyx Reminders' lists when it's installed.
         if FROM_APP is not None and name == 'reminders.create':
-            result = nixe_app.call(*APP, 'reminders.create', {'title': args['text'], 'due': args['deadline']}, cancelled)
+            result = nyx_app.call(*APP, 'reminders.create', {'title': args['text'], 'due': args['deadline']}, cancelled)
             return {**result, 'acknowledgement': f"Added {args['text']} to Reminders for {args['deadline']}."} if isinstance(result, dict) else result
     db = connect()
     try:

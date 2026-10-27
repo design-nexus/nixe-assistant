@@ -5,7 +5,7 @@ prompt = "You are {name}, a fast local voice assistant on Omarchy/Hyprland. Answ
 
 [stt]
 # "streaming": Nemotron streaming 0.6B on the echo-cancelled microphone, with partial words
-# and listening while the assistant speaks (`nixe-assistant models fetch asr` installs it).
+# and listening while the assistant speaks (`nyx-assistant models fetch asr` installs it).
 # "voxtype": warm Parakeet, whole utterances. Streaming falls back to Voxtype without its model.
 provider = "streaming"
 threads = 2
@@ -132,7 +132,7 @@ enabled = true
 # Each rule is "allow", "confirm" (or "ask") or "deny". A deny always wins over an allow,
 # here or in [mcp.permissions]. Generated terminal commands and scripts always ask,
 # whatever a rule says. Decisions, approvals and calls are journalled
-# (`nixe-assistant audit`).
+# (`nyx-assistant audit`).
 [permissions]
 launch_app = "allow"  # configured apps and coding-agent handoff
 volume = "allow"      # volume, mute and output devices
@@ -182,7 +182,7 @@ idle_secs = 120
 
 [browser]
 enabled = true
-node = "nixe-assistant-node"
+node = "nyx-assistant-node"
 worker = "auto"
 weather_location = ""
 # Optional registered MCP search tool, e.g. "duckduckgo.search". Empty uses built-in search.

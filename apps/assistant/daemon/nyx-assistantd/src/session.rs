@@ -110,7 +110,7 @@ fn computer_request(s: &str) -> bool {
     let place = s.contains(" window") || s.starts_with("in ") || s.contains(" in the app") || s.starts_with("on the screen");
     place && ACTS.iter().any(|a| s.contains(a))
 }
-/// Every Nixe app's tool prefix (the nixe-apps ability).
+/// Every Nyx app's tool prefix (the nyx-apps ability).
 pub const APP_TOOL_PREFIXES: &[&str] = &[
     "notepad.",
     "write.",
@@ -129,7 +129,7 @@ pub const APP_TOOL_PREFIXES: &[&str] = &[
     "torrents.",
 ];
 
-/// The tools of the Nixe apps a request names that have their own ("notepad.", "write."):
+/// The tools of the Nyx apps a request names that have their own ("notepad.", "write."):
 /// an app request gets them next to the computer-use tools.
 pub fn app_tool_prefixes(text: &str) -> Vec<&'static str> {
     let lower = text.to_lowercase();
@@ -139,11 +139,11 @@ pub fn app_tool_prefixes(text: &str) -> Vec<&'static str> {
         out.push("notepad.");
     }
     // "write" is also a verb: only the app named as the place ("In Write, …").
-    if window == "write" || window.starts_with("write ") || window == "nixe write" {
+    if window == "write" || window.starts_with("write ") || window == "nyx write" {
         out.push("write.");
     }
     // The app named as the place ("In Store, …"): names that are also everyday words.
-    let place = |name: &str| window == name || window.starts_with(&format!("{name} ")) || window == format!("nixe {name}");
+    let place = |name: &str| window == name || window.starts_with(&format!("{name} ")) || window == format!("nyx {name}");
     for (name, prefix) in [
         ("music", "music."),
         ("archive", "archive."),
@@ -308,7 +308,7 @@ mod tests {
         assert_eq!(window_in_request("In Write, type hello").as_deref(), Some("Write"));
         assert_eq!(window_in_request("In the Notepad window, open a new tab.").as_deref(), Some("Notepad"));
         assert_eq!(window_in_request("In VS Code, go to the end").as_deref(), Some("VS Code"));
-        assert_eq!(window_in_request("In the Firefox window titled Bench search, type nixe").as_deref(), Some("Bench search"));
+        assert_eq!(window_in_request("In the Firefox window titled Bench search, type nyx").as_deref(), Some("Bench search"));
         assert_eq!(window_in_request("press play in Spotify").as_deref(), Some("Spotify"));
         assert_eq!(window_in_request("tell me a joke"), None);
     }
@@ -319,10 +319,10 @@ mod tests {
             "In the Notepad window, open a new tab.",
             "In Notepad, type hello and save the file.",
             "In VS Code, go to the end of the file and type Line two.",
-            "In the Firefox window titled Bench search, type nixe into the search box and press the Search button.",
+            "In the Firefox window titled Bench search, type nyx into the search box and press the Search button.",
             "In the Spotify window, press the play/pause button.",
             "Click Save in the Settings window",
-            "In the Firefox window titled Bench search, search the page for nixe.",
+            "In the Firefox window titled Bench search, search the page for nyx.",
             "In Spotify, play the next song",
         ] {
             assert_eq!(classify(t), RequestKind::Computer, "{t}");

@@ -13,7 +13,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'plugin-sdk'))
 def module(name):
-    sys.path.append(str(ROOT/'abilities'/name))  # helpers kept beside an ability (nixe_app)
+    sys.path.append(str(ROOT/'abilities'/name))  # helpers kept beside an ability (nyx_app)
     spec = importlib.util.spec_from_file_location(name.replace('-', '_'), ROOT/'abilities'/name/'main.py')
     result = importlib.util.module_from_spec(spec); spec.loader.exec_module(result)
     return result

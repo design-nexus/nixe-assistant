@@ -1,6 +1,6 @@
 # Speech-model trials
 
-Models the assistant doesn't use yet, set up apart from it (`~/.cache/nixe-assistant/trials`)
+Models the assistant doesn't use yet, set up apart from it (`~/.cache/nyx-assistant/trials`)
 so they can be measured on this computer before anything is wired in.
 
 | Trial | What it is | Compared with | Weights | Licence |

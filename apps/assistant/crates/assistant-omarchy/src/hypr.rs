@@ -384,14 +384,14 @@ mod tests {
         };
         let all = vec![
             c("code", "bench.md - Visual Studio Code"),
-            c("io.github.design_nexus.nixe.Notepad", "notes.txt — Notepad"),
+            c("io.github.design_nexus.nyx.Notepad", "notes.txt — Notepad"),
             c("firefox", "Bench search — Mozilla Firefox"),
         ];
         let first = |q: &str| match_windows(&all, q).first().map(|w| w.class.clone());
         assert_eq!(first("VS Code").as_deref(), Some("code"));
         assert_eq!(first("Visual Studio Code").as_deref(), Some("code"));
-        assert_eq!(first("the Notepad window").as_deref(), Some("io.github.design_nexus.nixe.Notepad"));
-        assert_eq!(first("notepad").as_deref(), Some("io.github.design_nexus.nixe.Notepad"));
+        assert_eq!(first("the Notepad window").as_deref(), Some("io.github.design_nexus.nyx.Notepad"));
+        assert_eq!(first("notepad").as_deref(), Some("io.github.design_nexus.nyx.Notepad"));
         assert_eq!(first("Firefox window titled Bench search").as_deref(), Some("firefox"));
         assert!(match_windows(&all, "Spotify").is_empty());
     }
@@ -399,7 +399,7 @@ mod tests {
     fn fixture() -> Vec<Client> {
         serde_json::from_str(
             r#"[
-            {"address":"0x56494d771890","class":"io.github.design_nexus.nixe.Glimpse","title":"Glimpse","workspace":{"id":3,"name":"3"},"monitor":0,"pid":10,"focusHistoryID":0,"floating":false,"extra":1},
+            {"address":"0x56494d771890","class":"io.github.design_nexus.nyx.Glimpse","title":"Glimpse","workspace":{"id":3,"name":"3"},"monitor":0,"pid":10,"focusHistoryID":0,"floating":false,"extra":1},
             {"address":"0xabc","class":"Alacritty","title":"nvim notes.md","workspace":{"id":1,"name":"1"},"monitor":0,"pid":11,"focusHistoryID":1,"floating":false},
             {"address":"0xdef","class":"Alacritty","title":"htop","workspace":{"id":2,"name":"2"},"monitor":0,"pid":12,"focusHistoryID":2,"floating":true}
         ]"#,

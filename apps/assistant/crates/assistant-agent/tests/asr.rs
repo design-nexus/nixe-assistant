@@ -1,11 +1,11 @@
 //! The streaming recognizer end to end: the worker binary, the model and the client.
-//! Skipped when the model isn't installed (`nixe-assistant models fetch asr`).
+//! Skipped when the model isn't installed (`nyx-assistant models fetch asr`).
 use assistant_agent::asr::AsrWorker;
 use assistant_core::Config;
 
 #[tokio::test]
 async fn hears_speech_and_ignores_silence() {
-    let worker = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/release/nixe-assistant-asr");
+    let worker = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/release/nyx-assistant-asr");
     let model = assistant_core::paths::models_dir().join(assistant_core::asr::MODEL_NAME);
     let speech = std::env::var("ASR_TEST_WAV").ok();
     if !worker.is_file() || !model.is_dir() {

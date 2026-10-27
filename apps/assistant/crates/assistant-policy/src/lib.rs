@@ -135,7 +135,7 @@ impl Verdict {
     pub fn rule(&self) -> &'static str {
         self.rule
     }
-    /// Whether only a key press approves it (HUD, Settings, TUI or `nixe-assistant approve`):
+    /// Whether only a key press approves it (HUD, Settings, TUI or `nyx-assistant approve`):
     /// a spoken "approve" could come from a video, a page read aloud or someone nearby.
     pub fn key_press(&self) -> bool {
         self.key_press || !self.capability.voice_approvable()

@@ -1,4 +1,4 @@
-//! The streaming recognizer's wire protocol, shared by the worker (`nixe-assistant-asr`)
+//! The streaming recognizer's wire protocol, shared by the worker (`nyx-assistant-asr`)
 //! and the daemon's client.
 //!
 //! The recognizer runs in its own process: sherpa-onnx brings its own ONNX Runtime, which

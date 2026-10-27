@@ -1,4 +1,4 @@
-//! The LLM catalogue shared by the TUI and the CLI (and through it, Nixe Settings): curated
+//! The LLM catalogue shared by the TUI and the CLI (and through it, Nyx Settings): curated
 //! models, Hugging Face search, and the streaming GGUF downloader.
 
 use anyhow::{Context, Result};
@@ -142,7 +142,7 @@ pub async fn search_huggingface(query: &str) -> Result<Vec<HfModelEntry>> {
     );
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(6))
-        .user_agent("nixe-assistant")
+        .user_agent("nyx-assistant")
         .build()?;
     let resp = client.get(&url).send().await?.error_for_status()?;
     let items: Vec<HfModelEntry> = resp.json().await?;
@@ -199,7 +199,7 @@ pub enum DownloadState {
 
 /// A repository's GGUF files with their sizes (bytes), and whether each is a projector.
 pub async fn hf_files_sized(repo: &str) -> Result<Vec<serde_json::Value>> {
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).user_agent("nixe-assistant").build()?;
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).user_agent("nyx-assistant").build()?;
     let value: serde_json::Value = client
         .get(format!("https://huggingface.co/api/models/{repo}?blobs=true"))
         .send()
@@ -326,7 +326,7 @@ pub async fn download_file(
         let client = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(10))
             .read_timeout(std::time::Duration::from_secs(15))
-            .user_agent("nixe-assistant")
+            .user_agent("nyx-assistant")
             .build()?;
         let response = cancellable(
             async { Ok(client.get(url).send().await?.error_for_status()?) },

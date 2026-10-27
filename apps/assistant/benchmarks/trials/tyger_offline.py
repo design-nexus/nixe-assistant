@@ -2,7 +2,7 @@
 runs, fed 320 ms hops from two aligned 16 kHz recordings, the microphone and the
 assistant's own playback (record both with record_pair.sh).
 
-    ~/.cache/nixe-assistant/trials/tyger/.venv/bin/python tyger_offline.py MIC.wav PLAYBACK.wav
+    ~/.cache/nyx-assistant/trials/tyger/.venv/bin/python tyger_offline.py MIC.wav PLAYBACK.wav
 
 A hop counts as the assistant speaking when its playback is louder than --speaking-db.
 Prints each event (ENDPOINT, BARGE, BACKCHANNEL) with its time, and writes them, the time
@@ -17,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-TRIALS = Path.home() / ".cache/nixe-assistant/trials"
+TRIALS = Path.home() / ".cache/nyx-assistant/trials"
 sys.path.insert(0, str(TRIALS / "tyger/tyger-s2s"))
 
 

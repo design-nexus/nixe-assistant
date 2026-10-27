@@ -1,0 +1,15 @@
+[Unit]
+Description=Nyx Assistant HUD overlay
+After=graphical-session.target nyx-assistantd.service
+PartOf=graphical-session.target nyx-assistantd.service
+StopWhenUnneeded=yes
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/qs --path %h/.local/share/nyx-assistant/quickshell --no-duplicate
+Restart=on-failure
+RestartSec=2
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
+
+[Install]
+WantedBy=nyx-assistantd.service

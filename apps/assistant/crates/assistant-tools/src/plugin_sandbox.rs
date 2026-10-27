@@ -189,7 +189,7 @@ pub fn bwrap_args(profile: &SandboxProfile, launch: &Launch, home: &Path, runtim
             let p = home.join(d).display().to_string();
             push(&["--ro-bind-try", &p, &p]);
         }
-        let backups = home.join(".local/state/nixe-assistant/file-backups").display().to_string();
+        let backups = home.join(".local/state/nyx-assistant/file-backups").display().to_string();
         push(&["--bind-try", &backups, &backups]);
     }
     for (paths, writable) in [(&profile.read, false), (&profile.write, true)] {
@@ -318,7 +318,7 @@ fn limits_args(profile: &SandboxProfile, unit: &str) -> Vec<String> {
 fn unit_name(id: &str) -> String {
     static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    format!("nixe-assistant-plugin-{id}-{}-{n}.scope", std::process::id())
+    format!("nyx-assistant-plugin-{id}-{}-{n}.scope", std::process::id())
 }
 
 /// The command that starts `launch` inside its sandbox.
@@ -380,7 +380,7 @@ fn resolve(program: &str) -> Option<PathBuf> {
 }
 
 /// The program a one-line `exec /path/to/program "$@"` wrapper runs (install.sh writes
-/// `nixe-assistant-node` this way), so the sandbox binds that program, not the wrapper's folder.
+/// `nyx-assistant-node` this way), so the sandbox binds that program, not the wrapper's folder.
 fn exec_target(path: &Path) -> Option<PathBuf> {
     if std::fs::metadata(path).ok()?.len() > 4096 {
         return None;
@@ -412,7 +412,7 @@ pub fn inherit(command: &mut tokio::process::Command, fds: Vec<RawFd>) {
 /// proxy, its socket and the descriptor that keeps it running (handed to bwrap).
 async fn start_proxy(id: &str, talk: &[String], runtime: Option<&Path>) -> Result<(tokio::process::Child, PathBuf, OwnedFd)> {
     let address = std::env::var("DBUS_SESSION_BUS_ADDRESS").context("no session bus")?;
-    let dir = runtime.context("no XDG_RUNTIME_DIR")?.join("nixe-assistant").join("dbus-proxy");
+    let dir = runtime.context("no XDG_RUNTIME_DIR")?.join("nyx-assistant").join("dbus-proxy");
     std::fs::create_dir_all(&dir)?;
     {
         use std::os::unix::fs::PermissionsExt;
@@ -457,7 +457,7 @@ fn pipe() -> Result<(OwnedFd, OwnedFd)> {
 /// `--seccomp`.
 pub fn seccomp_fd() -> Result<OwnedFd> {
     let program = seccomp_program();
-    let fd = unsafe { libc::memfd_create(c"nixe-assistant-seccomp".as_ptr(), libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING) };
+    let fd = unsafe { libc::memfd_create(c"nyx-assistant-seccomp".as_ptr(), libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING) };
     anyhow::ensure!(fd >= 0, "memfd: {}", std::io::Error::last_os_error());
     let fd = unsafe { OwnedFd::from_raw_fd(fd) };
     let mut file = std::fs::File::from(fd);
@@ -604,7 +604,7 @@ mod tests {
     #[test]
     fn the_default_is_strict() {
         let env = HashMap::from([("ASSISTANT_PLUGIN_ID".to_string(), "t".to_string())]);
-        let (home, package, data) = (Path::new("/home/u"), Path::new("/home/u/.local/share/nixe-assistant/abilities/t"), Path::new("/home/u/.local/share/nixe-assistant/plugin-data/t"));
+        let (home, package, data) = (Path::new("/home/u"), Path::new("/home/u/.local/share/nyx-assistant/abilities/t"), Path::new("/home/u/.local/share/nyx-assistant/plugin-data/t"));
         let a = bwrap_args(&SandboxProfile::default(), &launch(&env, package, data), home, Some(Path::new("/run/user/1000")), None).unwrap();
         for flag in ["--unshare-net", "--unshare-pid", "--clearenv", "--die-with-parent"] {
             assert!(a.iter().any(|x| x == flag), "{flag}");
@@ -627,7 +627,7 @@ mod tests {
         let h = home.path().display().to_string();
         assert!(triple(&a, "--bind", &h, &h));
         assert!(pair(&a, "--tmpfs", &home.path().join(".ssh").display().to_string()));
-        let own = home.path().join(".config/nixe-assistant").display().to_string();
+        let own = home.path().join(".config/nyx-assistant").display().to_string();
         assert!(triple(&a, "--ro-bind-try", &own, &own));
         let read = SandboxProfile { home: HomeAccess::Read, ..Default::default() };
         assert!(triple(&bwrap_args(&read, &launch(&env, &package, &data), home.path(), None, None).unwrap(), "--ro-bind", &h, &h));
@@ -639,7 +639,7 @@ mod tests {
         let (home, p, d) = (Path::new("/home/u"), Path::new("/home/u/p"), Path::new("/home/u/d"));
         let profile = SandboxProfile { read: vec!["~/.ssh".into()], ..Default::default() };
         assert!(bwrap_args(&profile, &launch(&env, p, d), home, None, None).is_err());
-        let profile = SandboxProfile { write: vec!["~/.config/nixe-assistant".into()], ..Default::default() };
+        let profile = SandboxProfile { write: vec!["~/.config/nyx-assistant".into()], ..Default::default() };
         assert!(bwrap_args(&profile, &launch(&env, p, d), home, None, None).is_err());
         let profile = SandboxProfile { read: vec!["~/Music".into()], write: vec!["~/Pictures/shots".into()], ..Default::default() };
         let a = bwrap_args(&profile, &launch(&env, p, d), home, None, None).unwrap();
@@ -653,8 +653,8 @@ mod tests {
         let (home, p, d, run) = (Path::new("/home/u"), Path::new("/home/u/p"), Path::new("/home/u/d"), Path::new("/run/user/1000"));
         let profile = SandboxProfile { sockets: vec![SandboxSocket::SessionBus, SandboxSocket::Pipewire], talk: vec!["org.mpris.MediaPlayer2.*".into()], ..Default::default() };
         assert!(bwrap_args(&profile, &launch(&env, p, d), home, Some(run), None).is_err(), "the bus needs the proxy");
-        let a = bwrap_args(&profile, &launch(&env, p, d), home, Some(run), Some(Path::new("/run/user/1000/nixe-assistant/dbus-proxy/t-1"))).unwrap();
-        assert!(triple(&a, "--bind", "/run/user/1000/nixe-assistant/dbus-proxy/t-1", "/run/user/1000/bus"));
+        let a = bwrap_args(&profile, &launch(&env, p, d), home, Some(run), Some(Path::new("/run/user/1000/nyx-assistant/dbus-proxy/t-1"))).unwrap();
+        assert!(triple(&a, "--bind", "/run/user/1000/nyx-assistant/dbus-proxy/t-1", "/run/user/1000/bus"));
         assert!(triple(&a, "--bind-try", "/run/user/1000/pipewire-0", "/run/user/1000/pipewire-0"));
         assert!(triple(&a, "--setenv", "DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus"));
         assert!(!a.iter().any(|x| x.contains("wayland")));

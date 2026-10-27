@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Get the speech-model trials ready to run: weights and one Python environment per model,
-# all under $TRIALS (default ~/.cache/nixe-assistant/trials), apart from the assistant.
+# all under $TRIALS (default ~/.cache/nyx-assistant/trials), apart from the assistant.
 # Runs nothing on the GPU. Safe to run again: finished steps are skipped.
 #
 #   benchmarks/trials/setup.sh [step…]     steps: weights envs (default: both)
@@ -8,7 +8,7 @@
 
 set -uo pipefail
 
-TRIALS=${TRIALS:-$HOME/.cache/nixe-assistant/trials}
+TRIALS=${TRIALS:-$HOME/.cache/nyx-assistant/trials}
 LOGS=$TRIALS/logs
 export UV_HTTP_TIMEOUT=${UV_HTTP_TIMEOUT:-600}
 mkdir -p "$LOGS"

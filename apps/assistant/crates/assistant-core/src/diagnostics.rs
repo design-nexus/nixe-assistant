@@ -12,7 +12,7 @@ pub async fn collect() -> Value {
         "qs",
         "git",
         "wtype",
-        "nixe-assistant-node",
+        "nyx-assistant-node",
     ]
     .iter()
     .map(|name| {
@@ -30,9 +30,9 @@ pub async fn collect() -> Value {
             vec![
                 "--user",
                 "is-active",
-                "nixe-assistantd",
-                "nixe-assistant-stt",
-                "nixe-assistant-hud",
+                "nyx-assistantd",
+                "nyx-assistant-stt",
+                "nyx-assistant-hud",
             ],
         ),
         ("audio_devices", "wpctl", vec!["status"]),
@@ -42,7 +42,7 @@ pub async fn collect() -> Value {
             vec![
                 "--user",
                 "-u",
-                "nixe-assistantd",
+                "nyx-assistantd",
                 "-p",
                 "warning",
                 "-n",

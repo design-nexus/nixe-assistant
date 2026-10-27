@@ -1,5 +1,5 @@
-"""The Nixe apps, worked directly through their control interface on the session bus
-(io.github.design_nexus.nixe.Control) instead of through their windows. An app that isn't
+"""The Nyx apps, worked directly through their control interface on the session bus
+(io.github.design_nexus.nyx.Control) instead of through their windows. An app that isn't
 running is started first."""
 import json
 import subprocess
@@ -10,19 +10,19 @@ from desktop_plugin import TEXT, run, request_tools
 
 PATH_ARG = {'type': 'string', 'minLength': 1, 'maxLength': 4096}
 APPS = {
-    'notepad': ('io.github.design_nexus.nixe.Notepad', 'nixe-notepad'),
-    'write': ('io.github.design_nexus.nixe.Write', 'nixe-write'),
-    'music': ('io.github.design_nexus.nixe.Music', 'nixe-music'),
-    'contacts': ('io.github.design_nexus.nixe.Contacts', 'nixe-contacts'),
-    'archive': ('io.github.design_nexus.nixe.Archive', 'nixe-archive'),
-    'chat': ('io.github.design_nexus.nixe.Chat', 'nixe-chat'),
-    'fonts': ('io.github.design_nexus.nixe.Fonts', 'nixe-fonts'),
-    'photos': ('io.github.design_nexus.nixe.Photos', 'nixe-photos'),
-    'video': ('io.github.design_nexus.nixe.MediaPlayer', 'nixe-media-player'),
-    'theater': ('io.github.design_nexus.nixe.Theater', 'nixe-theater'),
-    'pdf': ('io.github.design_nexus.nixe.Pdf', 'nixe-pdf'),
-    'settings': ('io.github.design_nexus.nixe.Settings', 'nixe-settings'),
-    'torrents': ('io.github.design_nexus.nixe.Torrents', 'nixe-torrents'),
+    'notepad': ('io.github.design_nexus.nyx.Notepad', 'nyx-notepad'),
+    'write': ('io.github.design_nexus.nyx.Write', 'nyx-write'),
+    'music': ('io.github.design_nexus.nyx.Music', 'nyx-music'),
+    'contacts': ('io.github.design_nexus.nyx.Contacts', 'nyx-contacts'),
+    'archive': ('io.github.design_nexus.nyx.Archive', 'nyx-archive'),
+    'chat': ('io.github.design_nexus.nyx.Chat', 'nyx-chat'),
+    'fonts': ('io.github.design_nexus.nyx.Fonts', 'nyx-fonts'),
+    'photos': ('io.github.design_nexus.nyx.Photos', 'nyx-photos'),
+    'video': ('io.github.design_nexus.nyx.MediaPlayer', 'nyx-media-player'),
+    'theater': ('io.github.design_nexus.nyx.Theater', 'nyx-theater'),
+    'pdf': ('io.github.design_nexus.nyx.Pdf', 'nyx-pdf'),
+    'settings': ('io.github.design_nexus.nyx.Settings', 'nyx-settings'),
+    'torrents': ('io.github.design_nexus.nyx.Torrents', 'nyx-torrents'),
 }
 # Answered by an app's command line, with no window: Glimpse's file search, Store's
 # catalogue and Tasks' sampler.
@@ -91,8 +91,8 @@ TOOLS = [
          {'page': {'type': 'integer', 'minimum': 1}, 'pages': {'type': 'integer', 'minimum': 1, 'maximum': 5}}),
     tool('pdf.search', 'Find words in the open PDF: the pages they are on and how often.', {'text': TEXT}, ['text']),
     tool('pdf.go_to', 'Turn the open PDF to a page (from 1).', {'page': {'type': 'integer', 'minimum': 1}}, ['page']),
-    tool('settings.pages', 'The pages of Nixe Settings (id, title, what each covers).', {'query': SHORT}),
-    tool('settings.open', 'Show a page of Nixe Settings (by id or title from settings.pages) for the person to change something themselves.', {'page': SHORT}, ['page']),
+    tool('settings.pages', 'The pages of Nyx Settings (id, title, what each covers).', {'query': SHORT}),
+    tool('settings.open', 'Show a page of Nyx Settings (by id or title from settings.pages) for the person to change something themselves.', {'page': SHORT}, ['page']),
     tool('store.search', 'Search the Store catalogue for apps and packages (name, version, whether installed).', {'query': TEXT}, ['query']),
     tool('store.open', "Show the Store with a search typed in, for the person to install or remove things themselves.", {'query': SHORT}, ['query']),
     tool('tasks.top', 'The busiest processes (by cpu or memory) and the CPU, memory and graphics totals.', {'by': {'enum': ['cpu', 'memory']}}),
@@ -120,7 +120,7 @@ TOOLS = [
     tool('theater.mark_watched', 'Mark a Theater title watched, or unwatched with watched=false (a show or season: all its episodes).',
          {'id': SHORT, 'watched': {'type': 'boolean'}}, ['id']),
 ]
-IFACE = 'io.github.design_nexus.nixe.Control'
+IFACE = 'io.github.design_nexus.nyx.Control'
 
 def running(bus, cancelled):
     out = run(['busctl', '--user', '--json=short', 'call', 'org.freedesktop.DBus', '/org/freedesktop/DBus',
@@ -151,22 +151,22 @@ def page_name(text):
 
 def headless(name, args, cancelled):
     if name == 'glimpse.search':
-        out = run(['nixe-glimpse', 'search', args['query']], cancelled, timeout=20)
+        out = run(['nyx-glimpse', 'search', args['query']], cancelled, timeout=20)
         hits = json.loads(out)
         return {'files': [{'name': h.get('name'), 'path': h.get('path')} for h in hits[:30]], 'untrusted_content': True}
     if name == 'store.search':
-        return json.loads(run(['nixe-store', '--find', args['query']], cancelled, timeout=60))
+        return json.loads(run(['nyx-store', '--find', args['query']], cancelled, timeout=60))
     if name == 'tasks.top':
-        return json.loads(run(['nixe-tasks', '--top', 'memory' if args.get('by') == 'memory' else 'cpu'], cancelled, timeout=20))
+        return json.loads(run(['nyx-tasks', '--top', 'memory' if args.get('by') == 'memory' else 'cpu'], cancelled, timeout=20))
     raise ValueError(f'unknown tool {name}')
 
 def show(name, args):
     if name == 'glimpse.show':
-        argv = ['nixe-glimpse'] + (['--query', args['query']] if args.get('query') else [])
+        argv = ['nyx-glimpse'] + (['--query', args['query']] if args.get('query') else [])
     elif name == 'store.open':
-        argv = ['nixe-store', '--search', args['query']]
+        argv = ['nyx-store', '--search', args['query']]
     else:
-        argv = ['nixe-tasks'] + (['--section', page_name(args['page'])] if args.get('page') else [])
+        argv = ['nyx-tasks'] + (['--section', page_name(args['page'])] if args.get('page') else [])
     proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                             start_new_session=True)
     threading.Thread(target=proc.wait, daemon=True).start()
@@ -187,4 +187,4 @@ def handle(name, args, cancelled):
         raise ValueError(reply['error'])
     return reply['ok']
 
-if __name__ == '__main__': Plugin('nixe-apps', request_tools(TOOLS), handle).run()
+if __name__ == '__main__': Plugin('nyx-apps', request_tools(TOOLS), handle).run()

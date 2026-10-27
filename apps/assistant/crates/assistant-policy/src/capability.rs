@@ -43,7 +43,7 @@ pub enum Capability {
     /// Reading and operating app windows (`ui.*`, `screen.*`, `input.*`). Asks with a key
     /// press; one approval may cover the rest of a task.
     ComputerUse,
-    /// Finding logins in Nixe Passwords and copying one to the clipboard
+    /// Finding logins in Nyx Passwords and copying one to the clipboard
     /// (`passwords.find`, `passwords.copy`). Always asks, with a key press, one call at a
     /// time.
     Secrets,
@@ -71,7 +71,7 @@ const PLUGIN_EDITS: &[&str] = &[
     "power.normal",
     "power.configure",
     "power.unload",
-    // Task lists synced to the user's accounts (Nixe Reminders).
+    // Task lists synced to the user's accounts (Nyx Reminders).
     "reminders.complete",
     "reminders.edit",
     "reminders.delete",
@@ -123,7 +123,7 @@ impl Capability {
             "capture.screen" | "capture.clipboard" => return Self::Capture,
             "passwords.find" | "passwords.copy" => return Self::Secrets,
             "history.undo" | "history.undo_task" => return Self::PluginData,
-            // Nixe apps worked directly: reading a file in, typing into a document, saving.
+            // Nyx apps worked directly: reading a file in, typing into a document, saving.
             "notepad.open" | "write.open" | "archive.list" | "archive.open" | "photos.open" | "pdf.open" => return Self::FileRead,
             "notepad.insert_text" | "write.insert_text" | "contacts.add" | "contacts.update" | "contacts.add_to_list" | "theater.mark_watched" | "chat.send" => {
                 return Self::PluginEdit;
@@ -199,7 +199,7 @@ impl Capability {
     /// Whether a spoken "approve" counts. A voice nearby, a video or a web page read aloud
     /// can say it, so generated commands, shutdown, captures, admin actions, computer use and
     /// external tools (which send their arguments to another machine) need a key press (HUD,
-    /// TUI or `nixe-assistant approve`). A spoken "deny" always counts.
+    /// TUI or `nyx-assistant approve`). A spoken "deny" always counts.
     pub fn voice_approvable(self) -> bool {
         !matches!(
             self,
@@ -301,7 +301,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn nixe_app_tools() {
+    fn nyx_app_tools() {
         assert_eq!(Capability::of("notepad.read"), Capability::PluginData);
         assert_eq!(Capability::of("write.new_document"), Capability::PluginData);
         assert_eq!(Capability::of("notepad.open"), Capability::FileRead);

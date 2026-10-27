@@ -489,7 +489,7 @@ mod tests {
     fn names_pick_the_button_not_its_label() {
         let el = |id: &str, role: &str, name: &str| a11y::Element { id: id.into(), role: role.into(), name: name.into(), states: vec![], bounds: None, actions: vec![], text: None };
         let tree = a11y::Tree {
-            app: "nixe-office".into(),
+            app: "nyx-office".into(),
             window: "Write".into(),
             elements: vec![el("e7", "button", "Blank document Start from an empty page."), {
                 // GTK labels expose clipboard actions; that doesn't make them buttons.

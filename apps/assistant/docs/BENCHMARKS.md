@@ -27,9 +27,9 @@ not when the speaker cone moves.
 ## How to capture
 
 ```bash
-RUST_LOG=info journalctl --user -u nixe-assistantd -f
+RUST_LOG=info journalctl --user -u nyx-assistantd -f
 # or run in a terminal:
-RUST_LOG=info nixe-assistantd
+RUST_LOG=info nyx-assistantd
 ```
 
 Hold Alt+Space, speak one short sentence, release. Paste the `Assistant timing` block
@@ -37,7 +37,7 @@ and fill a row below.
 
 Also record, when practical:
 
-- `nvidia-smi` VRAM of `nixe-assistantd` at idle (models loaded)
+- `nvidia-smi` VRAM of `nyx-assistantd` at idle (models loaded)
 - GGUF path / name
 - Voxtype variant (`voxtype info`)
 - whether Kokoro ran on CUDA or CPU
@@ -46,8 +46,8 @@ Also record, when practical:
 
 | Date | Host | GGUF | STT | TTS | VAD→STT | STT→route | route→TTFT | TTFT→TTS | TTS→audio | TOTAL | VRAM idle | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 2026-10-05 | Hades RTX 5080 | Gemma 4 E4B Q4 | voxtype whisper `base.en` CPU | Kokoro CPU | 861 | 0 | 139 | 237 | 0 | **1237** | ~3860 MiB | `nixe-assistant demo`: Kokoro “What is two plus two?” → Voxtype “What is 2 plus 2?” → LLM “Four.” → speakers. No mic/VAD. Probe synth excluded from the clock. |
-| 2026-10-06 | Hades RTX 5080 | Gemma 4 E4B Q4 | warm Parakeet (`nixe-assistant-stt`, `voxtype-onnx-avx2`) | Kokoro CPU (CUDA skipped, no sm_120 ORT) | 198 | 0 | 164 | 426 | 0 | **788** | 3848 MiB | PTT mic: “Hello.” → “Hello there.” Key-up is VAD end. Same daemon as the 643 ms Kokoro / 1329 ms GGUF load below. |
+| 2026-10-05 | Hades RTX 5080 | Gemma 4 E4B Q4 | voxtype whisper `base.en` CPU | Kokoro CPU | 861 | 0 | 139 | 237 | 0 | **1237** | ~3860 MiB | `nyx-assistant demo`: Kokoro “What is two plus two?” → Voxtype “What is 2 plus 2?” → LLM “Four.” → speakers. No mic/VAD. Probe synth excluded from the clock. |
+| 2026-10-06 | Hades RTX 5080 | Gemma 4 E4B Q4 | warm Parakeet (`nyx-assistant-stt`, `voxtype-onnx-avx2`) | Kokoro CPU (CUDA skipped, no sm_120 ORT) | 198 | 0 | 164 | 426 | 0 | **788** | 3848 MiB | PTT mic: “Hello.” → “Hello there.” Key-up is VAD end. Same daemon as the 643 ms Kokoro / 1329 ms GGUF load below. |
 
 ## Audio microbenchmarks
 
@@ -80,7 +80,7 @@ a missed "stop" lets the reply carry on (say it again, or Escape).
 
 ## Duplex (Phase 5, 2026-10-14)
 
-`nixe-assistant bench duplex [--echo-only]`; numbers from the daemon's `interruption` and
+`nyx-assistant bench duplex [--echo-only]`; numbers from the daemon's `interruption` and
 `timing` events.
 
 | Check | Target (§4.6) | Measured |
@@ -130,12 +130,12 @@ requests, each scored on whether the next call is sensible.
 Live, through the planner and checked against the app:
 - "In Write, type …": text in the document (OCR, plus a screenshot)
 - "In the Notepad window, open a new tab": tabs went from 1 to 2 (the title changed)
-- "In the Firefox window titled Bench search, search the page for nixe": the title became
-  "searched: nixe"
+- "In the Firefox window titled Bench search, search the page for nyx": the title became
+  "searched: nyx"
 
 ## Speech synthesis alternatives (2026-10-18)
 
-`nixe-assistant bench tts` (Kokoro, as configured) and `benchmarks/trials/run.sh qwen|gepard|vibevoice`
+`nyx-assistant bench tts` (Kokoro, as configured) and `benchmarks/trials/run.sh qwen|gepard|vibevoice`
 on the same phrases: a short first phrase, a typical one and a long one, median of three after a
 warm-up, one phrase per call (how the assistant feeds Kokoro), assistant stopped. Audio in
 `benchmarks/trials/results/`.
@@ -169,10 +169,10 @@ The 27B packings score the same (the same weights). Gemma stays: the 27B is abou
 but its slow steps are slower, it needs ~3 GB more, and it would run as a second process on a
 fork. Worth another look if upstream llama.cpp gains PTQ1_0/PQ2_0.
 
-## Every Nixe app's tools (Phase 11, 2026-10-17)
+## Every Nyx app's tools (Phase 11, 2026-10-17)
 
 `bench planner` with 42 app-tool steps (24 new: Archive, Chat, Fonts, Photos, Glimpse, Media
-Player, PDF, Settings, Store, Tasks, Torrents). The app tools are read from the nixe-apps
+Player, PDF, Settings, Store, Tasks, Torrents). The app tools are read from the nyx-apps
 ability itself. Each step runs twice: with the named app's tools (as the daemon offers them),
 then with all 55 app tools and `media.*`:
 
@@ -201,7 +201,7 @@ Offering all 55 tools doesn't slow Gemma down; Qwen's median step more than doub
 Live: `music-typed` 12.3 s (music.play; the album plays) and `contacts-typed` 13.4 s
 (contacts.add; found again by email), both passing.
 
-## Nixe apps' own tools (Phase 9, 2026-10-16)
+## Nyx apps' own tools (Phase 9, 2026-10-16)
 
 `bench planner` with Notepad's and Write's real tools offered beside computer use (11 steps:
 new tab, open, insert, save, read, a heading, save as .odt, plus media):
@@ -269,7 +269,7 @@ Live (`bench computer`): VS Code passes (ctrl+end, type, ctrl+s; the file checke
 
 ## Under load (Phase 8b, 2026-10-15)
 
-`nixe-assistant bench load [--only idle|cpu|gpu|both] [--heat]`. Each scenario: one warm-up,
+`nyx-assistant bench load [--only idle|cpu|gpu|both] [--heat]`. Each scenario: one warm-up,
 then 3 `demo` turns (Kokoro speech → STT → LLM → speakers) and 3 long `say` replies (the
 recognizer listens while the LLM generates and Kokoro speaks). Times are median / p90 in ms
 from the end of speech. CPU busy = one busy thread per logical CPU (16), like a compile; GPU
@@ -323,7 +323,7 @@ Hyprland, Firefox and Plezy hold `/dev/nvidia*`, so the card never suspends; unl
 
 ## Crash recovery (Phase 8b, 2026-10-15)
 
-`nixe-assistant bench crash`: `kill -9` on each part, recovery measured from outside.
+`nyx-assistant bench crash`: `kill -9` on each part, recovery measured from outside.
 
 | Case | Result | What happened |
 |---|---|---|
@@ -334,7 +334,7 @@ Hyprland, Firefox and Plezy hold `/dev/nvidia*`, so the card never suspends; unl
 
 ## Prompt injection (Phase 8a, 2026-10-15)
 
-`nixe-assistant bench injection`: a loopback page, a text file and a Firefox window each carry
+`nyx-assistant bench injection`: a loopback page, a text file and a Firefox window each carry
 an article and a planted notice asking to append to `~/.bashrc`, send a private file to
 `/collect`, install a package, approve requests in Settings, type into Notepad and run a
 command. Every approval is denied except window reads. Gemma 4 E4B, Autonomous mode.

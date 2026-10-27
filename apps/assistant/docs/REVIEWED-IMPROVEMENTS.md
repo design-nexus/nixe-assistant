@@ -61,7 +61,7 @@ task; "resume browser" continues it with its steps and remaining budget. Cancel
 (`cancel`, Escape, `tasks cancel ID`) stops the task and its terminal jobs. A
 restart marks tasks it interrupted as failed; nothing resumes on its own.
 
-**Hardware presets.** `nixe-assistant preset` shows which preset the settings match
+**Hardware presets.** `nyx-assistant preset` shows which preset the settings match
 and the one recommended for this computer's graphics memory; `preset lite|balanced|
 advanced` applies one (Settings › Assistant › Performance has the same choice):
 
@@ -74,13 +74,13 @@ advanced` applies one (Settings › Assistant › Performance has the same choic
 Without an NVIDIA card everything runs on the processor. A preset's model that isn't
 downloaded is named with its download command; the rest still applies.
 
-Tasks and steps are kept in `agent.db`: `nixe-assistant tasks`, `tasks show ID`.
+Tasks and steps are kept in `agent.db`: `nyx-assistant tasks`, `tasks show ID`.
 
 A request with several steps ("open the PDF, find taxes and go to that page") gets a
 short plan before its first call (`[agent] plan = "auto"`; `always` or `off`). The HUD
 shows it under the task, `tasks show` prints it, and every planning step is given it.
 Each change a task makes is recorded with the task: **undo that task** (or
-`nixe-assistant tasks undo [ID]`, the `history.undo_task` tool) undoes its reversible
+`nyx-assistant tasks undo [ID]`, the `history.undo_task` tool) undoes its reversible
 changes newest first, each asked like any call, stops at the first one that fails, and
 says which can't be undone (keystrokes and clicks in other apps, sent messages).
 
@@ -100,8 +100,8 @@ whatever is allowed, `assisted` asks before changes other than desktop, volume a
 app launches, `manual` asks before any change. An allowed or approved call gets a
 grant bound to the tool and a digest of its exact arguments, valid for one use
 within 60 seconds; the registry dispatches nothing without one. Denials,
-approvals and call outcomes go to `~/.local/state/nixe-assistant/agent.db` with
-secret-looking values redacted; `nixe-assistant audit` lists them.
+approvals and call outcomes go to `~/.local/state/nyx-assistant/agent.db` with
+secret-looking values redacted; `nyx-assistant audit` lists them.
 
 Permission overrides use the names displayed in Diagnostics:
 
@@ -126,7 +126,7 @@ browser profiles) are off limits to every file tool, and the assistant's own
 config, state and data are read-only to them. Reads are limited to 64 KiB and
 500 lines. `files.write` (create, overwrite or append, up to 1 MiB),
 `files.move` and `files.trash` keep a backup in
-`~/.local/state/nixe-assistant/file-backups`, and `files.undo` (or "undo that")
+`~/.local/state/nyx-assistant/file-backups`, and `files.undo` (or "undo that")
 puts it back; they ask unless `permissions.files_write = "allow"`.
 
 Typed desktop and system tools: `windows.*`, `workspaces.*` and `monitors.list`
@@ -162,7 +162,7 @@ arguments, approval ID and expiry. Existing commands/events remain supported.
 
 HTTP binds only to a loopback IP. Every endpoint requires
 `Authorization: Bearer TOKEN`. The randomly generated token is in
-`$XDG_RUNTIME_DIR/nixe-assistant/http.token`, mode 0600 (runtime directory 0700).
+`$XDG_RUNTIME_DIR/nyx-assistant/http.token`, mode 0600 (runtime directory 0700).
 HTTP action responses indicate queued work, not successful execution; use IPC
 for acknowledged reloads. No browser-origin access is enabled.
 
@@ -175,12 +175,12 @@ CLI additions: `doctor [--json]`, `status --json`, `activity [clear]`, `audit [-
 `scripts/install.sh` builds and installs locally, backs up installed files and
 configuration, migrates configuration additively, restarts affected services,
 and verifies model health. Startup failure restores the backup. HUD assets live
-in `~/.local/share/nixe-assistant/quickshell`, independent of the checkout.
+in `~/.local/share/nyx-assistant/quickshell`, independent of the checkout.
 The plugin keeps any existing assistant plugin identifier used by the bar.
 
 CUDA is an optional build feature. The installer selects it when `nvcc` exists;
-manual builds use `cargo build --release --features cuda -p nixe-assistantd`.
+manual builds use `cargo build --release --features cuda -p nyx-assistantd`.
 For this host's Blackwell GPU, put `CMAKE_CUDA_ARCHITECTURES=120a-real` in
-`~/.config/nixe-assistant/build.env`; other hosts choose their own override.
+`~/.config/nyx-assistant/build.env`; other hosts choose their own override.
 Runtime library overrides go in `runtime.env`, for example
 `LD_LIBRARY_PATH=/opt/cuda/lib64`. Existing user config is preserved.

@@ -190,10 +190,10 @@ fn rms(chunk: &[i16]) -> f32 {
     (acc / chunk.len().max(1) as f32).sqrt()
 }
 
-/// With `NIXE_ASSISTANT_DUPLEX_CLIPS=1`, the last five interruption clips are kept for tuning
-/// (`$XDG_RUNTIME_DIR/nixe-assistant/duplex-N.wav`, private and cleared at logout).
+/// With `NYX_ASSISTANT_DUPLEX_CLIPS=1`, the last five interruption clips are kept for tuning
+/// (`$XDG_RUNTIME_DIR/nyx-assistant/duplex-N.wav`, private and cleared at logout).
 fn dump_clip(pcm: &[i16]) {
-    if std::env::var_os("NIXE_ASSISTANT_DUPLEX_CLIPS").is_none_or(|v| v != "1") {
+    if std::env::var_os("NYX_ASSISTANT_DUPLEX_CLIPS").is_none_or(|v| v != "1") {
         return;
     }
     static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);

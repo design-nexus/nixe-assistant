@@ -22,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
             let rest: Vec<_> = args.collect();
             if action == "migrate" {
                 let cfg = assistant_core::Config::load()?;
-                let worker = std::env::current_exe()?.with_file_name("nixe-assistant-plugin-worker");
+                let worker = std::env::current_exe()?.with_file_name("nyx-assistant-plugin-worker");
                 let checkout = rest.first().map(std::path::PathBuf::from).unwrap_or(std::env::current_dir()?);
                 plugins::migrate(&cfg, &worker, &checkout).await?;
                 println!("Plugin migration complete; existing configuration retained.");
@@ -332,7 +332,7 @@ async fn main() -> anyhow::Result<()> {
         // Bare `models` opens the TUI's model page (below).
         "models" if std::env::args().nth(2).as_deref() == Some("fetch") => {
             let rest: Vec<_> = args.collect();
-            anyhow::ensure!(rest.iter().map(String::as_str).eq(["fetch", "asr"]), "usage: nixe-assistant models fetch asr");
+            anyhow::ensure!(rest.iter().map(String::as_str).eq(["fetch", "asr"]), "usage: nyx-assistant models fetch asr");
             fetch_asr_model()?;
         }
         "admin-log" => {
@@ -495,7 +495,7 @@ async fn main() -> anyhow::Result<()> {
         "say" => {
             let text = args.collect::<Vec<_>>().join(" ");
             if text.trim().is_empty() {
-                anyhow::bail!("usage: nixe-assistant say <text>");
+                anyhow::bail!("usage: nyx-assistant say <text>");
             }
             print_events(send_until_done(Command::Say { text }, 120_000).await?);
         }
@@ -516,9 +516,9 @@ async fn main() -> anyhow::Result<()> {
         }
         "tui" | "ui" | "settings" | "assistant-tui" | "model" | "models" => {
             let tui_bin = dirs::home_dir()
-                .map(|h| h.join(".local/bin/nixe-assistant-tui"))
-                .unwrap_or_else(|| std::path::PathBuf::from("nixe-assistant-tui"));
-            let bin_path = if tui_bin.exists() { tui_bin } else { std::path::PathBuf::from("nixe-assistant-tui") };
+                .map(|h| h.join(".local/bin/nyx-assistant-tui"))
+                .unwrap_or_else(|| std::path::PathBuf::from("nyx-assistant-tui"));
+            let bin_path = if tui_bin.exists() { tui_bin } else { std::path::PathBuf::from("nyx-assistant-tui") };
             let status = std::process::Command::new(bin_path).status()?;
             if !status.success() {
                 std::process::exit(status.code().unwrap_or(1));
@@ -526,7 +526,7 @@ async fn main() -> anyhow::Result<()> {
         }
         "start" | "enable" => {
             let status = std::process::Command::new("systemctl")
-                .args(["--user", "start", "nixe-assistant-stt.service", "nixe-assistantd.service"])
+                .args(["--user", "start", "nyx-assistant-stt.service", "nyx-assistantd.service"])
                 .status()?;
             if status.success() {
                 println!("Started assistant daemon & loaded models.");
@@ -537,7 +537,7 @@ async fn main() -> anyhow::Result<()> {
         }
         "stop" | "disable" => {
             let status = std::process::Command::new("systemctl")
-                .args(["--user", "stop", "nixe-assistantd.service", "nixe-assistant-stt.service"])
+                .args(["--user", "stop", "nyx-assistantd.service", "nyx-assistant-stt.service"])
                 .status()?;
             if status.success() {
                 println!("Stopped assistant daemon & unloaded models from VRAM/RAM.");
@@ -548,19 +548,19 @@ async fn main() -> anyhow::Result<()> {
         }
         "toggle-service" | "toggle-daemon" => {
             let is_active = std::process::Command::new("systemctl")
-                .args(["--user", "is-active", "--quiet", "nixe-assistantd.service"])
+                .args(["--user", "is-active", "--quiet", "nyx-assistantd.service"])
                 .status()
                 .map(|s| s.success())
                 .unwrap_or(false);
             if is_active {
                 let status = std::process::Command::new("systemctl")
-                    .args(["--user", "stop", "nixe-assistantd.service", "nixe-assistant-stt.service"])
+                    .args(["--user", "stop", "nyx-assistantd.service", "nyx-assistant-stt.service"])
                     .status()?;
                 anyhow::ensure!(status.success(), "Failed to stop services");
                 println!("Assistant disabled (models unloaded).");
             } else {
                 let status = std::process::Command::new("systemctl")
-                    .args(["--user", "start", "nixe-assistant-stt.service", "nixe-assistantd.service"])
+                    .args(["--user", "start", "nyx-assistant-stt.service", "nyx-assistantd.service"])
                     .status()?;
                 anyhow::ensure!(status.success(), "Failed to start services");
                 println!("Assistant enabled (models loaded).");
@@ -572,7 +572,7 @@ async fn main() -> anyhow::Result<()> {
                 Some("set") | Some("use") | Some("switch") => {
                     let target = args.next().unwrap_or_default();
                     if target.is_empty() {
-                        eprintln!("usage: nixe-assistant persona set <name>");
+                        eprintln!("usage: nyx-assistant persona set <name>");
                         std::process::exit(1);
                     }
                     let personas = assistant_core::Persona::load_all()?;
@@ -596,7 +596,7 @@ async fn main() -> anyhow::Result<()> {
                 Some("new") | Some("create") => {
                     let name = args.next().unwrap_or_default();
                     if name.is_empty() {
-                        eprintln!("usage: nixe-assistant persona new <name>");
+                        eprintln!("usage: nyx-assistant persona new <name>");
                         std::process::exit(1);
                     }
                     let p = assistant_core::Persona::new_with_generated(&name);
@@ -630,7 +630,7 @@ async fn main() -> anyhow::Result<()> {
                 Some("add-alias") => {
                     let alias = args.collect::<Vec<_>>().join(" ");
                     if alias.trim().is_empty() {
-                        eprintln!("usage: nixe-assistant persona add-alias <alias>");
+                        eprintln!("usage: nyx-assistant persona add-alias <alias>");
                         std::process::exit(1);
                     }
                     let mut personas = assistant_core::Persona::load_all()?;
@@ -663,10 +663,10 @@ async fn main() -> anyhow::Result<()> {
                         let badge = if is_active { "[ACTIVE] " } else { "         " };
                         println!("  {}{} (id: {:<7} voice: {:<11} aliases: {})", badge, p.name, p.id, p.voice, p.aliases.len());
                     }
-                    println!("\nCommands: nixe-assistant persona set <name>");
-                    println!("          nixe-assistant persona new <name>");
-                    println!("          nixe-assistant persona aliases [name]");
-                    println!("          nixe-assistant persona add-alias <alias>");
+                    println!("\nCommands: nyx-assistant persona set <name>");
+                    println!("          nyx-assistant persona new <name>");
+                    println!("          nyx-assistant persona aliases [name]");
+                    println!("          nyx-assistant persona add-alias <alias>");
                 }
             }
         }
@@ -750,7 +750,7 @@ async fn config_command(rest: &[String]) -> anyhow::Result<()> {
             reload_if_running().await;
             println!("removed the rule for {tool}");
         }
-        _ => anyhow::bail!("usage: nixe-assistant config get [KEY] [--json] | set KEY VALUE | unset mcp.permissions.TOOL"),
+        _ => anyhow::bail!("usage: nyx-assistant config get [KEY] [--json] | set KEY VALUE | unset mcp.permissions.TOOL"),
     }
     Ok(())
 }
@@ -838,12 +838,12 @@ async fn preset_command(rest: &[String]) -> anyhow::Result<()> {
                     .find(|m| m.filename == v.model_file)
                     .map(|m| m.download_url)
                     .unwrap_or("");
-                println!("{} isn't downloaded, so the model stays as it is. Download it with:\n  nixe-assistant models download {url}\nthen apply the preset again.", v.model_name);
+                println!("{} isn't downloaded, so the model stays as it is. Download it with:\n  nyx-assistant models download {url}\nthen apply the preset again.", v.model_name);
             }
             let changed: Vec<&str> = keys.iter().map(|(k, _)| *k).collect();
             apply_change(&changed).await;
         }
-        _ => anyhow::bail!("usage: nixe-assistant preset [show] [--json] | preset lite|balanced|advanced"),
+        _ => anyhow::bail!("usage: nyx-assistant preset [show] [--json] | preset lite|balanced|advanced"),
     }
     Ok(())
 }
@@ -865,7 +865,7 @@ async fn apply_change(keys: &[&str]) {
                 .unwrap_or_default();
             if keys.iter().any(|k| pending.iter().any(|p| k.starts_with(p.as_str()))) {
                 let ok = std::process::Command::new("systemctl")
-                    .args(["--user", "restart", "nixe-assistantd.service"])
+                    .args(["--user", "restart", "nyx-assistantd.service"])
                     .status()
                     .is_ok_and(|s| s.success());
                 eprintln!(
@@ -878,7 +878,7 @@ async fn apply_change(keys: &[&str]) {
     }
 }
 
-/// `models list|search|files|download|use`, JSON for Nixe Settings.
+/// `models list|search|files|download|use`, JSON for Nyx Settings.
 async fn models_command(rest: &[String]) -> anyhow::Result<()> {
     use assistant_models as models;
     let words: Vec<&str> = rest.iter().map(String::as_str).filter(|a| !a.starts_with("--")).collect();
@@ -966,7 +966,7 @@ async fn models_command(rest: &[String]) -> anyhow::Result<()> {
             apply_change(&["llm.model"]).await;
             println!("{}", serde_json::json!({"model": p, "projector": next.vision.resolve(&p)}));
         }
-        _ => anyhow::bail!("usage: nixe-assistant models list | search QUERY | files REPO | download URL | use PATH | fetch asr"),
+        _ => anyhow::bail!("usage: nyx-assistant models list | search QUERY | files REPO | download URL | use PATH | fetch asr"),
     }
     Ok(())
 }
@@ -981,8 +981,8 @@ fn install_helper() -> anyhow::Result<()> {
         "run this as root: sudo {} install-helper",
         std::env::current_exe()?.display()
     );
-    let source = std::env::current_exe()?.canonicalize()?.with_file_name("nixe-assistant-helper");
-    anyhow::ensure!(source.is_file(), "{} not found next to nixe-assistant", source.display());
+    let source = std::env::current_exe()?.canonicalize()?.with_file_name("nyx-assistant-helper");
+    anyhow::ensure!(source.is_file(), "{} not found next to nyx-assistant", source.display());
     let helper = Path::new(assistant_privileged::HELPER);
     let dir = helper.parent().context("no helper directory")?;
     std::fs::create_dir_all(dir)?;
@@ -1107,7 +1107,7 @@ fn fetch_asr_model() -> anyhow::Result<()> {
 
 fn print_help() {
     eprintln!(
-        "nixe-assistant — Local voice assistant client & persona manager\n\n\
+        "nyx-assistant — Local voice assistant client & persona manager\n\n\
            plugins list|inspect|install|enable|disable|reload|update|remove\n\
            tool NAME JSON  invoke through enabled-state and approval checks\n\
            doctor [--json] diagnostics (works offline)\n\

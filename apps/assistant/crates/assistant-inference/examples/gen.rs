@@ -1,5 +1,5 @@
 //! Check a model's spoken answers by hand: `gen MODEL.gguf` prints time to first token and
-//! whether a <think> block leaks. Planner steps are compared with `nixe-assistant bench planner`.
+//! whether a <think> block leaks. Planner steps are compared with `nyx-assistant bench planner`.
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 

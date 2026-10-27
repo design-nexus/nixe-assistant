@@ -1,4 +1,4 @@
-"""Local timezone-aware calendar with interoperable RFC 5545 UTC export. When Nixe
+"""Local timezone-aware calendar with interoperable RFC 5545 UTC export. When Nyx
 Calendar is installed, its tools (every account's calendars, through Evolution Data
 Server) take the place of the local ones, under the same names."""
 import datetime as dt
@@ -7,7 +7,7 @@ from pathlib import Path
 import uuid
 from assistant_plugin import Plugin, tool, data_path
 from desktop_plugin import NAME, TEXT, db_open, get, change, undo, list_records, request_tools
-import nixe_app
+import nyx_app
 TIME = {'type': 'string', 'maxLength': 64}
 TOOLS = [
     tool('calendar.list', 'List upcoming local calendar events', {'start': TIME, 'end': TIME}),
@@ -38,10 +38,10 @@ def fold(line):
             parts.append(part); part, size = ' ', 1
         part += char; size += n
     return '\r\n'.join(parts + [part])
-APP = ('io.github.design_nexus.nixe.Calendar', 'nixe-calendar')
+APP = ('io.github.design_nexus.nyx.Calendar', 'nyx-calendar')
 APP_TOOLS = {'calendar.list', 'calendar.read', 'calendar.next', 'calendar.search', 'calendar.free_slots',
              'calendar.suggest_times', 'calendar.create', 'calendar.edit', 'calendar.delete'}
-FROM_APP = nixe_app.describe(APP[1], APP_TOOLS)
+FROM_APP = nyx_app.describe(APP[1], APP_TOOLS)
 # Every declared tool is offered: the app's where it has them, the local export and undo.
 OFFERED = None if FROM_APP is None else FROM_APP + [t for t in TOOLS if t['name'] not in APP_TOOLS]
 
@@ -60,7 +60,7 @@ def free_slots(rows, day, from_hour, to_hour, need):
 
 def handle(name, args, cancelled):
     if FROM_APP is not None and name in APP_TOOLS:
-        return nixe_app.call(*APP, name, args, cancelled)
+        return nyx_app.call(*APP, name, args, cancelled)
     if cancelled.is_set(): raise ValueError('cancelled')
     with db_open() as db:
         if name == 'calendar.undo': return undo(db, args['token'])
@@ -101,9 +101,9 @@ def handle(name, args, cancelled):
             return {'times': times[:count], 'provider': 'local'}
         if name == 'calendar.export':
             utc = lambda value: dt.datetime.fromtimestamp(timestamp(value), dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-            lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Nixe Assistant//Local Calendar 1//EN', 'CALSCALE:GREGORIAN']
+            lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Nyx Assistant//Local Calendar 1//EN', 'CALSCALE:GREGORIAN']
             for row in rows:
-                lines += ['BEGIN:VEVENT', 'UID:' + row['id'] + '@nixe-assistant.local', 'DTSTAMP:' + dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ'), 'DTSTART:' + utc(row['start']), 'DTEND:' + utc(row['end']), 'SUMMARY:' + escape(row['title']), 'DESCRIPTION:' + escape(row.get('description', '')), 'LOCATION:' + escape(row.get('location', '')), 'END:VEVENT']
+                lines += ['BEGIN:VEVENT', 'UID:' + row['id'] + '@nyx-assistant.local', 'DTSTAMP:' + dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ'), 'DTSTART:' + utc(row['start']), 'DTEND:' + utc(row['end']), 'SUMMARY:' + escape(row['title']), 'DESCRIPTION:' + escape(row.get('description', '')), 'LOCATION:' + escape(row.get('location', '')), 'END:VEVENT']
             path = data_path('calendar.ics')
             Path(path).write_bytes(('\r\n'.join(map(fold, lines)) + '\r\nEND:VCALENDAR\r\n').encode())
             return {'path': path, 'count': len(rows)}

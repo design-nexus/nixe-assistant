@@ -10,7 +10,7 @@
 #   run.sh bonsai 9B|27B [PQ2_0|PTQ1_0]  Ternary Bonsai 2 on Prism's llama.cpp: the planner bench and speed
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-TRIALS=${TRIALS:-$HOME/.cache/nixe-assistant/trials}
+TRIALS=${TRIALS:-$HOME/.cache/nyx-assistant/trials}
 args=()
 keep=0
 for a in "$@"; do
@@ -23,13 +23,13 @@ shift
 need() { [[ -f $1/.done || -d $1 ]] || { echo "not set up: $1 (run setup.sh)"; exit 1; }; }
 
 stopped=0
-if [[ $keep == 0 ]] && systemctl --user is-active -q nixe-assistantd; then
+if [[ $keep == 0 ]] && systemctl --user is-active -q nyx-assistantd; then
     echo "Stopping the assistant for the trial (it starts again afterwards)."
-    nixe-assistant stop >/dev/null
+    nyx-assistant stop >/dev/null
     stopped=1
 fi
 restore() {
-    if [[ $stopped == 1 ]]; then echo "Starting the assistant again."; nixe-assistant start >/dev/null; fi
+    if [[ $stopped == 1 ]]; then echo "Starting the assistant again."; nyx-assistant start >/dev/null; fi
 }
 trap restore EXIT
 nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader | sed 's/^/Graphics memory in use before: /'
@@ -69,7 +69,7 @@ case $what in
         "$bin/llama-server" -m "$model" -ngl 99 -c 12288 -fa on --jinja --port 8089 --host 127.0.0.1 >"$log" 2>&1 &
         server=$!
         trap 'kill $server 2>/dev/null || true; restore' EXIT
-        nixe-assistant bench planner --server http://127.0.0.1:8089 --label "Ternary Bonsai 2 $size $pack" | tee "$here/results/bonsai-$size-$pack-planner.md"
+        nyx-assistant bench planner --server http://127.0.0.1:8089 --label "Ternary Bonsai 2 $size $pack" | tee "$here/results/bonsai-$size-$pack-planner.md"
         kill $server; wait $server 2>/dev/null || true
         echo; echo "Speed (prompt 512, generate 128):"
         "$bin/llama-bench" -m "$model" -ngl 99 -fa 1 -p 512 -n 128 | tee "$here/results/bonsai-$size-$pack-speed.md"

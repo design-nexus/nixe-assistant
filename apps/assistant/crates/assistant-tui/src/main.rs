@@ -42,16 +42,16 @@ impl Drop for TtyGuard {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     if std::env::args().any(|a| a == "--version" || a == "-V") {
-        println!("nixe-assistant-tui {}", env!("CARGO_PKG_VERSION"));
+        println!("nyx-assistant-tui {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
     if std::env::args().any(|a| a == "--help" || a == "-h") {
         println!(
-            "Nixe Assistant — settings, personas, models and activity\n\n\
-             Usage: nixe-assistant-tui [--no-mouse] [--help] [--version]\n\n\
+            "Nyx Assistant — settings, personas, models and activity\n\n\
+             Usage: nyx-assistant-tui [--no-mouse] [--help] [--version]\n\n\
              Tab screens  F6 panes  F2 Navigate  Ctrl+K actions  Ctrl+S apply  ? help  q quit\n\
              --no-mouse leaves the mouse to the terminal, so text can be selected.\n\
-             The theme is kept in ~/.config/nixe-assistant/tui.toml."
+             The theme is kept in ~/.config/nyx-assistant/tui.toml."
         );
         return Ok(());
     }

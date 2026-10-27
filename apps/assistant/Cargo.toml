@@ -15,14 +15,14 @@ members = [
     "crates/assistant-asr",
     "crates/assistant-desktop",
     "crates/assistant-models",
-    "daemon/nixe-assistantd",
+    "daemon/nyx-assistantd",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/design-nexus/nixe-assistant"
+repository = "https://github.com/design-nexus/nyx-assistant"
 authors = ["Ken Smith <ken@kensmith.dev>"]
 
 [workspace.dependencies]

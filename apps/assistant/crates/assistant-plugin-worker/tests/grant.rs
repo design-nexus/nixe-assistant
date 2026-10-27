@@ -17,7 +17,7 @@ fn call(worker: &mut std::process::Child, id: i64, params: Value) -> Value {
 #[test]
 fn calls_need_the_hosts_grant() {
     let cfg = serde_json::to_string(&Config::default()).unwrap();
-    let mut worker = Command::new(env!("CARGO_BIN_EXE_nixe-assistant-plugin-worker"))
+    let mut worker = Command::new(env!("CARGO_BIN_EXE_nyx-assistant-plugin-worker"))
         .arg("system-status")
         .env("ASSISTANT_CONFIG", cfg)
         .stdin(Stdio::piped())

@@ -501,7 +501,7 @@ impl Registry {
             // Cancelling during the password prompt stops pkexec; once the helper runs as
             // root it can't be signalled and finishes on its own.
             let value = tokio::select! {
-                _ = cancel.cancelled() => anyhow::bail!("cancelled; if the admin action had already started it finishes (see nixe-assistant admin-log)"),
+                _ = cancel.cancelled() => anyhow::bail!("cancelled; if the admin action had already started it finishes (see nyx-assistant admin-log)"),
                 r = crate::admin::call(name, &args) => r.context("unknown admin tool")??,
             };
             json!({"content":[{"type":"text","text":value.to_string()}],"structuredContent":value,"isError":false})
@@ -670,7 +670,7 @@ async fn open_job(id: &str) -> Result<()> {
     let cmd = assistant_omarchy::shell_join(&[
         "omarchy-launch-terminal",
         "--",
-        "nixe-assistant",
+        "nyx-assistant",
         "jobs",
         "follow",
         id,

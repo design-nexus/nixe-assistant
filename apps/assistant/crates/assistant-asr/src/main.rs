@@ -1,7 +1,7 @@
-//! nixe-assistant-asr: a warm streaming recognizer (NVIDIA Nemotron streaming 0.6B through
+//! nyx-assistant-asr: a warm streaming recognizer (NVIDIA Nemotron streaming 0.6B through
 //! sherpa-onnx) behind the frame protocol in `lib.rs`.
 //!
-//!   nixe-assistant-asr --model DIR [--threads N] [--provider cpu|cuda]
+//!   nyx-assistant-asr --model DIR [--threads N] [--provider cpu|cuda]
 
 use anyhow::{bail, Context, Result};
 use assistant_core::asr::{Frame, Kind, Reply, DECODER, ENCODER, JOINER, LEAD_PAD_SAMPLES, SAMPLE_RATE, TAIL_PAD_SAMPLES, TOKENS};
@@ -29,7 +29,7 @@ fn args() -> Result<Args> {
         }
     }
     if a.model.as_os_str().is_empty() {
-        bail!("usage: nixe-assistant-asr --model DIR [--threads N] [--provider cpu|cuda]");
+        bail!("usage: nyx-assistant-asr --model DIR [--threads N] [--provider cpu|cuda]");
     }
     Ok(a)
 }

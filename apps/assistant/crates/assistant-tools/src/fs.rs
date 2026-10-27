@@ -56,7 +56,7 @@ pub(crate) const SECRET: &[&str] = &[
     ".local/share/TelegramDesktop",
 ];
 /// Read-only to tools: the assistant's own configuration, journal and data.
-pub(crate) const SELF: &[&str] = &[".config/nixe-assistant", ".local/state/nixe-assistant", ".local/share/nixe-assistant"];
+pub(crate) const SELF: &[&str] = &[".config/nyx-assistant", ".local/state/nyx-assistant", ".local/share/nyx-assistant"];
 /// Run as the user later, outside any sandbox: shell startup, `~/.local/bin`, session and
 /// autostart services, launchers, the bar and shell, Hyprland and Omarchy, terminals and
 /// editors that run commands from their config, audio session scripts, git configuration.
@@ -238,7 +238,7 @@ pub fn sandbox_dir_ok(home: &Path, dir: &Path) -> bool {
 }
 
 fn backups(home: &Path) -> PathBuf {
-    home.join(".local/state/nixe-assistant/file-backups")
+    home.join(".local/state/nyx-assistant/file-backups")
 }
 
 fn new_backup_id() -> String {
@@ -432,7 +432,7 @@ mod tests {
     fn home() -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().canonicalize().unwrap();
-        for d in [".ssh", ".config/nixe-assistant", "work"] {
+        for d in [".ssh", ".config/nyx-assistant", "work"] {
             std::fs::create_dir_all(home.join(d)).unwrap();
         }
         std::fs::write(home.join(".ssh/id_ed25519"), "KEY").unwrap();
@@ -450,8 +450,8 @@ mod tests {
         std::os::unix::fs::symlink(h.join(".ssh"), h.join("work/keys")).unwrap();
         assert!(guard(&h, "~/work/keys/id_ed25519", Access::Read).is_err(), "symlink into secrets");
         assert!(guard(&h, "/etc/hostname", Access::Read).is_err());
-        assert!(guard(&h, "~/.config/nixe-assistant", Access::Read).is_ok(), "self is readable");
-        assert!(guard(&h, "~/.config/nixe-assistant/config.toml", Access::Write).is_err(), "self is read-only");
+        assert!(guard(&h, "~/.config/nyx-assistant", Access::Read).is_ok(), "self is readable");
+        assert!(guard(&h, "~/.config/nyx-assistant/config.toml", Access::Write).is_err(), "self is read-only");
         assert!(guard(&h, "~/work/new.txt", Access::Write).is_ok(), "new file in an existing folder");
         assert!(guard(&h, "~/missing/new.txt", Access::Write).is_err());
         assert!(guard(&h, "~", Access::Write).is_err());
@@ -522,7 +522,7 @@ mod tests {
         std::os::unix::fs::symlink(h.join(".ssh/id_ed25519"), h.join("work/key")).unwrap();
         assert!(guard(&h, "~/work/key", Access::Read).is_err());
         assert!(write(&h, "~/work/key", "x", "overwrite").is_err());
-        std::os::unix::fs::symlink(h.join(".config/nixe-assistant"), h.join("work/cfg")).unwrap();
+        std::os::unix::fs::symlink(h.join(".config/nyx-assistant"), h.join("work/cfg")).unwrap();
         assert!(guard(&h, "~/work/cfg/config.toml", Access::Write).is_err(), "own config through a link");
         // A dangling link as the target of a write resolves through its parent: it must not
         // create the file where the link points.
@@ -558,7 +558,7 @@ mod tests {
             "~/.bashrc",
             "~/.profile",
             "~/.zshrc",
-            "~/.local/bin/nixe-assistant",
+            "~/.local/bin/nyx-assistant",
             "~/.config/hypr/bindings.lua",
             "~/.config/systemd/user/x.service",
             "~/repo/.git/hooks/pre-commit",

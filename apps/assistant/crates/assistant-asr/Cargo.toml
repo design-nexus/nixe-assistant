@@ -6,7 +6,7 @@ license.workspace = true
 description = "Streaming speech recognition worker (sherpa-onnx) and its wire protocol"
 
 [[bin]]
-name = "nixe-assistant-asr"
+name = "nyx-assistant-asr"
 path = "src/main.rs"
 
 [dependencies]

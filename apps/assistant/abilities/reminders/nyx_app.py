@@ -1,4 +1,4 @@
-"""Hand tools to a Nixe app's control interface (io.github.design_nexus.nixe.Control)
+"""Hand tools to a Nyx app's control interface (io.github.design_nexus.nyx.Control)
 when the app is installed. The app describes its tools with `--describe` (no window);
 calls start it if it isn't running and go to its primary instance over the session bus."""
 import json
@@ -11,7 +11,7 @@ from pathlib import Path
 
 from desktop_plugin import run
 
-IFACE = 'io.github.design_nexus.nixe.Control'
+IFACE = 'io.github.design_nexus.nyx.Control'
 
 
 def program(name):

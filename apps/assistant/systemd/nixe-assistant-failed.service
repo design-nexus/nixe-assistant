@@ -1,6 +1,0 @@
-[Unit]
-Description=Tell the user Nixe Assistant stopped after repeated crashes
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/notify-send -u critical -a "Nixe Assistant" "Nixe Assistant stopped" "It crashed repeatedly. See: journalctl --user -u nixe-assistantd"

@@ -1,8 +1,8 @@
-// Nixe Assistant HUD overlay
+// Nyx Assistant HUD overlay
 //
-// Installed to ~/.local/share/nixe-assistant/quickshell
+// Installed to ~/.local/share/nyx-assistant/quickshell
 //
-// Listens to `nixe-assistant listen` NDJSON on stdout.
+// Listens to `nyx-assistant listen` NDJSON on stdout.
 
 import QtQuick
 import Quickshell
@@ -304,20 +304,20 @@ ShellRoot {
     Process { id: approvalProc }
     // Answer the pending approval: "approve" or "deny", once or for the rest of the task.
     function decide(verb, forTask) {
-        approvalProc.command = ["nixe-assistant", verb, root.approvalId].concat(forTask ? ["--task"] : []);
+        approvalProc.command = ["nyx-assistant", verb, root.approvalId].concat(forTask ? ["--task"] : []);
         approvalProc.running = true;
         root.approvalId = "";
         root.approvalText = "";
     }
     Process {
         id: cancelProc
-        command: [(Quickshell.env("HOME") || "") + "/.local/bin/nixe-assistant", "cancel"]
+        command: [(Quickshell.env("HOME") || "") + "/.local/bin/nyx-assistant", "cancel"]
         running: false
     }
 
     Process {
         id: listener
-        command: [(Quickshell.env("HOME") || "") + "/.local/bin/nixe-assistant", "listen"]
+        command: [(Quickshell.env("HOME") || "") + "/.local/bin/nyx-assistant", "listen"]
         running: true
 
         stdout: SplitParser {
@@ -366,7 +366,7 @@ ShellRoot {
             right: true
         }
 
-        WlrLayershell.namespace: "nixe-assistant-hud"
+        WlrLayershell.namespace: "nyx-assistant-hud"
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: root.grabKeys ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 

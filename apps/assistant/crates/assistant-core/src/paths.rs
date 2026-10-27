@@ -7,13 +7,13 @@ pub fn xdg_runtime() -> PathBuf {
 }
 
 pub fn runtime_dir() -> PathBuf {
-    xdg_runtime().join("nixe-assistant")
+    xdg_runtime().join("nyx-assistant")
 }
 
 /// Isolated Voxtype runtime so the assistant's Parakeet daemon does not share F9's lock.
-/// Matches `XDG_RUNTIME_DIR` in `nixe-assistant-stt.service`.
+/// Matches `XDG_RUNTIME_DIR` in `nyx-assistant-stt.service`.
 pub fn assistant_voxtype_runtime() -> PathBuf {
-    xdg_runtime().join("nixe-assistant-stt")
+    xdg_runtime().join("nyx-assistant-stt")
 }
 
 pub fn socket_path() -> PathBuf {
@@ -23,7 +23,7 @@ pub fn socket_path() -> PathBuf {
 pub fn config_dir() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from(".").join(".config"))
-        .join("nixe-assistant")
+        .join("nyx-assistant")
 }
 
 pub fn config_path() -> PathBuf {
@@ -45,7 +45,7 @@ pub fn commands_path() -> PathBuf {
 pub fn data_dir() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from(".").join(".local/share"))
-        .join("nixe-assistant")
+        .join("nyx-assistant")
 }
 
 pub fn models_dir() -> PathBuf {
@@ -56,11 +56,11 @@ pub fn models_dir() -> PathBuf {
 pub fn state_dir() -> PathBuf {
     dirs::state_dir()
         .unwrap_or_else(|| PathBuf::from(".").join(".local/state"))
-        .join("nixe-assistant")
+        .join("nyx-assistant")
 }
 
 pub fn cache_dir() -> PathBuf {
     dirs::cache_dir()
         .unwrap_or_else(|| PathBuf::from(".").join(".cache"))
-        .join("nixe-assistant")
+        .join("nyx-assistant")
 }

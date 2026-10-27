@@ -184,7 +184,7 @@ mod tests {
         let env = run("echo \"${XDG_RUNTIME_DIR:-unset}\"");
         assert_eq!(String::from_utf8_lossy(&env.stdout).trim(), "unset");
         assert!(!run("ls /run/user").status.success() || run("ls -A /run/user").stdout.is_empty(), "no runtime sockets");
-        let sock = std::env::var("XDG_RUNTIME_DIR").unwrap_or_default() + "/nixe-assistant/assistant.sock";
+        let sock = std::env::var("XDG_RUNTIME_DIR").unwrap_or_default() + "/nyx-assistant/assistant.sock";
         assert!(!run(&format!("test -e '{sock}'")).status.success(), "the assistant socket isn't there");
         assert!(!run("test -e /run/dbus/system_bus_socket").status.success(), "no system bus");
         // No network unless configured.

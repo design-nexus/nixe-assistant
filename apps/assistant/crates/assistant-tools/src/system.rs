@@ -150,7 +150,7 @@ pub fn valid_unit(unit: &str) -> bool {
 }
 
 fn own_unit(unit: &str) -> bool {
-    unit.starts_with("nixe-assistant") || unit.starts_with("omarchy-assistant")
+    unit.starts_with("nyx-assistant") || unit.starts_with("omarchy-assistant")
 }
 
 async fn unit_status(unit: &str) -> Result<Value> {
@@ -337,7 +337,7 @@ mod tests {
         for bad in ["foo", ".service", "foo.mount", "a b.service", "../x.service", "x;rm.service"] {
             assert!(!valid_unit(bad), "{bad}");
         }
-        assert!(own_unit("nixe-assistantd.service") && own_unit("nixe-assistant-stt.service"));
+        assert!(own_unit("nyx-assistantd.service") && own_unit("nyx-assistant-stt.service"));
     }
 
     #[test]

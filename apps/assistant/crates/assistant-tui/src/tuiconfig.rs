@@ -1,5 +1,5 @@
 //! The TUI's own settings, apart from the assistant's `config.toml` (which the daemon
-//! validates): `~/.config/nixe-assistant/tui.toml`.
+//! validates): `~/.config/nyx-assistant/tui.toml`.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};

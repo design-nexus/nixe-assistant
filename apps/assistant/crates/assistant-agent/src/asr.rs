@@ -1,4 +1,4 @@
-//! Client for the streaming recognizer worker (`nixe-assistant-asr`, protocol in
+//! Client for the streaming recognizer worker (`nyx-assistant-asr`, protocol in
 //! `assistant_core::asr`).
 //!
 //! One warm worker serves every listening mode. Each utterance gets an id from
@@ -25,9 +25,9 @@ pub fn resolve(cfg: &Config) -> Result<(PathBuf, PathBuf)> {
     };
     anyhow::ensure!(
         model.join(assistant_core::asr::ENCODER).is_file(),
-        "the streaming speech model isn't installed (run: nixe-assistant models fetch asr)"
+        "the streaming speech model isn't installed (run: nyx-assistant models fetch asr)"
     );
-    let worker = std::env::current_exe()?.with_file_name("nixe-assistant-asr");
+    let worker = std::env::current_exe()?.with_file_name("nyx-assistant-asr");
     anyhow::ensure!(worker.is_file(), "{} is missing (run scripts/install.sh)", worker.display());
     Ok((model, worker))
 }

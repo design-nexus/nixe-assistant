@@ -7,8 +7,8 @@ import qs.Ui
 
 Panel {
   id: root
-  moduleName: "local.nixe-assistant"
-  ipcTarget: "local.nixe-assistant"
+  moduleName: "local.nyx-assistant"
+  ipcTarget: "local.nyx-assistant"
 
   property var anchorItem: null
   property var hostWidget: null

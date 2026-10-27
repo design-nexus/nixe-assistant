@@ -188,7 +188,7 @@ impl McpClient {
             alive,
             events,
         };
-        let init = client.request("initialize", json!({"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"nixe-assistant","version":env!("CARGO_PKG_VERSION")}}), &CancellationToken::new()).await?;
+        let init = client.request("initialize", json!({"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"nyx-assistant","version":env!("CARGO_PKG_VERSION")}}), &CancellationToken::new()).await?;
         let version = init["protocolVersion"]
             .as_str()
             .context("missing MCP protocolVersion")?;

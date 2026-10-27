@@ -2,7 +2,7 @@
 
 The daemon keeps microphone capture, models, streaming, speech, conversation,
 permission decisions and cancellation. Abilities run in independent MCP stdio
-processes. Updating `nixe-assistant-plugin-worker` does not require rebuilding
+processes. Updating `nyx-assistant-plugin-worker` does not require rebuilding
 the daemon or TUI. Processes are started only for enabled packages; no crash
 restart loop is used. Use `plugins reload ID` to retry.
 
@@ -12,9 +12,9 @@ your home folder. Still review executable code and dependencies before installin
 what a plugin declares, it can use. The installer does not execute installation hooks. Native dynamic
 libraries are not a plugin interface; scripts and compiled executables are.
 
-Packages live in `$XDG_DATA_HOME/nixe-assistant/abilities/ID` (normally
+Packages live in `$XDG_DATA_HOME/nyx-assistant/abilities/ID` (normally
 `~/.local/share`). Settings, source metadata, migration trust and saved enablement
-live separately in `$XDG_CONFIG_HOME/nixe-assistant/plugins.json`. Persistent
+live separately in `$XDG_CONFIG_HOME/nyx-assistant/plugins.json`. Persistent
 plugin files live in `plugin-data/ID` under the assistant's data directory.
 Disable and remove retain these files. Back up SQLite databases and Markdown
 exports as personal data. Notes are separate from conversation history.
@@ -22,15 +22,15 @@ exports as personal data. Notes are separate from conversation history.
 ## Commands and TUI
 
 ```
-nixe-assistant plugins list --json
-nixe-assistant plugins inspect notes --json
-nixe-assistant plugins install ./example-plugins/echo --yes
-nixe-assistant plugins enable example.echo
-nixe-assistant tool example.echo '{"text":"hello"}'
-nixe-assistant plugins reload example.echo
-nixe-assistant plugins disable example.echo
-nixe-assistant plugins update ./updated-package --yes
-nixe-assistant plugins remove example.echo
+nyx-assistant plugins list --json
+nyx-assistant plugins inspect notes --json
+nyx-assistant plugins install ./example-plugins/echo --yes
+nyx-assistant plugins enable example.echo
+nyx-assistant tool example.echo '{"text":"hello"}'
+nyx-assistant plugins reload example.echo
+nyx-assistant plugins disable example.echo
+nyx-assistant plugins update ./updated-package --yes
+nyx-assistant plugins remove example.echo
 ```
 
 Inspection is JSON and works offline. Mutating lifecycle controls are acknowledged
@@ -89,7 +89,7 @@ other servers' keys and the saved location.
 ### Sandbox
 
 Every plugin runs in bubblewrap, under a seccomp filter, in its own systemd scope
-(`nixe-assistant-plugin-ID-…`) with memory, process and CPU limits. `[sandbox]`
+(`nyx-assistant-plugin-ID-…`) with memory, process and CPU limits. `[sandbox]`
 declares what it may reach; without one it gets the strictest sandbox. Inside:
 
 - the system (`/usr`, `/etc`, `/opt`, `/sys`) read-only, its own `/proc`, `/dev` and
@@ -117,12 +117,12 @@ declares what it may reach; without one it gets the strictest sandbox. Inside:
 
 The seccomp filter refuses calls a plugin has no use for: debugging other processes,
 kernel modules and keyrings, BPF, perf, io_uring, mounts and new namespaces, clock
-changes, and typing into the terminal (TIOCSTI). `nixe-assistant plugins` shows each manifest's
+changes, and typing into the terminal (TIOCSTI). `nyx-assistant plugins` shows each manifest's
 sandbox. Configured MCP servers get `network = true` unless `[mcp.servers.ID.sandbox]`
 says otherwise.
 
 Bundled plugins that start programs on the desktop are unconfined: apps, desktop
-commands, terminal, coding agents, admin (pkexec), the Nixe apps and the browser.
+commands, terminal, coding agents, admin (pkexec), the Nyx apps and the browser.
 Generated terminal commands still run in their own sandbox, which now also has the
 seccomp filter and limits (8 GB, 2048 tasks).
 
@@ -192,7 +192,7 @@ with user words quoted as literal terms.
 
 ## Migration and troubleshooting
 
-`nixe-assistant plugins migrate /path/to/checkout` creates descriptors and
+`nyx-assistant plugins migrate /path/to/checkout` creates descriptors and
 separate state additively. Existing TOML files are not rewritten. Configured MCP
 servers keep server IDs and `SERVER.TOOL` host names, startup environment,
 permissions, dependencies and installation paths. DuckDuckGo's installed server

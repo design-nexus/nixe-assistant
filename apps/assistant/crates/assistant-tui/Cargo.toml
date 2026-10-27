@@ -6,7 +6,7 @@ license.workspace = true
 description = "Voice assistant settings and model manager TUI"
 
 [[bin]]
-name = "nixe-assistant-tui"
+name = "nyx-assistant-tui"
 path = "src/main.rs"
 
 [dependencies]

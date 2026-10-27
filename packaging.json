@@ -2,7 +2,7 @@
   "application": "assistant",
   "directory": "assistant",
   "packages": [
-    "nixe-assistantd",
+    "nyx-assistantd",
     "assistant-tui",
     "assistant-plugin-worker",
     "assistant-privileged",

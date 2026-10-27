@@ -1,15 +1,15 @@
-//! Runs as root through pkexec for Nixe Assistant's admin tools. It does one checked
+//! Runs as root through pkexec for Nyx Assistant's admin tools. It does one checked
 //! action per run and nothing else; every argument is parsed again here, because the
 //! caller is an ordinary user's program.
 //!
-//!   nixe-assistant-helper install PKG|REPO/PKG…    configured repositories only, -S --needed
-//!   nixe-assistant-helper remove PKG…              -Rs, refused if it would remove a protected package
-//!   nixe-assistant-helper update                   -Syu
-//!   nixe-assistant-helper service start|stop|restart UNIT.service
-//!   nixe-assistant-helper --version                needs no root; the assistant compares it
+//!   nyx-assistant-helper install PKG|REPO/PKG…    configured repositories only, -S --needed
+//!   nyx-assistant-helper remove PKG…              -Rs, refused if it would remove a protected package
+//!   nyx-assistant-helper update                   -Syu
+//!   nyx-assistant-helper service start|stop|restart UNIT.service
+//!   nyx-assistant-helper --version                needs no root; the assistant compares it
 //!
 //! Prints one JSON object on success; on failure, a message on stderr and exit 1. Every
-//! request is appended to /var/log/nixe-assistant/privileged.log.
+//! request is appended to /var/log/nyx-assistant/privileged.log.
 
 use assistant_privileged::{check_repo, protected_package, Action, Deny, ADMIN_CONFIG, HELPER_VERSION, LOG};
 use serde_json::{json, Value};
@@ -26,7 +26,7 @@ const PACMAN_CONF: &str = "/usr/bin/pacman-conf";
 const SYSTEMCTL: &str = "/usr/bin/systemctl";
 /// The only programs that may ask: the first-party plugin worker runs the admin tools (the
 /// daemon itself does when plugins are off).
-const CALLERS: &[&str] = &["nixe-assistant-plugin-worker", "nixe-assistantd"];
+const CALLERS: &[&str] = &["nyx-assistant-plugin-worker", "nyx-assistantd"];
 /// Keeps the reply (and the daemon's context) small after a long update.
 const OUTPUT_TAIL: usize = 4000;
 
@@ -61,12 +61,12 @@ fn main() {
 /// The parent check narrows who can ask; the password polkit asked for is what authorizes.
 fn caller() -> Result<u32> {
     if unsafe { libc::geteuid() } != 0 {
-        return Err("nixe-assistant-helper must be run by the assistant through pkexec".into());
+        return Err("nyx-assistant-helper must be run by the assistant through pkexec".into());
     }
     let uid: u32 = std::env::var("PKEXEC_UID")
         .ok()
         .and_then(|v| v.parse().ok())
-        .ok_or("nixe-assistant-helper must be run by the assistant through pkexec")?;
+        .ok_or("nyx-assistant-helper must be run by the assistant through pkexec")?;
     let parent = std::os::unix::process::parent_id();
     let exe = std::fs::read_link(format!("/proc/{parent}/exe")).map_err(|e| format!("can't identify the caller: {e}"))?;
     let name = exe.file_name().and_then(|n| n.to_str()).unwrap_or("");

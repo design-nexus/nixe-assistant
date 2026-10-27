@@ -1,15 +1,15 @@
 [Unit]
-Description=Nixe Assistant voice daemon
-After=pipewire.service nixe-assistant-stt.service
-Wants=pipewire.service nixe-assistant-stt.service nixe-assistant-hud.service
+Description=Nyx Assistant voice daemon
+After=pipewire.service nyx-assistant-stt.service
+Wants=pipewire.service nyx-assistant-stt.service nyx-assistant-hud.service
 # Five crashes in two minutes: stop restarting and say so.
 StartLimitIntervalSec=120
 StartLimitBurst=5
-OnFailure=nixe-assistant-failed.service
+OnFailure=nyx-assistant-failed.service
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/nixe-assistantd
+ExecStart=%h/.local/bin/nyx-assistantd
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 # Ahead of a compile or other busy apps: speech, voice and the recognizer worker live here.
@@ -17,7 +17,7 @@ CPUWeight=1000
 RestartSec=2
 Environment=RUST_LOG=info
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
-EnvironmentFile=-%h/.config/nixe-assistant/runtime.env
+EnvironmentFile=-%h/.config/nyx-assistant/runtime.env
 
 [Install]
 WantedBy=default.target

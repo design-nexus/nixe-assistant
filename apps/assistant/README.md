@@ -1,7 +1,7 @@
-# Nixe Assistant — Local Voice Assistant
+# Nyx Assistant — Local Voice Assistant
 
 Resident voice assistant for Omarchy/Hyprland.
-The process is `nixe-assistantd`. Custom personas can be configured via settings.
+The process is `nyx-assistantd`. Custom personas can be configured via settings.
 
 Phase 1 milestone:
 
@@ -22,17 +22,17 @@ See `docs/ARCHITECTURE.md`, `docs/SETUP.md`, `docs/BENCHMARKS.md`.
 ## Quick start
 
 ```bash
-cargo build --release -p nixe-assistantd
+cargo build --release -p nyx-assistantd
 ./scripts/install.sh
 ```
 
 Hold **Alt+Space**, talk, release. **Super+Shift+Escape** stops everything the assistant is doing.
 
-Voice-launched apps live in `~/.config/nixe-assistant/apps.toml` (template: `config/apps.toml`). Desktop command phrases live in `commands.toml`. Edit those files, then `nixe-assistant reload` (or SIGHUP). No rebuild.
+Voice-launched apps live in `~/.config/nyx-assistant/apps.toml` (template: `config/apps.toml`). Desktop command phrases live in `commands.toml`. Edit those files, then `nyx-assistant reload` (or SIGHUP). No rebuild.
 
-`nixe-assistant-tui` edits the same settings in a terminal: Overview, Audio, Download, Persona, Features, Diagnostics, Activity, Calibration, Commands and Plugins (keys 1–9 and 0, or Tab). F6 moves between panes, F2 lists screens and panes, Ctrl+K lists every action for the screen, and ? shows all keys. Changes are a draft until Ctrl+S applies them (Ctrl+R applies and restarts). The theme is Aurora; Follow Omarchy and Terminal are in Ctrl+K and kept in `~/.config/nixe-assistant/tui.toml`. `--no-mouse` leaves the mouse to the terminal.
+`nyx-assistant-tui` edits the same settings in a terminal: Overview, Audio, Download, Persona, Features, Diagnostics, Activity, Calibration, Commands and Plugins (keys 1–9 and 0, or Tab). F6 moves between panes, F2 lists screens and panes, Ctrl+K lists every action for the screen, and ? shows all keys. Changes are a draft until Ctrl+S applies them (Ctrl+R applies and restarts). The theme is Aurora; Follow Omarchy and Terminal are in Ctrl+K and kept in `~/.config/nyx-assistant/tui.toml`. `--no-mouse` leaves the mouse to the terminal.
 
-![nixe-assistant-tui, Overview](docs/screenshot.png)
+![nyx-assistant-tui, Overview](docs/screenshot.png)
 
 See [settings, MCP, diagnostics and installation](docs/REVIEWED-IMPROVEMENTS.md) for the reviewed improvements and new controls.
 
@@ -40,7 +40,7 @@ See [settings, MCP, diagnostics and installation](docs/REVIEWED-IMPROVEMENTS.md)
 
 ```
 crates/     replaceable STT / TTS / inference / audio
-daemon/     nixe-assistantd + nixe-assistant CLI
+daemon/     nyx-assistantd + nyx-assistant CLI
 config/     shipped config.toml, apps.toml, commands.toml, voxtype-parakeet.toml
 quickshell/ standalone Assistant HUD
 systemd/    assistantd, HUD, Parakeet STT user units
@@ -69,7 +69,7 @@ Useful next additions: opt-in local file/content indexing with exclusions, accou
 Location: weather and nearby questions use an approximate city from your public IP, cached in memory for one hour. Say **where am I**, **remember my location Chicago, Illinois**, **forget my location**, **disable location**, or **enable location**. CLI: `location show|refresh|set CITY|clear|on|off`. TUI Features: Location toggles automatic use; `l` edits the city override, then Ctrl+S applies it. Location is city-level rather than GPS, so a VPN or ISP can affect the estimate. Requests go to [ipapi.co](https://ipapi.co/api/), with [ipwho.is](https://ipwhois.io/documentation) as a fallback; no API key is required. Failed lookups ask for a city. Coordinates can be supplied explicitly in `[location]` if needed. The older weather-specific override remains supported.
 
 Local abilities now run as managed MCP plugin processes. Press **0** in the TUI
-for Plugins, or use `nixe-assistant plugins list`. Packages can be installed,
+for Plugins, or use `nyx-assistant plugins list`. Packages can be installed,
 enabled, disabled and reloaded without reloading models. Notes and one-time
 reminders persist in plugin-owned SQLite databases. See [Plugin API, migration
 and authoring](docs/PLUGINS.md) and [the echo example](example-plugins/echo).

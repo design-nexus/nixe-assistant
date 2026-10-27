@@ -1,7 +1,7 @@
 manifest_version = 1
 id = "reminders"
 version = "1.2.0"
-description = "Timers and reminders: Nixe Reminders' task lists when it's installed, else kept locally"
+description = "Timers and reminders: Nyx Reminders' task lists when it's installed, else kept locally"
 executable = "python3"
 args = ["./main.py"]
 tools = ["reminders.timer", "reminders.create", "reminders.list", "reminders.cancel", "reminders.snooze", "reminders.voice", "reminders.lists", "reminders.today", "reminders.search", "reminders.complete", "reminders.edit", "reminders.delete"]
@@ -23,4 +23,4 @@ template = true
 
 # What it may reach (see docs/PLUGINS.md).
 [sandbox]
-unconfined = "hands reminders to Nixe Reminders' task lists, starting it when needed"
+unconfined = "hands reminders to Nyx Reminders' task lists, starting it when needed"

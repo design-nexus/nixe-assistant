@@ -97,14 +97,14 @@ const CASES: &[Case] = &[
     // Firefox
     Case {
         group: "computer",
-        ask: "In the Firefox window titled Bench search, type nixe into the search box and press the Search button.",
+        ask: "In the Firefox window titled Bench search, type nyx into the search box and press the Search button.",
         done: &[],
-        expect: &[Some(("input.type", &[("text", M::Is("nixe"))])), Some(("ui.act", &[("text", M::Is("nixe"))]))],
+        expect: &[Some(("input.type", &[("text", M::Is("nyx"))])), Some(("ui.act", &[("text", M::Is("nyx"))]))],
     },
     Case {
         group: "computer",
-        ask: "In the Firefox window titled Bench search, type nixe into the search box and press the Search button.",
-        done: &[("input.type", r#"{"window":"Bench search","field":"Search box","text":"nixe"}"#, OK)],
+        ask: "In the Firefox window titled Bench search, type nyx into the search box and press the Search button.",
+        done: &[("input.type", r#"{"window":"Bench search","field":"Search box","text":"nyx"}"#, OK)],
         expect: &[
             Some(("ui.act", &[("name", M::Has("search")), ("action", M::Is("press"))])),
             Some(("input.key", &[("combo", M::Is("enter"))])),
@@ -112,9 +112,9 @@ const CASES: &[Case] = &[
     },
     Case {
         group: "computer",
-        ask: "In the Firefox window titled Bench search, search the page for nixe.",
+        ask: "In the Firefox window titled Bench search, search the page for nyx.",
         done: &[],
-        expect: &[Some(("input.type", &[("text", M::Is("nixe"))])), Some(("ui.act", &[("text", M::Is("nixe"))]))],
+        expect: &[Some(("input.type", &[("text", M::Is("nyx"))])), Some(("ui.act", &[("text", M::Is("nyx"))]))],
     },
     // VS Code
     Case {
@@ -208,7 +208,7 @@ const CASES: &[Case] = &[
         )],
         expect: &[Some(("screen.marks", &[]))],
     },
-    // The app's own tools next to the computer tools (as the daemon offers them for Nixe apps): the
+    // The app's own tools next to the computer tools (as the daemon offers them for Nyx apps): the
     // typed tool is the right call.
     Case {
         group: "typed",
@@ -486,7 +486,7 @@ const CASES: &[Case] = &[
 ];
 
 /// `media.*` as the media ability defines them (offered with every typed case, for Spotify).
-/// The Nixe apps' own tools come from the nixe-apps ability itself (`app_tools`).
+/// The Nyx apps' own tools come from the nyx-apps ability itself (`app_tools`).
 const MEDIA: &[(&str, &str, &str)] = &[
     ("media.status", "Read current song and playback state", r#"{"type":"object","properties":{"player":{"type":"string"}}}"#),
     (
@@ -496,7 +496,7 @@ const MEDIA: &[(&str, &str, &str)] = &[
     ),
 ];
 
-/// The Nixe apps' tools exactly as the nixe-apps ability in this checkout lists them (all 55),
+/// The Nyx apps' tools exactly as the nyx-apps ability in this checkout lists them (all 55),
 /// read from its own table so the bench can't drift from what the daemon is offered.
 fn app_tools() -> &'static [Value] {
     static TOOLS: std::sync::OnceLock<Vec<Value>> = std::sync::OnceLock::new();
@@ -506,12 +506,12 @@ fn app_tools() -> &'static [Value] {
             "import json, sys\nsys.path[:0] = sys.argv[1:3]\nimport main\nprint(json.dumps(main.request_tools(main.TOOLS)))";
         let out = std::process::Command::new("python3")
             .args(["-I", "-c", script])
-            .arg(root.join("abilities/nixe-apps"))
+            .arg(root.join("abilities/nyx-apps"))
             .arg(root.join("plugin-sdk"))
             .output()
-            .expect("python3 runs the nixe-apps ability's tool table");
-        assert!(out.status.success(), "nixe-apps tool table: {}", String::from_utf8_lossy(&out.stderr));
-        serde_json::from_slice(&out.stdout).expect("nixe-apps tools are JSON")
+            .expect("python3 runs the nyx-apps ability's tool table");
+        assert!(out.status.success(), "nyx-apps tool table: {}", String::from_utf8_lossy(&out.stderr));
+        serde_json::from_slice(&out.stdout).expect("nyx-apps tools are JSON")
     })
 }
 

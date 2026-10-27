@@ -215,7 +215,7 @@ fn models_pane(frame: &mut Frame, app: &mut App, area: Rect) {
             ListItem::new(Line::from(spans))
         })
         .collect();
-    let e = empty(t, "No GGUF models in ~/.local/share/nixe-assistant/models or ~/.lmstudio/models.", "3", "Download");
+    let e = empty(t, "No GGUF models in ~/.local/share/nyx-assistant/models or ~/.lmstudio/models.", "3", "Download");
     list(frame, app, inner, 0, items, Some(app.selected_model_idx), e);
 }
 
@@ -837,7 +837,7 @@ fn plugins(frame: &mut Frame, app: &mut App, area: Rect) {
                 ]))
             })
             .collect();
-        let e = Line::from(Span::styled("No plugins installed. Run: nixe-assistant plugins install …", muted(&t)));
+        let e = Line::from(Span::styled("No plugins installed. Run: nyx-assistant plugins install …", muted(&t)));
         list(frame, app, inner, 0, items, Some(app.selected_plugin), e);
     }
     if let Some(a) = details_area {

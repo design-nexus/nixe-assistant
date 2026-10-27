@@ -1,6 +1,6 @@
 //! Administrative actions the assistant may ask for, and the rules both sides check.
 //!
-//! The daemon runs as the user. For an admin task it runs `pkexec nixe-assistant-helper
+//! The daemon runs as the user. For an admin task it runs `pkexec nyx-assistant-helper
 //! VERB ARGS…`; polkit asks for the password (one action per verb, see the policy file),
 //! and the helper, running as root, parses the arguments again with [`Action::parse`]
 //! and does exactly that one thing. There is no verb that runs a command or writes a
@@ -10,13 +10,13 @@ use std::fmt;
 
 /// Bumped whenever the helper or its policy changes; `install-helper` replaces older ones.
 pub const HELPER_VERSION: u32 = 2;
-pub const HELPER: &str = "/usr/local/lib/nixe-assistant/nixe-assistant-helper";
-pub const POLICY: &str = "/usr/share/polkit-1/actions/io.github.design_nexus.nixe.assistant.policy";
-pub const POLICY_XML: &str = include_str!("../data/io.github.design_nexus.nixe.assistant.policy");
+pub const HELPER: &str = "/usr/local/lib/nyx-assistant/nyx-assistant-helper";
+pub const POLICY: &str = "/usr/share/polkit-1/actions/io.github.design_nexus.nyx.assistant.policy";
+pub const POLICY_XML: &str = include_str!("../data/io.github.design_nexus.nyx.assistant.policy");
 /// Root-owned extra deny lists (`deny_packages`, `deny_units`). A user config can't loosen
 /// root's rules, so these live outside `~/.config`.
-pub const ADMIN_CONFIG: &str = "/etc/nixe-assistant/admin.toml";
-pub const LOG: &str = "/var/log/nixe-assistant/privileged.log";
+pub const ADMIN_CONFIG: &str = "/etc/nyx-assistant/admin.toml";
+pub const LOG: &str = "/var/log/nyx-assistant/privileged.log";
 pub const MAX_PACKAGES: usize = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,7 +199,7 @@ pub fn critical_unit(unit: &str) -> bool {
     let template = name.split('@').next().unwrap_or(name);
     name.starts_with("dbus")
         || name.starts_with("systemd-")
-        || name.starts_with("nixe-")
+        || name.starts_with("nyx-")
         || matches!(
             name,
             "polkit" | "display-manager" | "sddm" | "gdm" | "lightdm" | "greetd" | "ly" | "emergency" | "rescue"
@@ -298,7 +298,7 @@ mod tests {
             &["service", "stop", "display-manager.service"],
             &["service", "stop", "user@1000.service"],
             &["service", "stop", "getty@tty1.service"],
-            &["service", "stop", "nixe-assistantd.service"],
+            &["service", "stop", "nyx-assistantd.service"],
             &["service", "restart"],
             // Look-alikes, control characters and smuggled flags.
             &["install", "\u{0455}l"],
@@ -346,7 +346,7 @@ mod tests {
     #[test]
     fn policy_has_one_action_per_verb() {
         for verb in ["install", "remove", "update", "service"] {
-            assert!(POLICY_XML.contains(&format!("io.github.design_nexus.nixe.assistant.{verb}\"")));
+            assert!(POLICY_XML.contains(&format!("io.github.design_nexus.nyx.assistant.{verb}\"")));
             assert!(POLICY_XML.contains(&format!("exec.argv1\">{verb}<")));
         }
         assert_eq!(POLICY_XML.matches(HELPER).count(), 4);

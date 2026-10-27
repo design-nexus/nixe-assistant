@@ -393,7 +393,7 @@ impl PluginManager {
             .collect();
         let mut matches = Vec::new();
         for (m, client, own, trusted) in entries {
-            if trusted && m.executable.ends_with("nixe-assistant-plugin-worker") {
+            if trusted && m.executable.ends_with("nyx-assistant-plugin-worker") {
                 let route = tokio::select! {_=own.cancelled()=>continue,r=client.extension("assistant/route",json!({"version":1,"request":request}),cancel)=>r?};
                 if !route.is_null() {
                     matches.push(route);
@@ -540,7 +540,7 @@ impl PluginManager {
         // The whole configuration (other servers' keys, the saved location) only for the
         // assistant's own worker, which runs the built-in tools from it.
         let first_party = ["bundled", "migrated"].contains(&settings.source.as_str());
-        if first_party && m.executable.ends_with("nixe-assistant-plugin-worker") {
+        if first_party && m.executable.ends_with("nyx-assistant-plugin-worker") {
             env.insert("ASSISTANT_CONFIG".into(), serde_json::to_string(cfg)?);
         }
         if let Some(server) = cfg.mcp.servers.get(id) {
@@ -986,7 +986,7 @@ pub async fn migrate(cfg: &Config, worker: &Path, checkout: &Path) -> Result<()>
         "media",
         "power",
         "history",
-        "nixe-apps",
+        "nyx-apps",
         "passwords",
         "mail",
     ] {
@@ -1016,7 +1016,7 @@ pub async fn migrate(cfg: &Config, worker: &Path, checkout: &Path) -> Result<()>
 /// (apps, commands, location).
 fn worker_sandbox(id: &str) -> SandboxProfile {
     let unconfined = |reason: &str| SandboxProfile { unconfined: Some(reason.into()), ..Default::default() };
-    let base = SandboxProfile { read: vec!["~/.config/nixe-assistant".into()], ..Default::default() };
+    let base = SandboxProfile { read: vec!["~/.config/nyx-assistant".into()], ..Default::default() };
     match id {
         "desktop-controls" => unconfined("runs the configured desktop commands"),
         "apps" => unconfined("starts apps"),
@@ -1223,7 +1223,7 @@ impl PluginManager {
                 r.saved.trusted
                     && r.manifest
                         .executable
-                        .ends_with("nixe-assistant-plugin-worker")
+                        .ends_with("nyx-assistant-plugin-worker")
             })
             .map(|r| r.client.clone())
             .collect();

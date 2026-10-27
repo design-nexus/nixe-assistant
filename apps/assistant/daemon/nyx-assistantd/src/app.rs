@@ -1800,7 +1800,7 @@ impl App {
             String::new()
         };
         let kind = classify(ask);
-        // A Nixe app named in the request offers its own tools beside computer use.
+        // A Nyx app named in the request offers its own tools beside computer use.
         let app_tools = crate::session::app_tool_prefixes(ask);
         if let Some(tools) = catalog.as_array_mut() {
             tools.retain(|tool| {

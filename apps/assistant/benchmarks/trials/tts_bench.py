@@ -41,7 +41,7 @@ def qwen(weights: str, speaker: str | None):
 
 
 def gepard(weights: str, reference: str | None):
-    repo = Path.home() / ".cache/nixe-assistant/trials/gepard/gepard-inference"
+    repo = Path.home() / ".cache/nyx-assistant/trials/gepard/gepard-inference"
     sys.path.insert(0, str(repo))
     from gepard_inference import GepardSession, SessionConfig  # noqa: E402
 
@@ -68,7 +68,7 @@ def vibevoice(weights: str, speaker: str | None):
     from vibevoice.modular.modeling_vibevoice_streaming_inference import VibeVoiceStreamingForConditionalGenerationInference
     from vibevoice.processor.vibevoice_streaming_processor import VibeVoiceStreamingProcessor
 
-    voices = Path.home() / ".cache/nixe-assistant/trials/vibevoice/VibeVoice/demo/voices/streaming_model"
+    voices = Path.home() / ".cache/nyx-assistant/trials/vibevoice/VibeVoice/demo/voices/streaming_model"
     name = speaker or "en-Emma_woman"
     processor = VibeVoiceStreamingProcessor.from_pretrained(weights)
     # Microsoft's demo prefers FlashAttention 2 (not installed here); SDPA is its fallback.

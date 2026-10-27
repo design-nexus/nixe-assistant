@@ -2646,7 +2646,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "nixe-assistantd"
+name = "nyx-assistantd"
 version = "0.1.0"
 dependencies = [
  "anyhow",

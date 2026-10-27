@@ -6,8 +6,8 @@ license.workspace = true
 description = "Typed administrative actions and the root helper that runs them through polkit"
 
 [[bin]]
-name = "nixe-assistant-helper"
-path = "src/bin/nixe-assistant-helper.rs"
+name = "nyx-assistant-helper"
+path = "src/bin/nyx-assistant-helper.rs"
 
 [dependencies]
 serde.workspace = true

@@ -9,12 +9,12 @@
 - Voxtype on PATH (`voxtype transcribe`)
 
 Blackwell (RTX 5080): set `CMAKE_CUDA_ARCHITECTURES=120a-real`
-in `~/.config/nixe-assistant/build.env` for the installer so llama.cpp MXFP4 kernels compile.
+in `~/.config/nyx-assistant/build.env` for the installer so llama.cpp MXFP4 kernels compile.
 
 Kokoro CUDA needs `libcudnn.so` and an ONNX Runtime CUDA EP with kernels for
 this GPU. On Blackwell (compute 12.0) ORT has no sm_120 kernels, so the assistant skips
 CUDA TTS and uses CPU. llama.cpp CUDA does not need cuDNN. To retry Kokoro on
-GPU later, delete `~/.cache/nixe-assistant/kokoro-cuda-skip`. To put Kokoro
+GPU later, delete `~/.cache/nyx-assistant/kokoro-cuda-skip`. To put Kokoro
 on GPU after kernels exist:
 
 ```bash
@@ -22,12 +22,12 @@ omarchy pkg add cudnn
 ```
 
 ```bash
-cd /path/to/nixe-assistant
-cargo build --release -p nixe-assistantd
+cd /path/to/nyx-assistant
+cargo build --release -p nyx-assistantd
 ```
 
 First llama.cpp CUDA compile is slow. First Kokoro run downloads ONNX weights
-into `~/.cache/nixe-assistant/loqui/`.
+into `~/.cache/nyx-assistant/loqui/`.
 
 ## Install (user session)
 
@@ -37,9 +37,9 @@ into `~/.cache/nixe-assistant/loqui/`.
 
 This:
 
-- installs `nixe-assistantd` and `nixe-assistant` to `~/.local/bin`
-- writes `~/.config/nixe-assistant/config.toml` if missing
-- enables the systemd **user** units (`nixe-assistantd`, `nixe-assistant-hud`, `nixe-assistant-stt`)
+- installs `nyx-assistantd` and `nyx-assistant` to `~/.local/bin`
+- writes `~/.config/nyx-assistant/config.toml` if missing
+- enables the systemd **user** units (`nyx-assistantd`, `nyx-assistant-hud`, `nyx-assistant-stt`)
 - appends Alt+Space PTT binds to `~/.config/hypr/bindings.lua` if they are not there
 
 Does not touch `/usr/share/omarchy/` or `~/.config/voxtype/`.
@@ -47,20 +47,20 @@ Does not touch `/usr/share/omarchy/` or `~/.config/voxtype/`.
 ## Run without install
 
 ```bash
-RUST_LOG=info cargo run --release -p nixe-assistantd --bin nixe-assistantd
+RUST_LOG=info cargo run --release -p nyx-assistantd --bin nyx-assistantd
 # another terminal:
-nixe-assistant status
-nixe-assistant say "What is two plus two?"
-nixe-assistant demo          # Kokoro → Parakeet → LLM → speakers
-nixe-assistant ptt-start     # then speak
-nixe-assistant ptt-stop
+nyx-assistant status
+nyx-assistant say "What is two plus two?"
+nyx-assistant demo          # Kokoro → Parakeet → LLM → speakers
+nyx-assistant ptt-start     # then speak
+nyx-assistant ptt-stop
 ```
 
-Logs: `journalctl --user -u nixe-assistantd -f`
+Logs: `journalctl --user -u nyx-assistantd -f`
 
 ## Rename the assistant
 
-In `~/.config/nixe-assistant/config.toml`:
+In `~/.config/nyx-assistant/config.toml`:
 
 ```toml
 [assistant]
@@ -69,7 +69,7 @@ name = "Whatever"
 
 The system prompt, HUD label, and wake phrase follow this name. `{name}` in
 `[assistant] prompt` is replaced at reply time. Edit the prompt in
-`config.toml`, then `nixe-assistant reload`.
+`config.toml`, then `nyx-assistant reload`.
 
 ## VAD
 
@@ -84,7 +84,7 @@ backend = "energy"
 energy_threshold = 0.012
 ```
 
-Then `nixe-assistant reload`.
+Then `nyx-assistant reload`.
 
 ## Hands-free wake
 
@@ -95,15 +95,15 @@ overlay stops it. Escape is not a Hyprland bind, so other apps keep the key when
 the assistant is idle.
 
 Wake sensitivity, hangover, and STT aliases live in
-`~/.config/nixe-assistant/config.toml` under `[wake_word]` (`phrases`,
-`threshold`, `max_ms`, …). Reload with `nixe-assistant reload`. Off:
+`~/.config/nyx-assistant/config.toml` under `[wake_word]` (`phrases`,
+`threshold`, `max_ms`, …). Reload with `nyx-assistant reload`. Off:
 
 ```toml
 [wake_word]
 enabled = false
 ```
 
-Then `nixe-assistant reload`.
+Then `nyx-assistant reload`.
 
 ## Clock
 
@@ -115,17 +115,17 @@ still get `{time}` and `{date}` in the system prompt. Reload after edits.
 ## Voice apps
 
 Launched programs (terminal, browser, files, Spotify, …) are not compiled in.
-Edit `~/.config/nixe-assistant/apps.toml`, then `nixe-assistant reload`
-(or `systemctl --user reload nixe-assistantd` / SIGHUP). Models stay loaded.
+Edit `~/.config/nyx-assistant/apps.toml`, then `nyx-assistant reload`
+(or `systemctl --user reload nyx-assistantd` / SIGHUP). Models stay loaded.
 Shipped template: `config/apps.toml`. Use `omarchy = ["launch", "nautilus"]` or
 `exec = ["env", "GSK_RENDERER=gl", "/usr/bin/strata"]`.
 
 ## Voice commands
 
 Desktop phrases (lock, volume, workspaces, screenshots, Hyprland ops, …) live in
-`~/.config/nixe-assistant/commands.toml` (template: `config/commands.toml`).
+`~/.config/nyx-assistant/commands.toml` (template: `config/commands.toml`).
 Edit `[[command]]` phrases, `[[say]]` refusals, `forget`, `starts`, `vocab`, or
-`[workspace]`, then `nixe-assistant reload`. No rebuild.
+`[workspace]`, then `nyx-assistant reload`. No rebuild.
 
 ## Models
 
@@ -138,12 +138,12 @@ model = "/path/to/instruct.Q4_K_M.gguf"
 n_gpu_layers = -1
 ```
 
-Drop extra GGUFs in `~/.local/share/nixe-assistant/models/`. Prefer small
+Drop extra GGUFs in `~/.local/share/nyx-assistant/models/`. Prefer small
 instruct models for spoken latency. Skip reasoning/thinking checkpoints.
 
 ## Voxtype
 
-F9 dictation stays Whisper. Assistant STT is Parakeet in `nixe-assistant-stt.service`
+F9 dictation stays Whisper. Assistant STT is Parakeet in `nyx-assistant-stt.service`
 (`voxtype-onnx-avx2`, isolated runtime). `install.sh` enables that unit.
 Do not point `/usr/bin/voxtype` at ONNX unless you mean to change F9 too.
 
@@ -157,28 +157,28 @@ Ollama/LM Studio model on the 5080 while measuring the assistant, or the numbers
 Snippet: `scripts/hypr-bind.lua`. Default is **Alt+Space** hold-to-talk.
 `Super+Alt+Space` is the Apps menu and stays that way.
 
-Emergency stop: `scripts/hypr-stop.lua` binds **Super+Shift+Escape** to `nixe-assistant cancel`
+Emergency stop: `scripts/hypr-stop.lua` binds **Super+Shift+Escape** to `nyx-assistant cancel`
 (speech, tasks, jobs and approvals stop; held keys are released). install.sh adds both.
 
 ## HUD
 
 Standalone Quickshell overlay (not wired into `shell.json`). `install.sh`
-enables `nixe-assistant-hud.service`; do not also run `scripts/hud.sh`
+enables `nyx-assistant-hud.service`; do not also run `scripts/hud.sh`
 while that unit is active.
 
 ```bash
-systemctl --user status nixe-assistant-hud
+systemctl --user status nyx-assistant-hud
 # manual, only if the unit is not enabled:
 ./scripts/hud.sh
 ```
 
-It runs `nixe-assistant listen` and shows state, transcript, reply, and
+It runs `nyx-assistant listen` and shows state, transcript, reply, and
 capture level, using the live Omarchy theme and font.
 
 See [reviewed improvements](REVIEWED-IMPROVEMENTS.md) for draft/apply semantics, all new TUI features, MCP permissions, token-authenticated HTTP and portable installation.
 
 
-Browser runtime: install Node 18+ and npm, then run `scripts/install.sh`. The installer uses the lockfile, installs matching Playwright Chromium under the assistant cache, and bundles the worker under the assistant data directory. `[browser] node` can override the installed `nixe-assistant-node` wrapper; `worker = "auto"` discovers the installed worker. `[browser] weather_location` is optional. Browser automation operates in an assistant-owned profile; it does not import Firefox cookies. DuckDuckGo or Google may require manual challenge completion through browser takeover.
+Browser runtime: install Node 18+ and npm, then run `scripts/install.sh`. The installer uses the lockfile, installs matching Playwright Chromium under the assistant cache, and bundles the worker under the assistant data directory. `[browser] node` can override the installed `nyx-assistant-node` wrapper; `worker = "auto"` discovers the installed worker. `[browser] weather_location` is optional. Browser automation operates in an assistant-owned profile; it does not import Firefox cookies. DuckDuckGo or Google may require manual challenge completion through browser takeover.
 
 `[conversation] follow_up_secs = 10` and `idle_secs = 60` control listening windows. `[dictation] idle_secs = 120` bounds dictation silence. `[terminal] timeout_secs = 120` supports 1–600 seconds. Add trusted commands as `[terminal.commands]` entries, for example `list-projects = ["ls", "-la", "/home/your-user/Projects"]`; working directories stay inside the home directory.
 
@@ -189,7 +189,7 @@ Weather requests use Open-Meteo over HTTPS, including its geocoding endpoint for
 
 ### DuckDuckGo MCP factual search
 
-Run `scripts/install-search.sh` to install the pinned AstroCorp server and its locked Node dependencies under the assistant data directory. Node 22+ is required. Then run `nixe-assistant search-provider duckduckgo` and restart the daemon. `search-provider show` reports the saved provider; `search-provider builtin` switches back after a restart. This adds the stdio server and allows only `duckduckgo.search`, retaining existing MCP permissions and servers. The server is external; its filesystem/network access is governed by its process environment.
+Run `scripts/install-search.sh` to install the pinned AstroCorp server and its locked Node dependencies under the assistant data directory. Node 22+ is required. Then run `nyx-assistant search-provider duckduckgo` and restart the daemon. `search-provider show` reports the saved provider; `search-provider builtin` switches back after a restart. This adds the stdio server and allows only `duckduckgo.search`, retaining existing MCP permissions and servers. The server is external; its filesystem/network access is governed by its process environment.
 
 `[browser] search_tool = "duckduckgo.search"` directs ordinary factual queries to that registered tool. A custom provider must accept `query` and return structured `results` containing `title`, `url`, optional `snippet`, `text`, and `published_at`, with `retrieved_at` at the top level. Weather still uses Open-Meteo; visible page requests still use Google. Extracted content is untrusted. Challenges are reported honestly; no CAPTCHA is solved automatically. Search citations are retained for “open that source.”
 

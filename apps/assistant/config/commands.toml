@@ -1,5 +1,5 @@
 # Desktop command phrases. Edit this file, then:
-#   nixe-assistant reload
+#   nyx-assistant reload
 #
 # `omarchy` is argv after the binary: omarchy <args>, or a typed Hyprland action
 # when the first arg is "hypr": close_window, focus_workspace N|e+1|e-1|previous|

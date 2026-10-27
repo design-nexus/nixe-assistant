@@ -68,7 +68,7 @@ impl Jobs {
                 // A build may use every core; memory and processes stay bounded.
                 let cores = std::thread::available_parallelism().map(|n| n.get() as u64).unwrap_or(4);
                 let limits = assistant_core::config::SandboxProfile { memory_mb: Some(8192), tasks: Some(2048), cpu_percent: Some((cores * 100).min(3200)), ..Default::default() };
-                let unit = format!("nixe-assistant-job-{}-{}.scope", std::process::id(), self.next.load(Ordering::Relaxed));
+                let unit = format!("nyx-assistant-job-{}-{}.scope", std::process::id(), self.next.load(Ordering::Relaxed));
                 let mut limited = crate::plugin_sandbox::limits(&limits, &unit);
                 limited.extend(argv);
                 limited

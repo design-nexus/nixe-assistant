@@ -4,7 +4,7 @@
 //!
 //! `preview` is the unprivileged dry run the host shows with the approval, so the person
 //! sees the packages (dependencies included) or the unit before approving. The call itself
-//! runs `pkexec nixe-assistant-helper VERB ARGS…`; polkit then asks for the password, and
+//! runs `pkexec nyx-assistant-helper VERB ARGS…`; polkit then asks for the password, and
 //! the helper checks every argument again.
 
 use anyhow::{bail, ensure, Context, Result};
@@ -149,7 +149,7 @@ pub async fn preview(name: &str, args: &Value) -> Result<Value> {
 
 /// Whether the installed helper and policy are the ones this build carries.
 fn helper_ready() -> Result<()> {
-    let hint = "run: sudo nixe-assistant install-helper";
+    let hint = "run: sudo nyx-assistant install-helper";
     ensure!(std::path::Path::new(HELPER).is_file(), "the admin helper isn't installed; {hint}");
     ensure!(std::fs::read_to_string(POLICY).ok().as_deref() == Some(POLICY_XML), "the admin helper's polkit policy is missing or outdated; {hint}");
     let version = std::process::Command::new(HELPER)
@@ -220,7 +220,7 @@ pub async fn call(name: &str, args: &Value) -> Option<Result<Value>> {
                 tokio::process::Command::new("pkexec").args(&argv).stdin(std::process::Stdio::null()).kill_on_drop(true).output().await
             })
             .await
-            .context("the admin action timed out; it may still be running (see nixe-assistant admin-log)")?
+            .context("the admin action timed out; it may still be running (see nyx-assistant admin-log)")?
             .context("pkexec isn't available")?;
             match out.status.code() {
                 Some(0) => {}

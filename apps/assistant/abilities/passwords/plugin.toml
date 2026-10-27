@@ -1,8 +1,8 @@
 manifest_version = 1
 id = "passwords"
 version = "1.0.0"
-description = "Nixe Passwords: find logins and copy them to the clipboard (the value never comes back)"
-executable = "nixe-passwords-assistant"
+description = "Nyx Passwords: find logins and copy them to the clipboard (the value never comes back)"
+executable = "nyx-passwords-assistant"
 args = []
 tools = ["passwords.find", "passwords.copy"]
 
@@ -16,8 +16,8 @@ pattern = "^(?i:find (?:my )?(?P<query>.+?) logins?)$"
 tool = "passwords.find"
 template = true
 
-# The program comes with Nixe Passwords. Its daemon answers only the suite's own
-# programs, found by their real path, and only when "Nixe Assistant" is turned on in
+# The program comes with Nyx Passwords. Its daemon answers only the suite's own
+# programs, found by their real path, and only when "Nyx Assistant" is turned on in
 # Passwords' settings; every call also needs a key press here (`Secrets`).
 [sandbox]
-unconfined = "talks to Nixe Passwords' daemon, which accepts only its own programs"
+unconfined = "talks to Nyx Passwords' daemon, which accepts only its own programs"
