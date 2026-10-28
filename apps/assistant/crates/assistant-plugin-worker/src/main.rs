@@ -34,6 +34,10 @@ fn group(name: &str) -> &str {
         _ => "desktop-controls",
     }
 }
+// Host-local capabilities must not be re-advertised by bundled plugin workers.
+fn exported(name: &str,id: &str) -> bool {
+    !matches!(name,"canvas.show"|"location.search"|"tools.discover") && group(name)==id
+}
 fn route(request: &str, id: &str, cfg: &Config) -> Result<Value> {
     if id == "clock" {
         return Ok(cfg
@@ -108,7 +112,7 @@ async fn main() -> Result<()> {
     let mut tools: Vec<_> = registry
         .tools
         .values()
-        .filter(|t| group(&t.name) == id)
+        .filter(|t| exported(&t.name,&id))
         .cloned()
         .collect();
     let request_schema = json!({"type":"object","properties":{"request":{"type":"string","maxLength":16384}},"required":["request"],"additionalProperties":false});
@@ -221,7 +225,16 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::phrase_hyprctl;
+    use super::{phrase_hyprctl,exported};
+    #[test]
+    fn host_tools_are_not_exported_by_workers() {
+        for id in ["desktop-controls","location","diagnostics"] {
+            for name in ["canvas.show","location.search","tools.discover"] {assert!(!exported(name,id));}
+        }
+        assert!(exported("location.current","location"));
+        assert!(exported("diagnostics.snapshot","diagnostics"));
+    }
+
 
     #[test]
     fn phrase_hyprctl_cant_start_programs() {
