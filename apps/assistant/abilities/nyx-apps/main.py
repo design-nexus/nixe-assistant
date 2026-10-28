@@ -26,7 +26,7 @@ APPS = {
     'torrents': ('io.github.design_nexus.nyx.Torrents', 'nyx-torrents'),
 }
 # Answered by an app's command line, with no window: Glimpse's file search, Store's
-# catalogue and Tasks' sampler.
+# catalogue and Activity's sampler.
 HEADLESS = {'glimpse.search', 'store.search', 'tasks.top'}
 # Shown by starting the app with arguments (its window comes up on that page).
 SHOWN = {'glimpse.show', 'store.open', 'tasks.open'}
@@ -106,7 +106,7 @@ TOOLS = [
     tool('store.search', 'Search the Store catalogue for apps and packages (name, version, whether installed).', {'query': TEXT}, ['query']),
     tool('store.open', "Show the Store with a search typed in, for the person to install or remove things themselves.", {'query': SHORT}, ['query']),
     tool('tasks.top', 'The busiest processes (by cpu or memory) and the CPU, memory and graphics totals.', {'by': {'enum': ['cpu', 'memory']}}),
-    tool('tasks.open', 'Show a page of the Tasks system monitor (processes, cpu, memory, disks, network, gpu).', {'page': SHORT}),
+    tool('tasks.open', 'Show a page of the Activity system monitor (processes, cpu, memory, disks, network, gpu).', {'page': SHORT}),
     tool('torrents.list', 'The torrents in Torrents: name, progress, state, speeds, time left.'),
     tool('torrents.add', 'Add a torrent from a magnet link, an http(s) link to a .torrent, or an info-hash.', {'link': {'type': 'string', 'maxLength': 8192}}, ['link']),
     tool('torrents.pause', 'Pause a torrent (by name, or all).', {'name': SHORT, 'all': {'type': 'boolean'}}),
@@ -167,7 +167,7 @@ def headless(name, args, cancelled):
     if name == 'store.search':
         return json.loads(run(['nyx-store', '--find', args['query']], cancelled, timeout=60))
     if name == 'tasks.top':
-        return json.loads(run(['nyx-tasks', '--top', 'memory' if args.get('by') == 'memory' else 'cpu'], cancelled, timeout=20))
+        return json.loads(run(['nyx-activity', '--top', 'memory' if args.get('by') == 'memory' else 'cpu'], cancelled, timeout=20))
     raise ValueError(f'unknown tool {name}')
 
 def show(name, args):
@@ -176,7 +176,7 @@ def show(name, args):
     elif name == 'store.open':
         argv = ['nyx-store', '--search', args['query']]
     else:
-        argv = ['nyx-tasks'] + (['--section', page_name(args['page'])] if args.get('page') else [])
+        argv = ['nyx-activity'] + (['--section', page_name(args['page'])] if args.get('page') else [])
     proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                             start_new_session=True)
     threading.Thread(target=proc.wait, daemon=True).start()
