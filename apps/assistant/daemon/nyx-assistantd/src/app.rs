@@ -1385,10 +1385,11 @@ impl App {
         let phrase_text = phrase.to_string();
         let phrase = phrase_text.clone();
         let tts = Arc::clone(tts);
-        let pcm = tokio::task::spawn_blocking(move || tts.speak(&phrase)).await.context("tts join")??;
+        let mut pcm = tokio::task::spawn_blocking(move || tts.speak(&phrase)).await.context("tts join")??;
         if pcm.is_empty() {
             return Ok(());
         }
+        ensure_sentence_pause(&phrase_text, &mut pcm);
         if TURN_ID.try_with(|id| *id != self.turn_gen.load(Ordering::SeqCst)).unwrap_or(false)
             || self.cancel.lock().await.is_cancelled()
         {
@@ -2129,6 +2130,22 @@ fn task_json(task: &Task) -> Value {
     })
 }
 
+/// Keep sentence joins natural without adding a second pause to audio that already has one.
+fn ensure_sentence_pause(text: &str, pcm: &mut Vec<f32>) {
+    let ending = text.trim_end().trim_end_matches(['"', '\'', '”', '’', ')', ']']);
+    if !ending.ends_with(['.', '?', '!']) { return; }
+    const FRAME: usize = 240; // 10 ms at 24 kHz
+    const MIN_PAUSE: usize = 24_000 * 220 / 1000;
+    let mut quiet = 0;
+    for frame in pcm.rchunks(FRAME) {
+        let power = frame.iter().map(|s| s * s).sum::<f32>() / frame.len() as f32;
+        if power.sqrt() > 0.003 { break; }
+        quiet += frame.len();
+        if quiet >= MIN_PAUSE { return; }
+    }
+    pcm.resize(pcm.len() + MIN_PAUSE.saturating_sub(quiet), 0.0);
+}
+
 // Retrieved sources and tool results must never enter command routing.
 fn answer_intent(
     ask: &str,
@@ -2147,6 +2164,21 @@ fn answer_intent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sentence_pause_only_fills_missing_trailing_silence() {
+        let mut short = vec![0.2; 240];
+        short.extend(vec![0.0; 2_400]);
+        ensure_sentence_pause("Hello.", &mut short);
+        assert_eq!(short.len(), 240 + 5_280);
+        let mut enough = vec![0.2; 240];
+        enough.extend(vec![0.0; 6_000]);
+        ensure_sentence_pause("Hello!", &mut enough);
+        assert_eq!(enough.len(), 6_240);
+        let mut clause = vec![0.2; 240];
+        ensure_sentence_pause("Hello,", &mut clause);
+        assert_eq!(clause.len(), 240);
+    }
 
     #[test]
     fn retrieved_commands_are_answer_data() {
