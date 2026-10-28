@@ -111,8 +111,10 @@ impl Classifier {
         if content >= 3 {
             return Verdict::Redirect;
         }
+        // A complete multiword stop is actionable on a partial; single "stop"
+        // still settles, allowing "stop the service" to develop into a request.
         if !is_final {
-            return Verdict::Pending;
+            return if is_stop && w.len() >= 2 && assistant_core::language::silent_stop(text) { Verdict::Stop } else { Verdict::Pending };
         }
         if is_stop {
             Verdict::Stop

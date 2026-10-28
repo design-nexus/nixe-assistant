@@ -32,21 +32,27 @@ enum State {
     Error,
 }
 
+type MonitorSnapshot = (Vec<String>, Option<String>, Vec<String>, HashMap<String, f64>);
+
 struct Aura {
     windows: RefCell<Vec<gtk::Window>>,
     profile: RefCell<Option<assistant_core::VoiceProfile>>,
     state: Cell<State>,
+    base_state: Cell<State>,
+    completion_pending: Cell<bool>,
     conversation: Cell<bool>,
     changed: Cell<Instant>,
     phase: Cell<f64>,
     cfg: RefCell<assistant_core::config::UiCfg>,
     opacity: Cell<f64>,
     level: Cell<f64>,
+    level_target: Cell<f64>,
+    last_level: Cell<Instant>,
     color: Cell<(f64, f64, f64)>,
     last_frame: Cell<Instant>,
     selected: RefCell<Vec<String>>,
     bar_heights: RefCell<HashMap<String, f64>>,
-    fullscreen: Cell<bool>,
+    fullscreen: RefCell<Vec<String>>,
     system_reduce_motion: bool,
 }
 
@@ -56,17 +62,21 @@ impl Aura {
             windows: RefCell::new(Vec::new()),
             profile: RefCell::new(None),
             state: Cell::new(State::Idle),
+            base_state: Cell::new(State::Idle),
+            completion_pending: Cell::new(false),
             conversation: Cell::new(false),
             changed: Cell::new(Instant::now()),
             phase: Cell::new(0.0),
             cfg: RefCell::new(cfg),
             opacity: Cell::new(0.0),
             level: Cell::new(0.0),
+            level_target: Cell::new(0.0),
+            last_level: Cell::new(Instant::now()),
             color: Cell::new((0.5, 0.7, 0.8)),
             last_frame: Cell::new(Instant::now()),
             selected: RefCell::new(Vec::new()),
             bar_heights: RefCell::new(HashMap::new()),
-            fullscreen: Cell::new(false),
+            fullscreen: RefCell::new(Vec::new()),
             system_reduce_motion,
         })
     }
@@ -77,31 +87,41 @@ impl Aura {
         self.redraw();
     }
 
-    fn monitor_state() -> (Vec<String>, Option<String>, bool, HashMap<String, f64>) {
+    fn monitor_state() -> Option<MonitorSnapshot> {
         let output = std::process::Command::new("hyprctl").args(["-j", "monitors"]).output();
         let state = output.ok().filter(|o| o.status.success())
             .and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok())
-            .and_then(|v| v.as_array().cloned()).unwrap_or_default();
-        let monitors: Vec<String> = state.iter()
+            .and_then(|v| v.as_array().cloned())?;
+        let workspaces = std::process::Command::new("hyprctl").args(["-j", "workspaces"]).output().ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok())
+            .and_then(|v| v.as_array().cloned())?;
+        let layers = std::process::Command::new("hyprctl").args(["-j", "layers"]).output().ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok())
+            .and_then(|v| v.as_object().cloned())?;
+        Some(Self::snapshot_from(&state, &workspaces, &layers))
+    }
+
+    fn snapshot_from(state: &[Value], workspaces: &[Value], layers: &serde_json::Map<String, Value>) -> MonitorSnapshot {
+        let monitors = state.iter()
             .filter_map(|m| m["name"].as_str().filter(|n| !n.starts_with("HEADLESS-")).map(str::to_string)).collect();
         let focused = state.iter()
             .find(|m| m["focused"] == true).and_then(|m| m["name"].as_str().map(str::to_string));
-        let fullscreen = std::process::Command::new("hyprctl").args(["-j", "activewindow"]).output().ok()
-            .and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok())
-            .is_some_and(|v| v["fullscreen"].as_i64().unwrap_or(0) != 0);
+        let fullscreen = state.iter().filter_map(|monitor| {
+            let id = monitor["activeWorkspace"]["id"].as_i64()?;
+            workspaces.iter().any(|w| w["id"].as_i64() == Some(id) && w["hasfullscreen"] == true)
+                .then(|| monitor["name"].as_str().map(str::to_string)).flatten()
+        }).collect();
         let mut bar_heights = HashMap::new();
-        if let Some(layers) = std::process::Command::new("hyprctl").args(["-j", "layers"]).output().ok()
-            .filter(|o| o.status.success())
-            .and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok())
-            .and_then(|v| v.as_object().cloned())
-        {
-            for (connector, output) in layers {
-                if let Some(levels) = output["levels"].as_object() {
-                    for layer in levels.values().filter_map(Value::as_array).flatten() {
-                        if layer["namespace"] == "omarchy-bar" && layer["y"].as_i64() == Some(0) {
-                            if let Some(height) = layer["h"].as_f64() {
-                                bar_heights.insert(connector.clone(), height.clamp(0.0, 200.0));
-                            }
+        for (connector, output) in layers {
+            if let Some(levels) = output["levels"].as_object() {
+                for layer in levels.values().filter_map(Value::as_array).flatten() {
+                    let monitor_y = state.iter().find(|m| m["name"].as_str() == Some(connector.as_str()))
+                        .and_then(|m| m["y"].as_i64());
+                    if layer["namespace"] == "omarchy-bar" && layer["y"].as_i64() == monitor_y {
+                        if let Some(height) = layer["h"].as_f64() {
+                            bar_heights.insert(connector.clone(), height.clamp(0.0, 200.0));
                         }
                     }
                 }
@@ -110,9 +130,12 @@ impl Aura {
         (monitors, focused, fullscreen, bar_heights)
     }
 
-    fn refresh_monitors(self: &Rc<Self>, app: &gtk::Application) {
-        let (physical, focused, fullscreen, bar_heights) = Self::monitor_state();
-        if self.fullscreen.replace(fullscreen) != fullscreen { self.redraw(); }
+    fn refresh_monitors(self: &Rc<Self>, app: &gtk::Application, snapshot: MonitorSnapshot) {
+        let (physical, focused, fullscreen, bar_heights) = snapshot;
+        if *self.fullscreen.borrow() != fullscreen {
+            *self.fullscreen.borrow_mut() = fullscreen;
+            self.redraw();
+        }
         let cfg = self.cfg.borrow();
         let mut selection = if !cfg.aura_monitors.is_empty() {
             physical.iter().filter(|name| cfg.aura_monitors.contains(name)).cloned().collect()
@@ -140,6 +163,7 @@ impl Aura {
         if !gtk4_layer_shell::is_supported() || !self.cfg.borrow().enabled || !self.cfg.borrow().aura_enabled {
             return;
         }
+        if !self.cfg.borrow().aura_monitors.is_empty() && self.selected.borrow().is_empty() { return; }
         let Some(display) = gdk::Display::default() else { return };
         let monitors = display.monitors();
         for i in 0..monitors.n_items() {
@@ -168,11 +192,14 @@ impl Aura {
             area.set_hexpand(true);
             area.set_vexpand(true);
             let bar_height = monitor.connector().and_then(|name| self.bar_heights.borrow().get(name.as_str()).copied()).unwrap_or(0.0);
+            let connector = monitor.connector().map(|s| s.to_string()).unwrap_or_default();
             let aura = self.clone();
-            area.set_draw_func(move |_, cr, w, h| aura.draw(cr, w as f64, h as f64, bar_height));
+            area.set_draw_func(move |_, cr, w, h| {
+                if !aura.fullscreen.borrow().contains(&connector) { aura.draw(cr, w as f64, h as f64, bar_height); }
+            });
             let aura = self.clone();
             area.add_tick_callback(move |widget, _| {
-                if aura.tick() { widget.queue_draw(); }
+                if aura.tick() { widget.queue_draw(); } else { widget.set_visible(false); }
                 glib::ControlFlow::Continue
             });
             let redraw = area.clone();
@@ -188,10 +215,30 @@ impl Aura {
         }
     }
 
-    fn set_state(&self, state: State) {
-        if state == State::Idle && matches!(self.state.get(), State::Done | State::Error | State::Attention)
-            && self.changed.get().elapsed() < if self.state.get() == State::Error { Duration::from_secs(4) } else { Duration::from_secs(2) }
-        { return; }
+    fn set_state(&self, mut state: State) {
+        if self.state.get() == State::Error && matches!(state, State::Attention | State::Done)
+            && self.changed.get().elapsed() < Duration::from_secs(4) { return; }
+        if state == State::Error { self.completion_pending.set(false); }
+        if state == State::Done && matches!(self.base_state.get(), State::Thinking | State::Speaking) {
+            self.completion_pending.set(true);
+            return;
+        }
+        if matches!(state, State::Listening | State::Thinking) && self.base_state.get() != state {
+            self.completion_pending.set(false);
+        }
+        if matches!(state, State::Idle | State::Listening | State::Thinking | State::Speaking) {
+            let previous = self.base_state.get();
+            if previous!=state {self.level_target.set(0.0);self.level.set(0.0);}
+            self.base_state.set(state);
+            if matches!(self.state.get(), State::Done | State::Error | State::Attention)
+                && self.changed.get().elapsed() < if self.state.get() == State::Error { Duration::from_secs(4) } else { Duration::from_secs(2) }
+                && !(state==State::Listening && self.state.get()==State::Done)
+            { return; }
+            if state == State::Idle && matches!(previous, State::Thinking | State::Speaking)
+                && self.completion_pending.replace(false) { state = State::Done; }
+        } else if state == State::Done && self.base_state.get() != State::Idle {
+            return;
+        }
         if self.state.replace(state) != state {
             self.changed.set(Instant::now());
         }
@@ -202,6 +249,7 @@ impl Aura {
     fn redraw(&self) {
         for window in self.windows.borrow().iter() {
             if let Some(child) = window.child() {
+                child.set_visible(true);
                 child.queue_draw();
             }
         }
@@ -227,17 +275,20 @@ impl Aura {
         let now = Instant::now();
         let dt = now.duration_since(self.last_frame.replace(now)).as_secs_f64().min(0.1);
         if matches!(self.state.get(), State::Done | State::Attention) && self.changed.get().elapsed() > Duration::from_secs(2) {
-            self.set_state(State::Idle);
+            self.state.set(self.base_state.get());
+            self.changed.set(now);
         }
         if self.state.get() == State::Error && self.changed.get().elapsed() > Duration::from_secs(4) {
-            self.set_state(State::Idle);
+            self.state.set(self.base_state.get());
+            self.changed.set(now);
         }
         let target = if self.visible() { 1.0 } else { 0.0 };
         let fade = if self.reduced_motion() { 1.0 } else { (dt * 7.0).min(1.0) };
         let old = self.opacity.get();
         self.opacity.set(old + (target - old) * fade);
-        let level = self.level.get();
-        self.level.set(level * (1.0 - (dt * 8.0).min(1.0)));
+        let target_level=if self.last_level.get().elapsed()<Duration::from_millis(180) {self.level_target.get()}else{0.0};
+        let level=self.level.get();let tau=if target_level>level {0.035}else{0.16};
+        self.level.set(level+(target_level-level)*(1.0-(-dt/tau).exp()));
         if !self.reduced_motion() && target > 0.0 {
             let speed = self.cfg.borrow().aura_speed;
             let factor = match self.state.get() { State::Thinking => 0.65, State::Listening => 0.3, _ => 1.0 };
@@ -248,7 +299,7 @@ impl Aura {
 
     fn visible(&self) -> bool {
         let cfg = self.cfg.borrow();
-        cfg.enabled && cfg.aura_enabled && !self.fullscreen.get()
+        cfg.enabled && cfg.aura_enabled
             && (self.state.get() != State::Idle || (cfg.aura_visibility == "persistent" && self.conversation.get()))
     }
 
@@ -285,7 +336,7 @@ impl Aura {
         let pad = width + 2.0;
         let radius = 18.0;
         // Keep even the widest glow and round caps below the bar's bottom edge.
-        let top = bar_height + pad + width * 2.5;
+        let top = bar_height + pad + width * 5.5;
         let bottom = h - pad;
         if top + radius >= bottom || w <= 2.0 * (pad + radius) { return; }
         let flow_length = 2.0 * (bottom - radius - top)
@@ -293,13 +344,13 @@ impl Aura {
             + std::f64::consts::PI * radius;
         let style = self.style();
         let idle_factor = if self.state.get() == State::Idle { 0.2 } else { 1.0 };
-        let audio = if cfg.aura_audio_reactive { self.level.get().clamp(0.0, 0.25) * 1.5 } else { 0.0 };
+        let audio = if cfg.aura_audio_reactive { self.level.get().clamp(0.0, 1.0) * 0.65 } else { 0.0 };
         let breath = if self.reduced_motion() { 1.0 } else { 0.88 + 0.12 * (self.phase.get() * std::f64::consts::TAU).sin().abs() };
         let base_intensity = cfg.aura_intensity * self.opacity.get() * idle_factor * breath;
         if style == "full" {
             let talking = matches!(self.state.get(), State::Listening | State::Speaking);
             let pulse = if cfg.aura_audio_reactive && talking && !self.reduced_motion() {
-                ((self.level.get() - 0.003) / 0.06).clamp(0.0, 1.0)
+                self.level.get().clamp(0.0,1.0)
             } else { 0.0 };
             draw_side_glow(cr, w, top, h, width, mixed, base_intensity, pulse);
             return;
@@ -315,17 +366,23 @@ impl Aura {
             cr.set_dash(&[segment, flow_length], -travel * (flow_length - segment));
             cr.set_line_cap(gtk::cairo::LineCap::Round);
             cr.set_source_rgba(mixed.0, mixed.1, mixed.2, alpha * intensity);
-            cr.set_line_width(width * multiple);
+            cr.set_line_width(width * multiple * (1.0 + 1.8 * audio));
             let _ = cr.stroke();
         }
     }
+}
+
+fn meter_fraction(rms: f64, previous: f64) -> f64 {
+    let open=0.004;let close=0.0025;
+    if !rms.is_finite() || rms<=0.0 || (previous<=0.0 && rms<open) || (previous>0.0 && rms<close) {return 0.0;}
+    let floor=20.0_f64*open.log10();((20.0*rms.log10()-floor)/(-12.0-floor)).clamp(0.0,1.0)
 }
 
 fn draw_side_glow(
     cr: &gtk::cairo::Context, w: f64, top: f64, h: f64, thickness: f64,
     color: (f64, f64, f64), intensity: f64, pulse: f64,
 ) {
-    let reach = ((24.0 + thickness * 7.0) * (1.0 + 1.3 * pulse)).min(w * 0.18);
+    let reach = ((24.0 + thickness * 7.0) * (1.0 + 2.0 * pulse)).min(w * 0.18);
     let fade = (24.0 / (h - top)).min(0.25);
     let vertical = gtk::cairo::LinearGradient::new(0.0, top, 0.0, h);
     vertical.add_color_stop_rgba(0.0, 0.0, 0.0, 0.0, 0.0);
@@ -343,6 +400,163 @@ fn draw_side_glow(
         let _ = cr.set_source(&horizontal);
         let _ = cr.mask(&vertical);
         let _ = cr.restore();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn speech_meter_responds_at_ordinary_microphone_levels() {
+        assert_eq!(meter_fraction(0.001,0.0),0.0);
+        assert!(meter_fraction(0.01,0.0)>0.2);
+        assert!(meter_fraction(0.04,0.0)>meter_fraction(0.01,0.0));
+        assert_eq!(meter_fraction(f64::NAN,0.5),0.0);
+        let aura=Aura::new(Default::default(),false);
+        aura.set_state(State::Done);aura.set_state(State::Listening);
+        assert!(aura.state.get()==State::Listening);
+        aura.level_target.set(meter_fraction(0.02,0.0));
+        aura.last_frame.set(Instant::now()-Duration::from_millis(16));aura.tick();
+        let high=aura.level.get();assert!(high>0.1);
+        aura.level_target.set(0.0);aura.last_frame.set(Instant::now()-Duration::from_millis(16));aura.tick();
+        assert!(aura.level.get()<high);
+        let reach=|pulse| {
+            let mut surface=gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32,800,300).unwrap();
+            {let cr=gtk::cairo::Context::new(&surface).unwrap();draw_side_glow(&cr,800.0,30.0,300.0,3.0,(0.1,0.8,1.0),0.4,pulse);}
+            surface.flush();let stride=surface.stride() as usize;let pixels=surface.data().unwrap();
+            assert!(pixels[..stride*30].iter().all(|b|*b==0),"top bar remains clear");
+            (0..400).filter(|x|pixels[stride*150+x*4+3]>3).count()
+        };
+        assert!(reach(0.8)>reach(0.0)*3/2,"speech expands the visible soft glow");
+    }
+
+    #[test]
+    fn temporary_status_restores_latest_assistant_state() {
+        let aura = Aura::new(Default::default(), false);
+        aura.set_state(State::Thinking);
+        aura.set_state(State::Error);
+        aura.set_state(State::Speaking);
+        assert!(aura.state.get() == State::Error);
+        aura.changed.set(Instant::now() - Duration::from_secs(5));
+        aura.tick();
+        assert!(aura.state.get() == State::Speaking);
+        aura.set_state(State::Done);
+        assert!(aura.state.get() == State::Speaking);
+        aura.set_state(State::Idle);
+        assert!(aura.state.get() == State::Done);
+        aura.changed.set(Instant::now() - Duration::from_secs(3));
+        aura.tick();
+        assert!(aura.state.get() == State::Idle);
+    }
+
+    #[test]
+    fn monitor_snapshot_tracks_fullscreen_and_bar_per_output() {
+        let monitors = serde_json::json!([
+            {"name":"A", "y":0, "focused":true, "activeWorkspace":{"id":1}},
+            {"name":"B", "y":-900, "focused":false, "activeWorkspace":{"id":2}},
+            {"name":"HEADLESS-1", "y":0, "activeWorkspace":{"id":3}}
+        ]);
+        let workspaces = serde_json::json!([
+            {"id":1,"hasfullscreen":false}, {"id":2,"hasfullscreen":true}
+        ]);
+        let layers = serde_json::json!({
+            "A":{"levels":{"2":[{"namespace":"omarchy-bar","y":0,"h":26}]}},
+            "B":{"levels":{"2":[{"namespace":"omarchy-bar","y":-900,"h":32}]}}
+        });
+        let (physical, focused, fullscreen, bars) = Aura::snapshot_from(
+            monitors.as_array().unwrap(), workspaces.as_array().unwrap(), layers.as_object().unwrap());
+        assert_eq!(physical, ["A", "B"]);
+        assert_eq!(focused.as_deref(), Some("A"));
+        assert_eq!(fullscreen, ["B"]);
+        assert_eq!(bars.get("A"), Some(&26.0));
+        assert_eq!(bars.get("B"), Some(&32.0));
+    }
+
+    #[test]
+    fn line_chart_renders_into_cairo_surface() {
+        let mut surface = gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 640, 360).unwrap();
+        let cr = gtk::cairo::Context::new(&surface).unwrap();
+        draw_line_chart(&cr, 640, 360, &[(0.0, -2.0), (1.0, 3.0), (2.0, 1.0)]);
+        drop(cr);
+        surface.flush();
+        assert!(surface.data().unwrap().iter().any(|&byte| byte != 0));
+    }
+
+    #[test]
+    fn image_size_fits_the_monitor_and_preserves_aspect() {
+        let (w, h) = image_window_size(4000, 2000, (1600, 1000));
+        assert!(w <= 1520 && h <= 920);
+        assert!(((w - 60) as f64 / (h - 140) as f64 - 2.0).abs() < 0.02);
+        assert_eq!(image_window_size(100, 100, (1600, 1000)), (440, 320));
+    }
+
+    #[test]
+    fn video_renderer_loads_local_fixture_when_requested() {
+        let Ok(path) = std::env::var("NYX_CANVAS_VIDEO_FIXTURE") else { return };
+        gtk::init().unwrap();
+        let app = gtk::Application::new(Some("io.github.design_nexus.nyx.canvas.test"), gtk::gio::ApplicationFlags::NON_UNIQUE);
+        app.register(None::<&gtk::gio::Cancellable>).unwrap();
+        let window = gtk::ApplicationWindow::new(&app);
+        let (player, _wakeup) = nyx_playback::mpv::Mpv::new(&[("vo", "libmpv"), ("ao", "null"), ("pause", "yes"), ("config", "no"), ("terminal", "no")]).unwrap();
+        nyx_playback::video::init(&window, &player, || (320, 180)).unwrap();
+        let loaded = player.command(&["loadfile", &path, "replace", "-1", "start=0"]).is_ok();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut duration = None;
+        while loaded && Instant::now() < deadline {
+            while player.next_event().is_some() {}
+            duration = player.get_f64("duration");
+            if duration.is_some() { break; }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        nyx_playback::video::shutdown();
+        player.destroy_later();
+        assert!(loaded && duration.is_some_and(|d| d > 0.0), "local video failed to load");
+    }
+
+    #[test]
+    fn pinned_canvas_keeps_content_on_followup_when_requested() {
+        if std::env::var_os("NYX_CANVAS_VIDEO_FIXTURE").is_none() { return; }
+        gtk::init().unwrap();
+        let app = gtk::Application::new(Some("io.github.design_nexus.nyx.canvas.pin-test"), gtk::gio::ApplicationFlags::NON_UNIQUE);
+        app.register(None::<&gtk::gio::Cancellable>).unwrap();
+        let canvas = Canvas::new(&app);
+        let first = canvas.prepare("First");
+        first.append(&gtk::Label::new(Some("Pinned")));
+        canvas.pin.set_active(true);
+        let second = canvas.prepare("Second");
+        second.append(&gtk::Label::new(Some("Follow-up")));
+        assert_eq!(canvas.pages.n_pages(), 2);
+        assert_eq!(canvas.pages.current_page(), Some(1));
+        assert!(first.first_child().is_some());
+        assert!(canvas.pins.borrow()[0]);
+        assert!(!canvas.pins.borrow()[1]);
+    }
+
+    #[test]
+    fn canvas_content_types_construct_without_opening_a_window() {
+        if std::env::var_os("NYX_CANVAS_VIDEO_FIXTURE").is_none() { return; }
+        gtk::init().unwrap();
+        let app = gtk::Application::new(Some("io.github.design_nexus.nyx.canvas.content-test"), gtk::gio::ApplicationFlags::NON_UNIQUE);
+        app.register(None::<&gtk::gio::Cancellable>).unwrap();
+        let canvas = Canvas::new(&app);
+        let cases = [
+            serde_json::json!({"version":1,"kind":"text","title":"Text","text":"Hello"}),
+            serde_json::json!({"version":1,"kind":"table","title":"Table","columns":["A"],"rows":[["B"]]}),
+            serde_json::json!({"version":1,"kind":"image","title":"Image","path":"/tmp/nyx-canvas-image-test.png"}),
+            serde_json::json!({"version":1,"kind":"gallery","title":"Gallery","paths":["/tmp/nyx-canvas-image-test.png"]}),
+            serde_json::json!({"version":1,"kind":"chart","title":"Bars","items":[{"label":"A","value":2}]}),
+            serde_json::json!({"version":1,"kind":"line_chart","title":"Line","points":[{"x":0,"y":1},{"x":1,"y":2}]}),
+            serde_json::json!({"version":1,"kind":"pdf","title":"PDF","path":"/tmp/nyx-canvas-doc-test.pdf"}),
+            serde_json::json!({"version":1,"kind":"document","title":"Document","path":concat!(env!("CARGO_MANIFEST_DIR"),"/../../docs/CANVAS.md")}),
+            serde_json::json!({"version":1,"kind":"map","title":"Map","latitude":41.88,"longitude":-87.63}),
+            serde_json::json!({"version":1,"kind":"video","title":"Video","path":"/tmp/nyx-canvas-video-test.mp4"}),
+            serde_json::json!({"version":1,"kind":"links","title":"Links","links":[{"label":"Example","url":"https://example.org"}]}),
+        ];
+        assert!(pdf_view("/tmp/nyx-canvas-doc-test.pdf").is::<gtk::Box>());
+        for content in cases { assert!(canvas.render_content(&content)); }
+        assert!(!canvas.window.is_visible());
+        assert_eq!(canvas.video.active.get(), 0);
     }
 }
 
@@ -367,8 +581,14 @@ fn rgb(s: &str) -> (f64, f64, f64) {
 
 struct Canvas {
     window: gtk::ApplicationWindow,
-    body: gtk::Box,
-    pinned: Cell<bool>,
+    pages: gtk::Notebook,
+    bodies: RefCell<Vec<gtk::Box>>,
+    pins: RefCell<Vec<bool>>,
+    pin: gtk::ToggleButton,
+    active_monitor: RefCell<Option<String>>,
+    requested_size: Rc<Cell<(i32, i32)>>,
+    switching_page: Cell<bool>,
+    video: Rc<VideoController>,
 }
 
 impl Canvas {
@@ -407,33 +627,77 @@ impl Canvas {
         });
         header.pack_end(&fullscreen);
         outer.append(&header);
-        let scroll = gtk::ScrolledWindow::new();
-        scroll.set_vexpand(true);
-        let body = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        body.add_css_class("canvas-body");
-        scroll.set_child(Some(&body));
-        outer.append(&scroll);
+        let pages = gtk::Notebook::new();
+        pages.set_vexpand(true);
+        pages.set_show_tabs(false);
+        let (scroll, body) = Self::page();
+        pages.append_page(&scroll, Some(&gtk::Label::new(Some("Canvas"))));
+        outer.append(&pages);
         window.set_child(Some(&outer));
-        let canvas = Rc::new(Self { window, body, pinned: Cell::new(false) });
+        let requested_size = Rc::new(Cell::new((760, 560)));
+        let size_on_map = requested_size.clone();
+        window.connect_map(move |w| {
+            let w = w.downgrade();
+            let size = size_on_map.get();
+            glib::idle_add_local_once(move || {
+                if let Some(w) = w.upgrade() { if !w.is_maximized() && !w.is_fullscreen() { w.set_default_size(size.0, size.1); } }
+            });
+        });
+        let canvas = Rc::new(Self { window, pages, bodies: RefCell::new(vec![body]), pins: RefCell::new(vec![false]), pin: pin.clone(), active_monitor: RefCell::new(None), requested_size, switching_page: Cell::new(false), video: Rc::new(VideoController::default()) });
         let pin_state = canvas.clone();
-        pin.connect_toggled(move |button| pin_state.pinned.set(button.is_active()));
+        pin.connect_toggled(move |button| {
+            if pin_state.switching_page.get() { return; }
+            if let Some(index) = pin_state.pages.current_page() {
+                if let Some(pinned) = pin_state.pins.borrow_mut().get_mut(index as usize) { *pinned = button.is_active(); }
+            }
+        });
+        let switch_state = canvas.clone();
+        canvas.pages.connect_switch_page(move |_, _, index| {
+            let pinned = switch_state.pins.borrow().get(index as usize).copied().unwrap_or(false);
+            switch_state.switching_page.set(true);
+            switch_state.pin.set_active(pinned);
+            switch_state.switching_page.set(false);
+        });
         canvas
     }
 
+    fn page() -> (gtk::ScrolledWindow, gtk::Box) {
+        let scroll = gtk::ScrolledWindow::new();
+        let body = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        body.add_css_class("canvas-body");
+        scroll.set_child(Some(&body));
+        (scroll, body)
+    }
+
+    fn prepare(&self, title: &str) -> gtk::Box {
+        let mut index = self.pages.current_page().unwrap_or(0);
+        if self.pins.borrow().get(index as usize).copied().unwrap_or(false) {
+            let (scroll, body) = Self::page();
+            index = self.pages.append_page(&scroll, Some(&gtk::Label::new(Some(title))));
+            self.bodies.borrow_mut().push(body);
+            self.pins.borrow_mut().push(false);
+            self.pages.set_show_tabs(true);
+            self.pages.set_current_page(Some(index));
+            self.pin.set_active(false);
+        }
+        let page = self.pages.nth_page(Some(index)).unwrap();
+        self.pages.set_tab_label_text(&page, title);
+        let body = self.bodies.borrow()[index as usize].clone();
+        while let Some(child) = body.first_child() { body.remove(&child); }
+        body
+    }
+
     fn show_results(&self, title: &str, results: &[Value]) {
-        if self.pinned.get() && self.window.is_visible() {
-            return;
+        if !self.window.is_maximized() && !self.window.is_fullscreen() {
+            let (w, h) = self.fit_size(720, (180 + results.len().min(6) as i32 * 110).clamp(400, 760));
+            self.requested_size.set((w, h));
+            self.window.set_default_size(w, h);
         }
-        if !self.window.is_visible() {
-            self.window.set_default_size(720, (180 + results.len().min(6) as i32 * 110).clamp(400, 760));
-        }
-        while let Some(child) = self.body.first_child() {
-            self.body.remove(&child);
-        }
+        let body = self.prepare(title);
         let heading = gtk::Label::new(Some(title));
         heading.add_css_class("canvas-title");
         heading.set_xalign(0.0);
-        self.body.append(&heading);
+        body.append(&heading);
         for item in results.iter().take(30) {
             let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
             card.add_css_class("canvas-card");
@@ -443,7 +707,7 @@ impl Canvas {
             label.set_wrap(true);
             label.add_css_class("heading");
             card.append(&label);
-            if let Some(url) = item["url"].as_str() {
+            if let Some(url) = item["url"].as_str().filter(|u| u.starts_with("https://") || u.starts_with("http://")) {
                 let link = gtk::LinkButton::with_label(url, url);
                 link.set_halign(gtk::Align::Start);
                 card.append(&link);
@@ -456,12 +720,502 @@ impl Canvas {
                 snippet.add_css_class("canvas-muted");
                 card.append(&snippet);
             }
-            self.body.append(&card);
+            body.append(&card);
         }
         if !self.window.is_visible() {
-            self.window.present();
+            self.window.set_visible(true);
         }
     }
+
+    fn show_content(&self, content: &Value) {
+        if !self.render_content(content) { return; }
+        if !self.window.is_maximized() && !self.window.is_fullscreen() {
+            let (width, height) = match content["kind"].as_str().unwrap_or("") {
+                "pdf" | "document" => (760, 800),
+                "image" => content["path"].as_str().and_then(gtk::gdk_pixbuf::Pixbuf::file_info)
+                    .map(|(_, w, h)| image_window_size(w, h, self.monitor_size())).unwrap_or((760, 600)),
+                "gallery" | "video" => (900, 650),
+                "map" | "chart" | "line_chart" | "table" => (820, 620),
+                "text" => (680, (160 + content["text"].as_str().unwrap_or("").len().min(2400) as i32 / 2).clamp(280, 650)),
+                _ => (680, 500),
+            };
+            let (width, height) = self.fit_size(width, height);
+            self.requested_size.set((width, height));
+            self.window.set_default_size(width, height);
+        }
+        if !self.window.is_visible() { self.window.set_visible(true); }
+    }
+
+    fn monitor_size(&self) -> (i32, i32) {
+        let Some(display) = gdk::Display::default() else { return (1280, 800) };
+        let monitors = display.monitors();
+        let active = self.active_monitor.borrow();
+        let mut fallback = None;
+        for i in 0..monitors.n_items() {
+            let Some(monitor) = monitors.item(i).and_downcast::<gdk::Monitor>() else { continue };
+            let connector = monitor.connector();
+            if connector.as_ref().is_some_and(|name| name.starts_with("HEADLESS-")) { continue; }
+            let geometry = monitor.geometry();
+            let size = (geometry.width(), geometry.height());
+            if active.as_deref().is_some_and(|name| connector.as_ref().is_some_and(|c| c.as_str() == name)) { return size; }
+            fallback.get_or_insert(size);
+        }
+        fallback.unwrap_or((1280, 800))
+    }
+
+    fn fit_size(&self, width: i32, height: i32) -> (i32, i32) {
+        let (monitor_w, monitor_h) = self.monitor_size();
+        (width.min((monitor_w - 80).max(380)), height.min((monitor_h - 80).max(280)))
+    }
+
+    fn render_content(&self, content: &Value) -> bool {
+        if content["version"] != 1 { return false; }
+        let Some(kind) = content["kind"].as_str() else { return false };
+        if !matches!(kind, "text" | "table" | "image" | "gallery" | "chart" | "line_chart" | "pdf" | "document" | "map" | "video" | "links") { return false; }
+        let title = content["title"].as_str().unwrap_or("Canvas");
+        let body = self.prepare(title);
+        let heading = gtk::Label::new(Some(title));
+        heading.add_css_class("canvas-title");
+        heading.set_xalign(0.0);
+        heading.set_wrap(true);
+        body.append(&heading);
+        match kind {
+            "text" => {
+                let label = gtk::Label::new(content["text"].as_str());
+                label.set_xalign(0.0);
+                label.set_wrap(true);
+                label.set_selectable(true);
+                body.append(&label);
+            }
+            "table" => {
+                let grid = gtk::Grid::new();
+                grid.set_column_spacing(24);
+                grid.set_row_spacing(8);
+                if let Some(columns) = content["columns"].as_array() {
+                    for (col, item) in columns.iter().take(12).enumerate() {
+                        let label = gtk::Label::new(item.as_str());
+                        label.add_css_class("heading");
+                        label.set_xalign(0.0);
+                        grid.attach(&label, col as i32, 0, 1, 1);
+                    }
+                }
+                if let Some(rows) = content["rows"].as_array() {
+                    for (row, cells) in rows.iter().take(50).enumerate() {
+                        if let Some(cells) = cells.as_array() {
+                            for (col, cell) in cells.iter().take(12).enumerate() {
+                                let label = gtk::Label::new(cell.as_str());
+                                label.set_xalign(0.0);
+                                label.set_wrap(true);
+                                label.set_selectable(true);
+                                grid.attach(&label, col as i32, row as i32 + 1, 1, 1);
+                            }
+                        }
+                    }
+                }
+                let scroll = gtk::ScrolledWindow::new();
+                scroll.set_child(Some(&grid));
+                body.append(&scroll);
+            }
+            "image" => if let Some(path) = content["path"].as_str() {
+                let image = gtk::Picture::for_filename(path);
+                image.set_can_shrink(true);
+                image.set_content_fit(gtk::ContentFit::Contain);
+                image.set_size_request(320, 320);
+                body.append(&image);
+            },
+            "gallery" => if let Some(paths) = content["paths"].as_array() {
+                let grid = gtk::FlowBox::new();
+                grid.set_selection_mode(gtk::SelectionMode::None);
+                grid.set_max_children_per_line(3);
+                grid.set_row_spacing(12);
+                grid.set_column_spacing(12);
+                for path in paths.iter().take(12).filter_map(Value::as_str) {
+                    let image = gtk::Picture::for_filename(path);
+                    image.set_can_shrink(true);
+                    image.set_content_fit(gtk::ContentFit::Contain);
+                    image.set_size_request(200, 160);
+                    grid.insert(&image, -1);
+                }
+                body.append(&grid);
+            },
+            "chart" => if let Some(items) = content["items"].as_array() {
+                let max = items.iter().filter_map(|item| item["value"].as_f64()).fold(0.0f64, f64::max).max(1.0);
+                for item in items.iter().take(50) {
+                    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+                    let label = gtk::Label::new(item["label"].as_str());
+                    label.set_width_chars(16);
+                    label.set_xalign(0.0);
+                    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                    row.append(&label);
+                    let bar = gtk::LevelBar::for_interval(0.0, max);
+                    bar.set_hexpand(true);
+                    let value = item["value"].as_f64().unwrap_or(0.0).clamp(0.0, max);
+                    bar.set_value(value);
+                    row.append(&bar);
+                    row.append(&gtk::Label::new(Some(&value.to_string())));
+                    body.append(&row);
+                }
+            },
+            "line_chart" => if let Some(points) = content["points"].as_array() {
+                let points = points.iter().filter_map(|p| Some((p["x"].as_f64()?, p["y"].as_f64()?))).collect::<Vec<_>>();
+                body.append(&line_chart(points));
+            },
+            "pdf" => if let Some(path) = content["path"].as_str() { body.append(&pdf_view(path)); },
+            "document" => if let Some(path) = content["path"].as_str() {
+                let view = gtk::TextView::new();
+                view.set_editable(false);
+                view.set_cursor_visible(false);
+                view.set_wrap_mode(gtk::WrapMode::WordChar);
+                view.buffer().set_text(&std::fs::read_to_string(path).unwrap_or_else(|_| "Unable to read this text document.".into()));
+                body.append(&view);
+            },
+            "map" => if let (Some(lat), Some(lon)) = (content["latitude"].as_f64(), content["longitude"].as_f64()) {
+                body.append(&map_view(lat, lon, content["zoom"].as_f64().unwrap_or(13.0)));
+            },
+            "video" => if let Some(path) = content["path"].as_str() {
+                body.append(&video_view(&self.window, path, self.video.clone()));
+            },
+            "links" => if let Some(links) = content["links"].as_array() {
+                if let Some(text) = content["text"].as_str() {
+                    let label = gtk::Label::new(Some(text));
+                    label.set_xalign(0.0);
+                    label.set_wrap(true);
+                    label.set_selectable(true);
+                    body.append(&label);
+                }
+                for link in links.iter().take(20) {
+                    if let (Some(label), Some(url)) = (link["label"].as_str(), link["url"].as_str()) {
+                        let button = gtk::LinkButton::with_label(url, label);
+                        button.set_halign(gtk::Align::Start);
+                        body.append(&button);
+                    }
+                }
+            },
+            _ => unreachable!(),
+        }
+        true
+    }
+}
+
+fn image_window_size(width: i32, height: i32, monitor: (i32, i32)) -> (i32, i32) {
+    if width <= 0 || height <= 0 { return (760, 600); }
+    let max_w = (monitor.0 - 140).max(320) as f64;
+    let max_h = (monitor.1 - 220).max(200) as f64;
+    let scale = (max_w / width as f64).min(max_h / height as f64).min(1.0);
+    (((width as f64 * scale) as i32 + 60).max(440), ((height as f64 * scale) as i32 + 140).max(320))
+}
+
+#[derive(Default)]
+struct VideoController {
+    player: RefCell<Option<nyx_playback::mpv::Mpv>>,
+    active: Cell<u64>,
+    next: Cell<u64>,
+}
+
+impl VideoController {
+    fn stop(&self, token: u64) {
+        if self.active.get() != token { return; }
+        self.active.set(0);
+        nyx_playback::video::shutdown();
+        if let Some(player) = self.player.borrow_mut().take() { player.destroy_later(); }
+    }
+}
+
+impl Drop for VideoController {
+    fn drop(&mut self) {
+        nyx_playback::video::shutdown();
+        if let Some(player) = self.player.get_mut().take() { player.destroy_later(); }
+    }
+}
+
+fn video_view(window: &gtk::ApplicationWindow, path: &str, controller: Rc<VideoController>) -> gtk::Widget {
+    use nyx_playback::{controls, mpv, video};
+    let token = controller.next.get().wrapping_add(1).max(1);
+    controller.next.set(token);
+    let position = Rc::new(Cell::new(0.0f64));
+    let map_epoch = Rc::new(Cell::new(0u64));
+    let outer = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let picture = gtk::Picture::for_paintable(&video::paintable());
+    picture.set_content_fit(gtk::ContentFit::Contain);
+    picture.set_can_shrink(true);
+    picture.set_size_request(400, 300);
+    picture.set_hexpand(true);
+    picture.set_vexpand(true);
+    outer.append(&picture);
+    let seek = controls::SeekWidgets::new();
+    let bar = controls::OsdControls::new(&seek.root, 1.0, 1.0, false);
+    for widget in [&bar.prev, &bar.next] { widget.set_visible(false); }
+    for widget in [&bar.chapters, &bar.shape, &bar.speed, &bar.audio, &bar.subs] { widget.set_visible(false); }
+    outer.append(&bar.root);
+    let status = gtk::Label::new(None);
+    status.set_wrap(true);
+    status.set_xalign(0.0);
+    outer.append(&status);
+
+    let w = window.downgrade();
+    let file = path.to_string();
+    let c = controller.clone();
+    let saved_position = position.clone();
+    let notice = status.clone();
+    picture.connect_map(move |picture| {
+        let old = c.active.get();
+        if old != 0 { c.stop(old); }
+        let Some(window) = w.upgrade() else { return };
+        let (player, _wakeup) = match mpv::Mpv::new(&[("vo", "libmpv"), ("idle", "yes"), ("pause", "yes"),
+            ("config", "no"), ("terminal", "no"), ("ytdl", "no"), ("load-scripts", "no")]) {
+            Ok(player) => player,
+            Err(error) => { notice.set_text(&format!("Unable to start video: {error}")); return; }
+        };
+        let weak_picture = picture.downgrade();
+        if let Err(error) = video::init(&window, &player, move || {
+            weak_picture.upgrade().map(|p| (p.width().max(1) * p.scale_factor(), p.height().max(1) * p.scale_factor())).unwrap_or((1, 1))
+        }) {
+            notice.set_text(&format!("Unable to display video: {error}"));
+            player.destroy_later();
+            return;
+        }
+        let start = format!("start={}", saved_position.get());
+        if let Err(error) = player.command(&["loadfile", &file, "replace", "-1", &start]) {
+            video::shutdown();
+            player.destroy_later();
+            notice.set_text(&format!("Unable to open video: {error}"));
+            return;
+        }
+        notice.set_text("");
+        c.active.set(token);
+        *c.player.borrow_mut() = Some(player);
+    });
+    let c = controller.clone();
+    let saved_position = position.clone();
+    let epoch_on_unmap = map_epoch.clone();
+    picture.connect_unmap(move |_| {
+        epoch_on_unmap.set(epoch_on_unmap.get().wrapping_add(1));
+        if c.active.get() == token {
+            if let Some(player) = c.player.borrow().as_ref() {
+                saved_position.set(player.get_f64("time-pos").unwrap_or(saved_position.get()));
+            }
+            c.stop(token);
+        }
+    });
+    for (button, command, amount) in [(&bar.back, "seek", "-5"), (&bar.fwd, "seek", "5"), (&bar.play, "cycle", "pause"), (&bar.mute, "cycle", "mute")] {
+        let c = controller.clone();
+        button.connect_clicked(move |_| {
+            if c.active.get() == token {
+                if let Some(player) = c.player.borrow().as_ref() { let _ = player.command(&[command, amount]); }
+            }
+        });
+    }
+    let c = controller.clone();
+    bar.volume.connect_value_changed(move |volume| {
+        if c.active.get() == token {
+            if let Some(player) = c.player.borrow().as_ref() { let _ = player.set_f64("volume", volume.value() * 100.0); }
+        }
+    });
+    let c = controller.clone();
+    seek.seek.connect_change_value(move |_, _, value| {
+        if c.active.get() == token {
+            if let Some(player) = c.player.borrow().as_ref() { let _ = player.set_f64("time-pos", value); }
+        }
+        glib::Propagation::Proceed
+    });
+    let w = window.downgrade();
+    bar.full.connect_clicked(move |_| if let Some(w) = w.upgrade() {
+        if w.is_fullscreen() { w.unfullscreen(); } else { w.fullscreen(); }
+    });
+    let pic = picture.clone();
+    bar.close.connect_clicked(move |_| pic.set_visible(false));
+    let c = controller.clone();
+    let progress = seek.seek.clone();
+    let elapsed = seek.pos.clone();
+    let duration = seek.dur.clone();
+    let play = bar.play.clone();
+    let mute = bar.mute.clone();
+    let volume = bar.volume.clone();
+    picture.connect_map(move |picture| {
+        let epoch = map_epoch.get().wrapping_add(1);
+        map_epoch.set(epoch);
+        let map_epoch = map_epoch.clone();
+        let weak_picture = picture.downgrade();
+        let c = c.clone();
+        let progress = progress.clone();
+        let elapsed = elapsed.clone();
+        let duration = duration.clone();
+        let play = play.clone();
+        let mute = mute.clone();
+        let volume = volume.clone();
+        glib::timeout_add_local(Duration::from_millis(250), move || {
+            let Some(picture) = weak_picture.upgrade() else { return glib::ControlFlow::Break };
+            if !picture.is_mapped() || map_epoch.get() != epoch { return glib::ControlFlow::Break; }
+            if c.active.get() == token {
+                if let Some(player) = c.player.borrow().as_ref() {
+                    while player.next_event().is_some() {}
+                    let pos = player.get_f64("time-pos").unwrap_or(0.0).max(0.0);
+                    let total = player.get_f64("duration").unwrap_or(0.0).max(0.0);
+                    progress.set_range(0.0, total.max(1.0));
+                    progress.set_value(pos.min(total.max(1.0)));
+                    elapsed.set_text(&controls::time(pos));
+                    duration.set_text(&controls::time(total));
+                    let paused = player.get_str("pause").is_none_or(|s| s == "yes");
+                    play.set_icon_name(if paused { "media-playback-start-symbolic" } else { "media-playback-pause-symbolic" });
+                    let muted = player.get_str("mute").is_some_and(|s| s == "yes");
+                    mute.set_icon_name(controls::volume_icon(volume.value(), muted));
+                }
+            }
+            glib::ControlFlow::Continue
+        });
+    });
+    let keys = gtk::EventControllerKey::new();
+    let c = controller.clone();
+    let w = window.downgrade();
+    keys.connect_key_pressed(move |_, key, _, _| {
+        if key == gdk::Key::f {
+            if let Some(w) = w.upgrade() { if w.is_fullscreen() { w.unfullscreen(); } else { w.fullscreen(); } }
+            return glib::Propagation::Stop;
+        }
+        let command = match key {
+            gdk::Key::space | gdk::Key::k => Some(("cycle", "pause")),
+            gdk::Key::Left => Some(("seek", "-5")),
+            gdk::Key::Right => Some(("seek", "5")),
+            gdk::Key::m => Some(("cycle", "mute")),
+            _ => None,
+        };
+        if let Some((command, value)) = command {
+            if c.active.get() == token {
+                if let Some(player) = c.player.borrow().as_ref() { let _ = player.command(&[command, value]); }
+            }
+            glib::Propagation::Stop
+        } else { glib::Propagation::Proceed }
+    });
+    outer.add_controller(keys);
+    outer.upcast()
+}
+
+fn line_chart(points: Vec<(f64, f64)>) -> gtk::Widget {
+    let area = gtk::DrawingArea::new();
+    area.set_content_width(640);
+    area.set_content_height(360);
+    area.set_hexpand(true);
+    area.set_draw_func(move |_, cr, w, h| draw_line_chart(cr, w, h, &points));
+    area.upcast()
+}
+
+fn draw_line_chart(cr: &gtk::cairo::Context, w: i32, h: i32, points: &[(f64, f64)]) {
+        use plotters::prelude::*;
+        if points.len() < 2 || w < 100 || h < 100 { return; }
+        let Ok(backend) = plotters_cairo::CairoBackend::new(cr, (w as u32, h as u32)) else { return };
+        let root = backend.into_drawing_area();
+        let (mut xmin, mut xmax) = (f64::INFINITY, f64::NEG_INFINITY);
+        let (mut ymin, mut ymax) = (f64::INFINITY, f64::NEG_INFINITY);
+        for &(x, y) in points { xmin = xmin.min(x); xmax = xmax.max(x); ymin = ymin.min(y); ymax = ymax.max(y); }
+        if xmin == xmax { xmin -= 0.5; xmax += 0.5; }
+        if ymin == ymax { ymin -= 0.5; ymax += 0.5; }
+        let (r, g, b) = rgb(&nyx_theme::palette().accent);
+        let accent = RGBColor((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8);
+        let (r, g, b) = rgb(&nyx_theme::palette().text);
+        let foreground = RGBColor((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8);
+        if let Ok(mut chart) = ChartBuilder::on(&root).margin(12).x_label_area_size(35).y_label_area_size(60)
+            .build_cartesian_2d(xmin..xmax, ymin..ymax) {
+            let _ = chart.configure_mesh().axis_style(foreground).label_style(("sans-serif", 12).into_font().color(&foreground)).draw();
+            let _ = chart.draw_series(LineSeries::new(points.iter().copied(), accent.stroke_width(2)));
+        }
+        let _ = root.present();
+}
+
+fn map_view(lat: f64, lon: f64, zoom: f64) -> gtk::Widget {
+    use libshumate::prelude::*;
+    let outer = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    outer.set_vexpand(true);
+    let map = libshumate::SimpleMap::new();
+    map.set_size_request(400, 360);
+    map.set_hexpand(true);
+    map.set_vexpand(true);
+    let source = libshumate::RasterRenderer::new_full_from_url(
+        "osm-standard", "OpenStreetMap", "© OpenStreetMap contributors",
+        "https://www.openstreetmap.org/copyright", 0, 19, 256,
+        libshumate::MapProjection::Mercator, "https://tile.openstreetmap.org/{z}/{x}/{y}.png");
+    map.set_map_source(Some(&source));
+    let status = gtk::Label::new(Some("Loading map…"));
+    status.set_xalign(0.0);
+    status.set_wrap(true);
+    if let Some(layer) = map.base_map_layer() {
+        let notice = status.clone();
+        layer.connect_tile_error(move |_, _, error| {
+            eprintln!("Canvas map tile failed: {error}");
+            notice.set_text("Map tiles could not be loaded. Check the network connection.");
+        });
+        let notice = status.clone();
+        layer.connect_map_loaded(move |_, errors| {
+            notice.set_text(if errors { "Some map tiles could not be loaded." } else { "" });
+        });
+    }
+    if let Some(viewport) = map.viewport() {
+        viewport.set_zoom_level(zoom.clamp(1.0, 19.0));
+        viewport.set_location(lat, lon);
+        let layer = libshumate::MarkerLayer::new(&viewport);
+        let marker = libshumate::Marker::new();
+        marker.set_location(lat, lon);
+        marker.set_child(Some(&gtk::Image::from_icon_name("mark-location-symbolic")));
+        layer.add_marker(&marker);
+        map.add_overlay_layer(&layer);
+    }
+    outer.append(&map);
+    outer.append(&status);
+    outer.upcast()
+}
+
+fn pdf_view(path: &str) -> gtk::Widget {
+    let uri = gtk::gio::File::for_path(path).uri();
+    let document = match poppler::Document::from_file(&uri, None) {
+        Ok(doc) if doc.n_pages() > 0 => doc,
+        Ok(_) => return gtk::Label::new(Some("This PDF has no pages.")).upcast(),
+        Err(_) => return gtk::Label::new(Some("Unable to open this PDF. It may be damaged or password protected.")).upcast(),
+    };
+    let count = document.n_pages();
+    let page_index = Rc::new(Cell::new(0i32));
+    let outer = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let previous = gtk::Button::from_icon_name("go-previous-symbolic");
+    previous.set_tooltip_text(Some("Previous page"));
+    let next = gtk::Button::from_icon_name("go-next-symbolic");
+    next.set_tooltip_text(Some("Next page"));
+    let indicator = gtk::Label::new(Some(&format!("Page 1 of {count}")));
+    controls.append(&previous);
+    controls.append(&indicator);
+    controls.append(&next);
+    outer.append(&controls);
+    let area = gtk::DrawingArea::new();
+    area.set_content_width(640);
+    area.set_content_height(820);
+    area.set_hexpand(true);
+    let current = page_index.clone();
+    area.set_draw_func(move |_, cr, w, h| {
+        if let Some(page) = document.page(current.get()) {
+            let (pw, ph) = page.size();
+            if pw <= 0.0 || ph <= 0.0 { return; }
+            let scale = (w as f64 / pw).min(h as f64 / ph);
+            let _ = cr.save();
+            cr.translate((w as f64 - pw * scale) / 2.0, 0.0);
+            cr.scale(scale, scale);
+            cr.set_source_rgb(1.0, 1.0, 1.0);
+            cr.rectangle(0.0, 0.0, pw, ph);
+            let _ = cr.fill();
+            page.render(cr);
+            let _ = cr.restore();
+        }
+    });
+    for (button, delta) in [(&previous, -1), (&next, 1)] {
+        let page_index = page_index.clone();
+        let area = area.clone();
+        let indicator = indicator.clone();
+        button.connect_clicked(move |_| {
+            let page = (page_index.get() + delta).clamp(0, count - 1);
+            page_index.set(page);
+            indicator.set_text(&format!("Page {} of {count}", page + 1));
+            area.queue_draw();
+        });
+    }
+    outer.append(&area);
+    outer.upcast()
 }
 
 fn listen(tx: mpsc::Sender<Value>) {
@@ -500,7 +1254,6 @@ fn handle_event(event: Value, aura: &Rc<Aura>, canvas: &Canvas, app: &gtk::Appli
             if let Some(id) = event["running"]["assistant"]["persona_id"].as_str() { aura.set_persona(id); }
             if let Ok(cfg) = serde_json::from_value::<assistant_core::config::UiCfg>(event["running"]["ui"].clone()) {
                 aura.apply_config(app, cfg);
-                aura.refresh_monitors(app);
             }
         }
         "session" => {
@@ -510,18 +1263,20 @@ fn handle_event(event: Value, aura: &Rc<Aura>, canvas: &Canvas, app: &gtk::Appli
         }
         "error" => aura.set_state(State::Error),
         "proactive" => aura.set_state(State::Attention),
-        "level" if aura.state.get() == State::Listening => {
-            let rms = event["rms"].as_f64().unwrap_or(0.0);
-            aura.level.set((aura.level.get() * 0.7 + (rms - 0.004).max(0.0) * 0.3).min(0.25));
+        "level" if aura.base_state.get() == State::Listening => {
+            aura.level_target.set(meter_fraction(event["rms"].as_f64().unwrap_or(0.0),aura.level_target.get()));
+            aura.last_level.set(Instant::now());
         }
-        "playback_level" if aura.state.get() == State::Speaking => {
-            let rms = event["rms"].as_f64().unwrap_or(0.0);
-            aura.level.set((aura.level.get() * 0.65 + rms * 0.35).min(0.25));
+        "playback_level" if aura.base_state.get() == State::Speaking => {
+            aura.level_target.set(meter_fraction(event["rms"].as_f64().unwrap_or(0.0),aura.level_target.get()));
+            aura.last_level.set(Instant::now());
         }
         "turn" if event["event"]["type"] == "tool" && aura.cfg.borrow().canvas_enabled => {
             let tool = event["event"]["tool"].as_str().unwrap_or("");
             let data = &event["event"]["result"]["structuredContent"];
-            if (tool == "web.search" || tool.ends_with(".search")) && data["results"].as_array().is_some_and(|r| !r.is_empty()) {
+            if tool == "canvas.show" && event["event"]["result"]["isError"] == false {
+                canvas.show_content(&data["canvas"]);
+            } else if (tool == "web.search" || tool.ends_with(".search")) && data["results"].as_array().is_some_and(|r| !r.is_empty()) {
                 canvas.show_results("Search results", data["results"].as_array().unwrap());
             }
         }
@@ -545,10 +1300,11 @@ fn main() {
         }
         let system_reduce_motion = gtk::Settings::default().is_some_and(|s| !s.is_gtk_enable_animations());
         nyx_theme::use_design_2();
+        nyx_playback::controls::install_icons();
         nyx_theme::install(nyx_theme::Style {
             window_class: "assistant-canvas",
             base_skip: &[],
-            css: CSS,
+            css: nyx_playback::controls::stylesheet(CSS),
             no_glow_css: "",
             extra_colors: None,
             prefs: || nyx_theme::ThemePrefs {
@@ -562,7 +1318,13 @@ fn main() {
         let hold = app.hold();
         let aura = Aura::new(config.ui.clone(), system_reduce_motion);
         aura.set_persona(&config.assistant.persona_id);
-        aura.refresh_monitors(app);
+        let (monitor_tx, monitor_rx) = mpsc::sync_channel(1);
+        std::thread::spawn(move || loop {
+            if let Some(snapshot) = Aura::monitor_state() {
+                if matches!(monitor_tx.try_send(snapshot), Err(mpsc::TrySendError::Disconnected(_))) { break; }
+            }
+            std::thread::sleep(Duration::from_millis(600));
+        });
         let canvas = Canvas::new(app);
         let (tx, rx) = mpsc::channel();
         listen(tx);
@@ -571,18 +1333,18 @@ fn main() {
         glib::timeout_add_local(Duration::from_millis(40), move || {
             let _ = &hold;
             poll_events(&rx, &aura_for_tick, &canvas, &app_for_tick);
-            glib::ControlFlow::Continue
-        });
-        let aura_for_monitors = aura.clone();
-        let app_for_monitors = app.clone();
-        glib::timeout_add_local(Duration::from_millis(600), move || {
-            aura_for_monitors.refresh_monitors(&app_for_monitors);
+            if let Ok(snapshot) = monitor_rx.try_recv() {
+                *canvas.active_monitor.borrow_mut() = snapshot.1.clone();
+                aura_for_tick.refresh_monitors(&app_for_tick, snapshot);
+            }
             glib::ControlFlow::Continue
         });
         if let Some(display) = gdk::Display::default() {
             let aura = aura.clone();
             let app = app.clone();
-            display.monitors().connect_items_changed(move |_, _, _, _| aura.refresh_monitors(&app));
+            display.monitors().connect_items_changed(move |_, _, _, _| {
+                aura.rebuild(&app);
+            });
         }
     });
     app.run();

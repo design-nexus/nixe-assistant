@@ -19,6 +19,7 @@ enum PwCmd {
     StartCapture,
     StopCapture,
     QueuePlay { epoch: u64, generation: u64, phrase: u32, pcm: Vec<f32> },
+    PlaybackBarrier(tokio::sync::oneshot::Sender<()>),
     CancelPlay { epoch: u64 },
     Shutdown,
 }
@@ -247,6 +248,11 @@ impl AudioEngine {
     }
 
     pub async fn wait_playback(&self) {
+        // QueuePlay is asynchronous: queued can still be zero until PipeWire accepts it.
+        // A barrier keeps follow-up listening from starting during the question itself.
+        let (ready, received) = tokio::sync::oneshot::channel();
+        if self.cmd.send(PwCmd::PlaybackBarrier(ready)).is_err() { return; }
+        if tokio::time::timeout(tokio::time::Duration::from_secs(2), received).await.is_err() { return; }
         let start = tokio::time::Instant::now();
         while self.queued.load(Ordering::Relaxed) > 0 {
             if start.elapsed() > tokio::time::Duration::from_secs(30) {
@@ -781,6 +787,7 @@ fn pw_thread(
             let queued = st.queue.queued();
             st.queued.store(queued, Ordering::Relaxed);
         }
+        PwCmd::PlaybackBarrier(ready) => { let _ = ready.send(()); }
         PwCmd::CancelPlay { epoch } => {
             let t0 = Instant::now();
             let mut st = play_cmd.lock().unwrap_or_else(|e| e.into_inner());

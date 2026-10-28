@@ -5,6 +5,7 @@ pub mod admin;
 pub mod agent;
 pub mod computer;
 pub mod diagnostics;
+pub mod discovery;
 pub mod devices;
 pub mod fs;
 pub mod jobs;

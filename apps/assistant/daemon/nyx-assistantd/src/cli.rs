@@ -19,6 +19,33 @@ async fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
     let cmd = args.next().unwrap_or_else(|| "help".into());
     match cmd.as_str() {
+        "dictionary" => {
+            let path=assistant_policy::store::default_path(&assistant_core::paths::state_dir());
+            let action=args.next().unwrap_or_else(||"list".into());let rest:Vec<_>=args.collect();
+            match action.as_str() {
+                "list"=>println!("{}",serde_json::to_string(&assistant_policy::store::corrections(&path)?)?),
+                "add"=>{
+                    let word=rest.first().context("dictionary word required")?;
+                    let option=|key: &str| rest.iter().position(|s|s==key).and_then(|i|rest.get(i+1)).map(String::as_str);
+                    assistant_policy::store::add_dictionary_word(&path,word,option("--heard"),option("--context").unwrap_or("word"))?;
+                    println!("{{\"ok\":true}}");
+                }
+                "remove"=>{
+                    let word=rest.first().context("dictionary word required")?;let context=rest.get(1).map(String::as_str).unwrap_or("word");
+                    assistant_policy::store::remove_dictionary_word(&path,word,context)?;println!("{{\"ok\":true}}");
+                }
+                _=>anyhow::bail!("dictionary list | add WORD [--heard VARIANT] [--context word|place] | remove WORD [word|place]"),
+            }
+        }
+        "corrections" => {
+            let path = assistant_policy::store::default_path(&assistant_core::paths::state_dir());
+            match args.next().as_deref().unwrap_or("list") {
+                "list" | "--json" => println!("{}", serde_json::to_string(&assistant_policy::store::corrections(&path)?)?),
+                "delete" => { let wrong = args.next().context("word required")?; let context = args.next().unwrap_or_default(); assistant_policy::store::delete_correction(&path, Some(&wrong), &context)?; println!("{{\"ok\":true}}"); }
+                "clear" => { assistant_policy::store::delete_correction(&path, None, "")?; println!("{{\"ok\":true}}"); }
+                _ => anyhow::bail!("corrections list | delete WORD CONTEXT | clear"),
+            }
+        }
         "event-spool" => {
             let unit = args.next().context("service unit required")?;
             anyhow::ensure!(args.next().is_none(), "one service unit expected");
@@ -1064,6 +1091,7 @@ async fn bench_duplex(live: bool) -> anyhow::Result<()> {
     const COUNT: &str = "Count slowly from one to twelve in words, one number per sentence, and say nothing else.";
     const ECHO: [&str; 2] = [COUNT, "Describe a lighthouse at night in three short sentences."];
     let notify = |text: &str| {
+        if !assistant_core::Config::load().is_ok_and(|c|c.events.desktop_notifications){return;}
         let _ = std::process::Command::new("notify-send").args(["-u", "critical", "-t", "6000", "Duplex bench", text]).status();
     };
     println!("## Echo: two short replies, nobody talking\n");

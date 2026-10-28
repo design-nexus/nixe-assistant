@@ -40,6 +40,7 @@ impl Registry {
             errors: Vec::new(),
             looker: Default::default(),
         };
+        registry.register_canvas();
         for (name, description, schema) in [
             (
                 "weather.lookup",
@@ -220,12 +221,59 @@ impl Registry {
             errors,
             looker: Default::default(),
         };
+        registry.register_canvas();
         // Computer use runs in the daemon itself (shared element and mark numbers, the model).
         for (name, description, schema) in crate::computer::TOOLS {
             let input_schema = serde_json::from_str(schema).expect("computer tool schema");
             registry.tools.insert((*name).into(), McpTool { name: (*name).into(), description: Some((*description).into()), input_schema, output_schema: None, execution: Value::Null });
         }
         registry
+    }
+
+    fn register_canvas(&mut self) {
+        self.tools.insert("tools.discover".into(),McpTool {
+            name:"tools.discover".into(),description:Some("Search the complete live tool registry, including tools omitted from the current prompt. Returns a few exact input schemas and their permissions. Search before claiming an action is unsupported; narrow by tool name or capability group. Definitions do not grant execution permission.".into()),
+            input_schema:json!({"type":"object","properties":{"query":{"type":"string","maxLength":256},"limit":{"type":"integer","minimum":1,"maximum":8}},"required":["query"],"additionalProperties":false}),output_schema:None,execution:Value::Null,
+        });
+        self.tools.insert("location.search".into(), McpTool {
+            name:"location.search".into(),
+            description:Some("Find verified map coordinates for a named city or place and region. For a likely misheard name, supply up to three similar-sounding or similarly spelled alternatives. Preserve the user's region. No match does not mean the place does not exist; ask for spelling. Confirm alternatives and ambiguous matches before showing a map.".into()),
+            input_schema:json!({"type":"object","properties":{"query":{"type":"string","minLength":2,"maxLength":256},"alternatives":{"type":"array","maxItems":3,"items":{"type":"string","maxLength":128}}},"required":["query"],"additionalProperties":false}),
+            output_schema:None,execution:Value::Null,
+        });
+
+        let schema = json!({"type":"object","additionalProperties":false,
+            "properties":{
+                "kind":{"enum":["text","table","image","gallery","chart","line_chart","pdf","document","map","video","links"]},
+                "title":{"type":"string","maxLength":200},
+                "text":{"type":"string","maxLength":8192},
+                "path":{"type":"string","maxLength":4096},
+                "latitude":{"type":"number","minimum":-85,"maximum":85},
+                "longitude":{"type":"number","minimum":-180,"maximum":180},
+                "zoom":{"type":"number","minimum":1,"maximum":19},
+                "paths":{"type":"array","minItems":1,"maxItems":12,"items":{"type":"string","maxLength":4096}},
+                "items":{"type":"array","minItems":1,"maxItems":50,"items":{"type":"object","additionalProperties":false,"properties":{"label":{"type":"string","maxLength":200},"value":{"type":"number","minimum":0,"maximum":1_000_000_000_000_u64}},"required":["label","value"]}},
+                "points":{"type":"array","minItems":2,"maxItems":200,"items":{"type":"object","additionalProperties":false,"properties":{"x":{"type":"number","minimum":-1e12,"maximum":1e12},"y":{"type":"number","minimum":-1e12,"maximum":1e12}},"required":["x","y"]}},
+                "links":{"type":"array","minItems":1,"maxItems":20,"items":{"type":"object","additionalProperties":false,"properties":{"label":{"type":"string","maxLength":200},"url":{"type":"string","maxLength":2048}},"required":["label","url"]}},
+                "columns":{"type":"array","maxItems":12,"items":{"type":"string","maxLength":200}},
+                "rows":{"type":"array","maxItems":50,"items":{"type":"array","maxItems":12,"items":{"type":"string","maxLength":500}}}
+            },"required":["kind","title"],
+            "oneOf":[
+                {"properties":{"kind":{"const":"text"}},"required":["text"]},
+                {"properties":{"kind":{"const":"table"}},"required":["columns","rows"]},
+                {"properties":{"kind":{"const":"image"}},"required":["path"]},
+                {"properties":{"kind":{"const":"gallery"}},"required":["paths"]},
+                {"properties":{"kind":{"const":"chart"}},"required":["items"]},
+                {"properties":{"kind":{"const":"line_chart"}},"required":["points"]},
+                {"properties":{"kind":{"const":"pdf"}},"required":["path"]},
+                {"properties":{"kind":{"const":"document"}},"required":["path"]},
+                {"properties":{"kind":{"const":"video"}},"required":["path"]},
+                {"properties":{"kind":{"const":"links"}},"required":["links"]},
+                {"properties":{"kind":{"const":"map"}},"required":["latitude","longitude"]}
+            ]});
+        self.tools.insert("canvas.show".into(), McpTool { name:"canvas.show".into(),
+            description:Some("Show requested visual text, table, chart, map, local image, gallery, document, video, or links in Canvas. Use only when visual output is appropriate. Use provided or verified values and paths; never invent data or coordinates.".into()),
+            input_schema:schema, output_schema:None, execution:Value::Null });
     }
 
     /// Give `screen.look` the daemon's vision model.
@@ -235,7 +283,7 @@ impl Registry {
 
     /// A tool the daemon runs itself rather than a plugin (computer use).
     fn local(&self, name: &str) -> bool {
-        self.plugins.is_some() && self.tools.contains_key(name) && crate::computer::TOOLS.iter().any(|(t, ..)| *t == name)
+        self.tools.contains_key(name) && (matches!(name, "canvas.show" | "location.search" | "tools.discover") || (self.plugins.is_some() && crate::computer::TOOLS.iter().any(|(t, ..)| *t == name)))
     }
     /// Journal decisions and calls to `log` (the daemon passes `agent.db`).
     pub fn with_audit(mut self, log: AuditLog) -> Self {
@@ -247,7 +295,20 @@ impl Registry {
         if self.plugins.is_some() && self.policy("clock.now", cfg) != "allow" {
             prompt_cfg.clock.inject_prompt = false;
         }
-        prompt_cfg.system_prompt()
+        let mut groups=std::collections::BTreeSet::new();
+        let installed=self.plugins.as_ref().map(|p|p.tools()).unwrap_or_default();
+        for tool in installed.iter().chain(self.tools.values().filter(|t|self.plugins.is_none() || self.local(&t.name))) {
+            if cfg.mcp.permissions.get(&tool.name).is_some_and(|p|p=="deny"){continue;}
+            groups.insert(tool.name.split('.').next().unwrap_or(&tool.name).to_string());
+        }
+        let capabilities=groups.into_iter().collect::<Vec<_>>().join(", ");
+        let location=if !cfg.location.enabled {"Location is disabled in settings."}
+            else if self.policy("location.current",cfg)=="deny" {"Location lookup is blocked or unavailable under current permissions."}
+            else {"location.current can retrieve the configured saved location or approximate city-level network location, subject to permission. It does not provide precise GPS. Relative places such as my current location or here must use that service, not a city-name search."};
+        let canvas = if cfg.ui.enabled && cfg.ui.canvas_enabled {
+            "You are a native desktop assistant with speech and a separate Canvas window. Canvas can show maps, images, charts, tables, documents and video through canvas.show. Named places can be resolved with location.search. Never describe yourself as text-only or claim you cannot display maps. Ask for a city and region when needed; distinguish a failed lookup from an unavailable capability."
+        } else { "Canvas is disabled in Assistant settings. Explain that setting when visual output is requested; do not describe yourself as a text-only AI." };
+        format!("{}\nYou are the installed native desktop assistant. Registered tool families: {capabilities}. Use tools.discover to find specific capabilities; the initial prompt is a working selection, not the complete registry. Permissions still apply. Ground capability claims in the running tools and settings; never refuse because a generic text-only AI cannot act or access information. Try the relevant tool for an authorized request and describe its actual result or specific failure. Never claim a completed action without tool evidence.\n{location}\n{canvas}\nSpeech can contain misheard names. Respect explicit corrections and user spelling over earlier guesses. Consider similar sounding or similarly spelled words in context; verify factual candidates using tools. Use your best guess when context and learned vocabulary strongly support one interpretation. Ask a brief did-you-mean question only for weak or competing interpretations; do not ask repeatedly about learned corrections. A failed search does not prove something does not exist. For spelling, output separated letters joined with hyphens, for example C-A-T, never a run of unseparated letters.", prompt_cfg.system_prompt())
     }
     pub async fn cancel_all_jobs(&self) {
         self.jobs.cancel_all().await;
@@ -401,6 +462,62 @@ impl Registry {
         cancel: &CancellationToken,
         grant: &Grant,
     ) -> Result<Value> {
+        if name == "tools.discover" {
+            let catalog=self.catalog(cfg);
+            let data=crate::discovery::discover(catalog.as_array().unwrap_or(&Vec::new()),args["query"].as_str().unwrap_or(""),args["limit"].as_u64().unwrap_or(6) as usize);
+            return Ok(json!({"content":[{"type":"text","text":"Tool definitions retrieved from the live registry."}],"structuredContent":data,"isError":false}));
+        }
+        if name == "location.search" {
+            let alternatives: Vec<String> = args["alternatives"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(String::from)).collect();
+            let value = tokio::select! { _ = cancel.cancelled() => anyhow::bail!("place lookup cancelled"), r = assistant_core::places::search(args["query"].as_str().unwrap_or(""), &alternatives) => r? };
+            return Ok(json!({"content":[{"type":"text","text":value.to_string()}],"structuredContent":value,"isError":false}));
+        }
+        if name == "canvas.show" {
+            anyhow::ensure!(cfg.ui.enabled && cfg.ui.canvas_enabled, "Canvas is disabled");
+            anyhow::ensure!(args.to_string().len() <= 12_000, "Canvas content is too large");
+            let mut content = args;
+            let checked_image = |input: &str| -> Result<String> {
+                let path = crate::typed::home_path(input)?;
+                anyhow::ensure!(path.is_file(), "image is not a file");
+                anyhow::ensure!(std::fs::metadata(&path)?.len() <= 32 * 1024 * 1024, "image exceeds 32 MiB");
+                let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
+                anyhow::ensure!(["png", "jpg", "jpeg", "webp", "gif", "bmp"].contains(&ext.as_str()), "unsupported image type");
+                Ok(path.to_string_lossy().into_owned())
+            };
+            if content["kind"] == "image" {
+                content["path"] = json!(checked_image(content["path"].as_str().context("missing image path")?)?);
+            } else if content["kind"] == "gallery" {
+                let paths = content["paths"].as_array().context("missing gallery paths")?
+                    .iter().map(|p| checked_image(p.as_str().context("invalid image path")?)).collect::<Result<Vec<_>>>()?;
+                content["paths"] = json!(paths);
+            } else if content["kind"] == "pdf" {
+                let path = crate::typed::home_path(content["path"].as_str().context("missing PDF path")?)?;
+                anyhow::ensure!(path.is_file() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf")), "not a PDF file");
+                anyhow::ensure!(std::fs::metadata(&path)?.len() <= 128 * 1024 * 1024, "PDF exceeds 128 MiB");
+                content["path"] = json!(path.to_string_lossy());
+            } else if content["kind"] == "document" {
+                let path = crate::typed::home_path(content["path"].as_str().context("missing document path")?)?;
+                anyhow::ensure!(path.is_file(), "document is not a file");
+                let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
+                anyhow::ensure!(["txt", "md", "csv", "json", "toml", "yaml", "yml", "log"].contains(&ext.as_str()), "unsupported document type");
+                anyhow::ensure!(std::fs::metadata(&path)?.len() <= 1024 * 1024, "document exceeds 1 MiB");
+                content["path"] = json!(path.to_string_lossy());
+            } else if content["kind"] == "video" {
+                let path = crate::typed::home_path(content["path"].as_str().context("missing video path")?)?;
+                anyhow::ensure!(path.is_file(), "video is not a file");
+                let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
+                anyhow::ensure!(["mp4", "m4v", "webm", "mkv", "mov", "avi", "mpeg", "mpg", "ogv"].contains(&ext.as_str()), "unsupported video type");
+                content["path"] = json!(path.to_string_lossy());
+            } else if content["kind"] == "links" {
+                for link in content["links"].as_array().context("missing links")? {
+                    let url = link["url"].as_str().context("missing URL")?;
+                    let parsed = url::Url::parse(url).context("invalid URL")?;
+                    anyhow::ensure!(matches!(parsed.scheme(), "http" | "https") && parsed.host_str().is_some() && parsed.username().is_empty() && parsed.password().is_none(), "only HTTP(S) links without credentials are allowed");
+                }
+            }
+            content["version"] = json!(1);
+            return Ok(json!({"content":[{"type":"text","text":"Content sent to Canvas"}],"structuredContent":{"canvas":content},"isError":false}));
+        }
         if self.local(name) {
             let looker = self.looker.read().unwrap().clone();
             let value = tokio::select! {
@@ -688,6 +805,44 @@ async fn open_job(id: &str) -> Result<()> {
 #[cfg(test)]
 mod lifecycle_tests {
     use super::*;
+    #[tokio::test]
+    async fn canvas_protocol_validates_content_and_file_permissions() {
+        let mut cfg = Config::default();
+        cfg.browser.enabled = false;
+        cfg.mcp.enabled = false;
+        let registry = Registry::load_worker(&cfg).await;
+        let cancel = CancellationToken::new();
+        let text = json!({"kind":"text","title":"Notes","text":"Hello"});
+        let result = registry.call_allowed("canvas.show", text, &cfg, &cancel).await.unwrap();
+        assert_eq!(result["structuredContent"]["canvas"]["text"], "Hello");
+        for content in [
+            json!({"kind":"map","title":"Map","latitude":41.88,"longitude":-87.63}),
+            json!({"kind":"line_chart","title":"Line","points":[{"x":0,"y":-1},{"x":1,"y":2}]}),
+            json!({"kind":"links","title":"Links","links":[{"label":"Example","url":"https://example.org"}]}),
+        ] {
+            let result = registry.call_allowed("canvas.show", content, &cfg, &cancel).await.unwrap();
+            assert_eq!(result["structuredContent"]["canvas"]["version"], 1);
+        }
+        let fixture_dir = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+        for (kind, filename) in [("video", "sample.mp4"), ("pdf", "sample.pdf"), ("document", "sample.txt"), ("image", "sample.png")] {
+            let path = fixture_dir.path().join(filename);
+            std::fs::write(&path, b"fixture").unwrap();
+            let request = json!({"kind":kind,"title":"Fixture","path":path.to_str().unwrap()});
+            let result = registry.call_allowed("canvas.show", request, &cfg, &cancel).await.unwrap();
+            assert_eq!(result["structuredContent"]["canvas"]["kind"], kind);
+        }
+        assert!(registry.validate("canvas.show", &json!({"kind":"table","title":"Bad"})).is_err());
+        assert!(registry.validate("canvas.show", &json!({"kind":"chart","title":"Bad","items":[{"label":"A","value":-1}]})).is_err());
+        assert!(registry.validate("canvas.show", &json!({"kind":"map","title":"Bad","latitude":100,"longitude":0})).is_err());
+        assert!(registry.validate("canvas.show", &json!({"kind":"line_chart","title":"Bad","points":[{"x":0,"y":0}]})).is_err());
+        assert!(registry.call_allowed("canvas.show", json!({"kind":"video","title":"Bad","path":"/etc/passwd"}), &cfg, &cancel).await.is_err());
+        assert!(registry.call_allowed("canvas.show", json!({"kind":"links","title":"Bad","links":[{"label":"Bad","url":"file:///etc/passwd"}]}), &cfg, &cancel).await.is_err());
+        assert!(registry.call_allowed("canvas.show", json!({"kind":"pdf","title":"Bad","path":"/etc/passwd"}), &cfg, &cancel).await.is_err());
+        assert!(registry.call_allowed("canvas.show", json!({"kind":"gallery","title":"Bad","paths":["/etc/passwd"]}), &cfg, &cancel).await.is_err());
+        assert!(registry.call_allowed("canvas.show", json!({"kind":"image","title":"Bad","path":"/etc/passwd.png"}), &cfg, &cancel).await.is_err());
+        cfg.permissions.files_read = "deny".into();
+        assert!(registry.call_allowed("canvas.show", json!({"kind":"text","title":"Denied","text":"Hello"}), &cfg, &cancel).await.is_err());
+    }
     #[test]
     fn null_optionals_are_dropped() {
         let schema = json!({"type":"object","properties":{"argv":{"type":"array"},"cwd":{"type":"string"},"note":{"type":["string","null"]}},"required":["argv"]});

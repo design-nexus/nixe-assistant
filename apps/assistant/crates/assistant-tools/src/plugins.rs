@@ -825,6 +825,7 @@ pub async fn migrate(cfg: &Config, worker: &Path, checkout: &Path) -> Result<()>
         "files",
         "git",
         "system-status",
+        "diagnostics",
         "clock",
         "location",
         "weather",
@@ -844,6 +845,7 @@ pub async fn migrate(cfg: &Config, worker: &Path, checkout: &Path) -> Result<()>
                 "files" => name.starts_with("files."),
                 "git" => name.starts_with("git."),
                 "system-status" => name.as_str() == "system.status",
+                "diagnostics" => name.starts_with("diagnostics."),
                 "location" => name.starts_with("location."),
                 "weather" => name.starts_with("weather."),
                 "apps" => name.starts_with("apps."),
@@ -1028,6 +1030,7 @@ fn worker_sandbox(id: &str) -> SandboxProfile {
         "git" => SandboxProfile { home: HomeAccess::Read, ..base },
         "windows" => SandboxProfile { sockets: vec![SandboxSocket::Hyprland], ..base },
         "services" => SandboxProfile { sockets: vec![SandboxSocket::Systemd], host_processes: true, ..base },
+        "diagnostics" => SandboxProfile { sockets: vec![SandboxSocket::SystemBus], host_processes: true, ..base },
         "network" => SandboxProfile { sockets: vec![SandboxSocket::SystemBus], ..base },
         // bluetoothctl scans and pairs over the system bus too.
         "devices" => SandboxProfile { sockets: vec![SandboxSocket::SystemBus], ..base },

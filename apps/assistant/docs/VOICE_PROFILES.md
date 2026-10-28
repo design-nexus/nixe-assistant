@@ -32,10 +32,12 @@ aura_tint = "accent"
 ```
 
 The local Chatterbox worker starts only when that persona speaks, stays loaded
-for follow-up phrases, and exits when switching away. An installed Kokoro voice
+for follow-up phrases, and unloads after two idle minutes or when switching away.
+Cancelling a turn stops in-progress synthesis and discards its audio. An installed Kokoro voice
 override takes precedence. Install its optional runtime with
 `apps/assistant/scripts/install-chatterbox.sh`. The runtime runs offline after
 its weights are cached; synthesis errors fall back to Kokoro and are logged.
+Status then reports Kokoro, and a configuration reload allows a new clone attempt.
 
 ## Synthesis backend decision
 

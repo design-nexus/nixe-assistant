@@ -6,6 +6,7 @@
 - cmake, clang, pkg-config
 - CUDA toolkit (`nvcc`) matching the installed NVIDIA driver
 - `libpipewire` development files (`pkg-config libpipewire-0.3`)
+- `poppler-glib`, `shumate-1.0`, and `libmpv` development files for Canvas PDF, map, and video views
 - Voxtype on PATH (`voxtype transcribe`)
 
 Blackwell (RTX 5080): set `CMAKE_CUDA_ARCHITECTURES=120a-real`

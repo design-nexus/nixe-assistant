@@ -19,6 +19,10 @@ impl Mode {
         }
     }
 }
+#[derive(Clone)]
+pub struct PendingMeaning {
+    pub heard: String, pub word: String, pub context: String, pub request: String, pub expires: Instant,
+}
 pub struct Session {
     pub id: u64,
     pub mode: Mode,
@@ -51,6 +55,11 @@ impl Session {
             Mode::Wake | Mode::FollowUp if enabled && follow > 0 => self.begin(Mode::FollowUp, follow),
             _ => {}
         }
+    }
+    /// Explicit clarification gets its own response window, independent of casual follow-up.
+    pub fn await_answer(&mut self) {
+        if self.mode == Mode::Conversation { self.deadline = self.deadline.max(Instant::now() + Duration::from_secs(30)); }
+        else if matches!(self.mode,Mode::Wake | Mode::FollowUp) { self.begin(Mode::FollowUp,30); }
     }
     pub fn remaining(&self) -> u64 {
         self.deadline.saturating_duration_since(Instant::now()).as_secs()
@@ -199,6 +208,13 @@ pub fn window_in_request(text: &str) -> Option<String> {
 pub fn classify(text: &str) -> RequestKind {
     let s = text.to_lowercase();
     if s.starts_with("use tools to ") {
+        return RequestKind::Tools;
+    }
+    let visual_action = ["show ", "display ", "plot ", "graph ", "draw ", "make ", "create ", "open ", "update "].iter().any(|v| s.contains(v));
+    let visual_content = s.split(|c: char| !c.is_alphanumeric()).any(|word| matches!(word,
+        "canvas" | "chart" | "charts" | "graph" | "graphs" | "map" | "maps" | "table" | "tables" |
+        "image" | "images" | "picture" | "pictures" | "photo" | "photos" | "pdf" | "document" | "documents" | "gallery" | "video" | "videos"));
+    if visual_action && visual_content && (s.contains("canvas") || !computer_request(&s)) {
         return RequestKind::Tools;
     }
     if computer_request(&s) {
@@ -358,6 +374,10 @@ mod tests {
         assert_eq!(s.mode, Mode::Conversation);
         s.stop();
         assert_eq!(s.mode, Mode::Wake);
+        s.await_answer();
+        assert_eq!(s.mode,Mode::FollowUp);
+        assert!(s.remaining() >= 29);
+        s.stop();
         assert_eq!(dictation_control("Stop dictating."), Some("stop"));
         assert_eq!(dictation_control("write stop dictating in the document"), None);
         assert_eq!(punctuation("new paragraph"), "\n\n");
@@ -368,5 +388,16 @@ mod tests {
         assert_eq!(classify("Google weather pages"), RequestKind::Browse);
         assert_eq!(classify("show me websites about Rust"), RequestKind::Browse);
         assert_eq!(classify("What is two plus two?"), RequestKind::Chat);
+        assert_eq!(classify("Show me a chart of these numbers"), RequestKind::Tools);
+        assert_eq!(classify("Show this PDF in Canvas"), RequestKind::Tools);
+        assert_eq!(classify("Show me a map of Chicago"), RequestKind::Tools);
+        assert_eq!(classify("Tell me a story about a map"), RequestKind::Chat);
     }
+}
+
+/// Short references to visual content use the current Canvas, not an unrelated chat turn.
+pub fn canvas_followup(text: &str) -> bool {
+    let s=text.trim().to_ascii_lowercase();
+    ["zoom in","zoom out","make it ","make that ","change it ","change that ","update it ","update that ","add ","remove ","replace ","show that ","display that ","use the same "].iter().any(|p|s.starts_with(p))
+        || (s.contains("canvas") && ["show","display","open","update","change","make","add","remove"].iter().any(|w|s.split_whitespace().any(|t|t==*w)))
 }

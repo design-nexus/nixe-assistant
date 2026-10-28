@@ -54,6 +54,8 @@ pub struct SystemCfg {
 #[serde(default)]
 pub struct EventsCfg {
     pub enabled: bool,
+    /// System notification toasts are opt-in; internal events and Aura stay available.
+    pub desktop_notifications: bool,
     pub rate_limit_secs: u64,
     pub duplicate_window_secs: u64,
     pub preferences: std::collections::BTreeMap<String, EventPreference>,
@@ -61,7 +63,7 @@ pub struct EventsCfg {
 
 impl Default for EventsCfg {
     fn default() -> Self {
-        Self { enabled: true, rate_limit_secs: 30, duplicate_window_secs: 300, preferences: Default::default() }
+        Self { enabled: true, desktop_notifications: false, rate_limit_secs: 30, duplicate_window_secs: 300, preferences: Default::default() }
     }
 }
 

@@ -7,7 +7,12 @@ use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use tokio_util::sync::CancellationToken;
+
+const CLONE_IDLE: Duration = Duration::from_secs(120);
 
 #[derive(Clone, PartialEq, Eq)]
 struct CloneSpec { reference: PathBuf }
@@ -16,6 +21,7 @@ struct CloneWorker {
     child: Child,
     input: ChildStdin,
     output: BufReader<ChildStdout>,
+    last_used: Instant,
 }
 
 impl Drop for CloneWorker {
@@ -39,18 +45,30 @@ impl CloneWorker {
             .spawn().context("start local Chatterbox worker")?;
         let input = child.stdin.take().context("Chatterbox stdin")?;
         let output = BufReader::new(child.stdout.take().context("Chatterbox stdout")?);
-        Ok(Self { child, input, output })
+        Ok(Self { child, input, output, last_used: Instant::now() })
     }
 
-    fn speak(&mut self, text: &str, spec: &CloneSpec) -> Result<Vec<f32>> {
+    fn speak(&mut self, text: &str, spec: &CloneSpec, cancel: &CancellationToken) -> Result<Vec<f32>> {
+        anyhow::ensure!(!cancel.is_cancelled(), "TTS cancelled");
         std::fs::create_dir_all(paths::runtime_dir())?;
         let output = tempfile::NamedTempFile::new_in(paths::runtime_dir())?;
         let request = serde_json::json!({"text":text,"reference":spec.reference,"output":output.path()});
         writeln!(self.input, "{request}")?;
         self.input.flush()?;
-        let mut fd = libc::pollfd { fd: self.output.get_ref().as_raw_fd(), events: libc::POLLIN, revents: 0 };
-        // SAFETY: fd points to the child stdout; poll only reads the descriptor state.
-        anyhow::ensure!(unsafe { libc::poll(&mut fd, 1, 120_000) } > 0, "Chatterbox response timed out");
+        let started = Instant::now();
+        loop {
+            anyhow::ensure!(!cancel.is_cancelled(), "TTS cancelled");
+            anyhow::ensure!(started.elapsed() < Duration::from_secs(120), "Chatterbox response timed out");
+            let mut fd = libc::pollfd { fd: self.output.get_ref().as_raw_fd(), events: libc::POLLIN, revents: 0 };
+            // SAFETY: fd points to the child stdout; poll only reads the descriptor state.
+            let ready = unsafe { libc::poll(&mut fd, 1, 50) };
+            if ready > 0 { break; }
+            if ready < 0 {
+                let error = std::io::Error::last_os_error();
+                if error.kind() != std::io::ErrorKind::Interrupted { return Err(error.into()); }
+            }
+        }
+        anyhow::ensure!(!cancel.is_cancelled(), "TTS cancelled");
         let mut line = String::new();
         anyhow::ensure!(self.output.read_line(&mut line)? > 0, "Chatterbox worker exited");
         let response: serde_json::Value = serde_json::from_str(&line).context("Chatterbox response")?;
@@ -58,6 +76,7 @@ impl CloneWorker {
         anyhow::ensure!(response["sample_rate"] == 24_000, "Chatterbox sample rate changed");
         let bytes = std::fs::read(output.path())?;
         anyhow::ensure!(bytes.len() % 4 == 0, "Chatterbox PCM is malformed");
+        self.last_used = Instant::now();
         Ok(bytes.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect())
     }
 }
@@ -135,7 +154,8 @@ pub struct KokoroProvider {
     variant: String,
     lock: Mutex<()>,
     clone_spec: std::sync::RwLock<Option<CloneSpec>>,
-    clone_worker: Mutex<Option<CloneWorker>>,
+    clone_worker: Arc<Mutex<Option<CloneWorker>>>,
+    clone_failed: AtomicBool,
 }
 
 impl KokoroProvider {
@@ -195,10 +215,25 @@ impl KokoroProvider {
             variant: cfg.tts.variant.clone(),
             lock: Mutex::new(()),
             clone_spec: std::sync::RwLock::new(None),
-            clone_worker: Mutex::new(None),
+            clone_worker: Arc::new(Mutex::new(None)),
+            clone_failed: AtomicBool::new(false),
         };
+        Self::start_clone_reaper(&provider.clone_worker);
         provider.configure(cfg)?;
         Ok(provider)
+    }
+
+    fn start_clone_reaper(worker: &Arc<Mutex<Option<CloneWorker>>>) {
+        let weak = Arc::downgrade(worker);
+        let _ = std::thread::Builder::new().name("chatterbox-idle".into()).spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(15));
+            let Some(worker) = weak.upgrade() else { break; };
+            let mut worker = worker.lock().unwrap_or_else(|e| e.into_inner());
+            if worker.as_ref().is_some_and(|child| child.last_used.elapsed() >= CLONE_IDLE) {
+                tracing::info!("unloading idle Chatterbox worker");
+                *worker = None;
+            }
+        });
     }
 
     pub fn device(&self) -> &str {
@@ -217,7 +252,8 @@ impl KokoroProvider {
     }
 
     pub fn active_backend(&self) -> &'static str {
-        if self.clone_spec.read().unwrap_or_else(|e| e.into_inner()).is_some() { "chatterbox" } else { "kokoro" }
+        if self.clone_spec.read().unwrap_or_else(|e| e.into_inner()).is_some()
+            && !self.clone_failed.load(Ordering::Acquire) { "chatterbox" } else { "kokoro" }
     }
 
     pub fn set_voice(&self, voice: &str, speed: f32) {
@@ -243,26 +279,39 @@ impl KokoroProvider {
             *self.clone_worker.lock().unwrap_or_else(|e| e.into_inner()) = None;
             *spec = next;
         }
+        self.clone_failed.store(false, Ordering::Release);
         Ok(())
     }
 
     pub fn speak(&self, text: &str) -> Result<Vec<f32>> {
+        self.speak_cancellable(text, &CancellationToken::new())
+    }
+
+    pub fn speak_cancellable(&self, text: &str, cancel: &CancellationToken) -> Result<Vec<f32>> {
+        anyhow::ensure!(!cancel.is_cancelled(), "TTS cancelled");
         let clone = self.clone_spec.read().unwrap_or_else(|e| e.into_inner()).clone();
         let clone_requested = clone.is_some();
-        if let Some(spec) = clone {
+        if let Some(spec) = clone.filter(|_| !self.clone_failed.load(Ordering::Acquire)) {
             let mut worker = self.clone_worker.lock().unwrap_or_else(|e| e.into_inner());
             let result = (|| {
                 if worker.is_none() { *worker = Some(CloneWorker::start()?); }
-                worker.as_mut().unwrap().speak(text, &spec)
+                worker.as_mut().unwrap().speak(&assistant_core::language::for_speech(text), &spec, cancel)
             })();
             match result {
-                Ok(audio) => return Ok(audio),
-                Err(error) => {
-                    tracing::warn!(%error, "cloned voice unavailable; using Kokoro fallback");
+                Ok(audio) if !cancel.is_cancelled() => return Ok(audio),
+                Ok(_) => {
                     *worker = None;
+                    anyhow::bail!("TTS cancelled");
+                }
+                Err(error) => {
+                    *worker = None;
+                    if cancel.is_cancelled() { return Err(error); }
+                    tracing::warn!(%error, "cloned voice unavailable; using Kokoro fallback");
+                    self.clone_failed.store(true, Ordering::Release);
                 }
             }
         }
+        anyhow::ensure!(!cancel.is_cancelled(), "TTS cancelled");
         let result = self.speak_with(
             text,
             &self.voice(),
@@ -283,7 +332,21 @@ impl KokoroProvider {
         }
         let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
 
-        let mut req = SpeakRequest::new(text);
+        // Explicit spelling is synthesized one letter at a time. Fixed silence prevents
+        // the normal sentence prosody from merging or rushing letter transitions.
+        if let Some(word) = assistant_core::language::letters(text) {
+            let mut audio=Vec::new();
+            for (index,letter) in word.bytes().enumerate() {
+                if index > 0 { audio.resize(audio.len()+3_600,0.0); } // 150 ms at 24 kHz
+                let mut req=SpeakRequest::new(assistant_core::language::letter_name(letter));
+                req.voice=voice.into(); req.speed=speed; req.format=Format::Wav;
+                let speech=self.engine.speak(&req).context("synthesize spelled letter")?;
+                audio.extend(wav_to_f32(&speech.audio)?);
+            }
+            return Ok(audio);
+        }
+        let speech_text = assistant_core::language::for_speech(text);
+        let mut req = SpeakRequest::new(&speech_text);
         req.voice = voice.into();
         req.speed = speed;
         req.format = Format::Wav;

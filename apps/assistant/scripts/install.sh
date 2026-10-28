@@ -68,6 +68,22 @@ mkdir -p "$data_dir/quickshell"
 cp -a "$root/quickshell/." "$data_dir/quickshell/"
 for unit in nyx-assistantd nyx-assistant-hud nyx-assistant-visual nyx-assistant-stt nyx-assistant-failed nyx-assistant-stt-failed; do install -m 0644 "$root/systemd/$unit.service" "$unit_dir/$unit.service"; done
 "$root/scripts/install-plugin.sh"
+if [[ ${NYX_SKIP_INTEGRATION:-0} != 1 && -f "$HOME/.config/hypr/hyprland.lua" ]]; then
+  mkdir -p "$backup/files/.config/hypr"
+  if [[ -f "$HOME/.config/hypr/nyx_assistant_canvas.lua" ]]; then
+    cp -a "$HOME/.config/hypr/nyx_assistant_canvas.lua" "$backup/files/.config/hypr/nyx_assistant_canvas.lua"
+  fi
+  install -m 0644 "$root/config/hypr-canvas.lua" "$HOME/.config/hypr/nyx_assistant_canvas.lua"
+  if ! rg -q '^require\("hypr\.nyx_assistant_canvas"\)' "$HOME/.config/hypr/hyprland.lua"; then
+    cp -a "$HOME/.config/hypr/hyprland.lua" "$backup/files/.config/hypr/hyprland.lua"
+    printf '\nrequire("hypr.nyx_assistant_canvas") -- Assistant Canvas\n' >> "$HOME/.config/hypr/hyprland.lua"
+  fi
+  if command -v hyprctl >/dev/null && [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
+    hyprctl reload >/dev/null
+    errors=$(hyprctl configerrors)
+    [[ -z $errors || $errors == *"no errors"* ]] || { printf '%s\n' "$errors" >&2; false; }
+  fi
+fi
 # The streaming speech model is a separate, explicit download; without it, speech falls back to Voxtype.
 if [[ ! -f "$data_dir/models/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25/encoder.int8.onnx" ]]; then
   printf 'Streaming speech (listening while it speaks) needs its model: %s models fetch asr\n' "$bin_dir/nyx-assistant"

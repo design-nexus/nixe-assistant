@@ -14,7 +14,7 @@ use std::sync::{mpsc, Mutex};
 
 use crate::task::{Step, Task, TaskState};
 
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 4;
 const MAX_VALUE: usize = 256;
 /// Keys whose values are always secret, anywhere in the name.
 const SECRET_WORDS: &[&str] = &["password", "passwd", "secret", "token", "cookie", "credential"];
@@ -242,6 +242,9 @@ fn migrate(conn: &Connection) -> Result<()> {
     }
     if version < 3 {
         conn.execute_batch("ALTER TABLE tasks ADD COLUMN plan TEXT;")?;
+    }
+    if version < 4 {
+        conn.execute_batch("CREATE TABLE IF NOT EXISTS word_corrections (wrong TEXT NOT NULL, corrected TEXT NOT NULL, context TEXT NOT NULL, updated_ms INTEGER NOT NULL, PRIMARY KEY(wrong, context));")?;
     }
     anyhow::ensure!(version <= SCHEMA_VERSION, "audit journal is from a newer assistant (schema {version})");
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -528,7 +531,7 @@ mod tests {
         drop(AuditLog::open(&path).unwrap());
         let conn = Connection::open(&path).unwrap();
         let version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, SCHEMA_VERSION);
         assert_eq!(recent(&path, 5).unwrap().len(), 1, "audit rows kept");
     }
 
@@ -574,4 +577,61 @@ mod tests {
         assert_eq!(state(&paused.id).state, "paused");
         assert_eq!(state(&done.id).state, "completed");
     }
+}
+
+/// User-confirmed corrections share the private agent database, not configuration files.
+#[derive(Debug, Clone, Serialize)]
+pub struct WordCorrection { pub wrong: String, pub corrected: String, pub context: String }
+pub fn save_correction(path: &Path, wrong: &str, corrected: &str, context: &str) -> Result<()> {
+    anyhow::ensure!(!wrong.is_empty() && wrong.len() <= 256 && !corrected.is_empty() && corrected.len() <= 80 && context.len() <= 40, "invalid correction");
+    let conn = connect(path)?;
+    conn.execute("INSERT INTO word_corrections VALUES (?1,?2,?3,?4) ON CONFLICT(wrong,context) DO UPDATE SET corrected=excluded.corrected, updated_ms=excluded.updated_ms", params![wrong, corrected, context, crate::grant::now_ms() as i64])?;
+    conn.execute("DELETE FROM word_corrections WHERE rowid NOT IN (SELECT rowid FROM word_corrections ORDER BY updated_ms DESC LIMIT 500)", [])?;
+    Ok(())
+}
+pub fn corrections(path: &Path) -> Result<Vec<WordCorrection>> {
+    if !path.exists() { return Ok(Vec::new()); }
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    if version < 4 { return Ok(Vec::new()); }
+    let mut query = conn.prepare("SELECT wrong,corrected,context FROM word_corrections ORDER BY updated_ms DESC LIMIT 500")?;
+    let rows = query.query_map([], |r| Ok(WordCorrection { wrong:r.get(0)?, corrected:r.get(1)?, context:r.get(2)? }))?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+pub fn delete_correction(path: &Path, wrong: Option<&str>, context: &str) -> Result<()> {
+    let conn = connect(path)?;
+    if let Some(wrong) = wrong { conn.execute("DELETE FROM word_corrections WHERE wrong=?1 AND context=?2", params![wrong,context])?; }
+    else { conn.execute("DELETE FROM word_corrections", [])?; }
+    Ok(())
+}
+#[cfg(test)] mod correction_tests {
+    use super::*;
+    #[test] fn correction_lifecycle() {
+        let tmp = tempfile::tempdir().unwrap(); let path = tmp.path().join("agent.db");
+        add_dictionary_word(&path,"Calera",Some("camera"),"place").unwrap();
+        assert_eq!(corrections(&path).unwrap().len(),2);
+        delete_correction(&path,Some("calera"),"place").unwrap();
+        assert_eq!(corrections(&path).unwrap()[0].corrected,"Calera");
+        save_correction(&path,"camera","CALERA","place").unwrap();
+        assert_eq!(corrections(&path).unwrap().len(),1);
+        delete_correction(&path,Some("camera"),"place").unwrap();
+        assert!(corrections(&path).unwrap().is_empty());
+    }
+}
+
+/// A personal dictionary word and optional explicit hearing variant use the existing store.
+pub fn add_dictionary_word(path: &Path, word: &str, heard: Option<&str>, context: &str) -> Result<()> {
+    let valid=|s: &str| !s.trim().is_empty() && s.len()<=80 && s.chars().all(|c| c.is_alphanumeric() || matches!(c,' '|'-'|'\''|'.'|'+'|'#'|'_'|','));
+    anyhow::ensure!(valid(word) && heard.is_none_or(valid) && matches!(context,"word"|"place"),"invalid dictionary word, hearing variant or context");
+    let mut conn=connect(path)?;let tx=conn.transaction()?;
+    for alias in std::iter::once(word).chain(heard).filter(|s| !s.trim().is_empty()) {
+        tx.execute("INSERT INTO word_corrections VALUES (?1,?2,?3,?4) ON CONFLICT(wrong,context) DO UPDATE SET corrected=excluded.corrected, updated_ms=excluded.updated_ms",params![alias.trim().to_lowercase(),word.trim(),context,crate::grant::now_ms() as i64])?;
+    }
+    tx.execute("DELETE FROM word_corrections WHERE rowid NOT IN (SELECT rowid FROM word_corrections ORDER BY updated_ms DESC LIMIT 500)",[])?;
+    tx.commit()?;Ok(())
+}
+
+pub fn remove_dictionary_word(path: &Path, word: &str, context: &str) -> Result<()> {
+    let conn=connect(path)?;
+    conn.execute("DELETE FROM word_corrections WHERE corrected = ?1 COLLATE NOCASE AND context=?2",params![word,context])?;Ok(())
 }

@@ -186,6 +186,9 @@ pub fn needs_location(ask: &str) -> bool {
         "nearby",
         "around here",
         "my area",
+        "my current location",
+        "my location",
+        "where i am",
         "local news",
     ]
     .iter()
@@ -277,5 +280,32 @@ mod tests {
         assert!(needs_location("cafes near me"));
         assert!(!explicit_place("forecast for tomorrow"));
         assert!(explicit_place("weather in Chicago"));
+    }
+}
+
+/// Relative location is an intent, never a city name sent to geocoding.
+#[derive(Debug,Clone,Copy,PartialEq,Eq)]
+pub enum LocationRequest { Read, Map }
+pub fn request(ask: &str) -> Option<LocationRequest> {
+    if !crate::dictionary::natural_text(ask) {return None;}
+    let text=crate::language::clean(ask);let words:Vec<_>=text.split_whitespace().collect();
+    if text.starts_with("my location is ") {return None;}
+    if words.first().is_some_and(|w| ["remember","save","set","enable","disable","forget","add","change","write","type","quote","spell"].contains(w)) {return None;}
+    let map=words.iter().any(|w|matches!(*w,"map"|"maps"));
+    let relative=["my current location","my current physical location","my physical location","my location","current location","current physical location","where i am","where am i","where we are","where are we","near me","around me","around here"].iter().any(|p|text.contains(p))
+        || (map && words.contains(&"here"));
+    if !relative {return None;}
+    if map {return Some(LocationRequest::Map);}
+    if !text.contains("location") && !text.contains("where") {return None;}
+    if crate::weather::is_weather(ask) || ["restaurant","restaurants","shops","coffee","news","traffic"].iter().any(|w|words.contains(w)) {return None;}
+    let read=words.len()<=4 || words.iter().any(|w|matches!(*w,"get"|"find"|"determine"|"check"|"know"|"tell"|"show"|"give"|"retrieve"|"lookup"|"look"|"what"|"what's"|"where"|"access"));
+    read.then_some(LocationRequest::Read)
+}
+#[cfg(test)] mod request_tests {
+    use super::*;
+    #[test] fn relative_location_routes_to_native_service() {
+        for s in ["Get my current location.","What is my current location?","My current location","Look up my location"] {assert_eq!(request(s),Some(LocationRequest::Read),"{s}");}
+        for s in ["Show me a map of my current location","my current location you know it show me a map","Show me a map here"] {assert_eq!(request(s),Some(LocationRequest::Map),"{s}");}
+        for s in ["Remember my location Calera","Disable location","weather near me","restaurants near me","Show me a map of Calera, Alabama","write my current location in the document","my location is Calera","find parks near me"] {assert_eq!(request(s),None,"{s}");}
     }
 }

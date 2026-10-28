@@ -27,6 +27,7 @@ regex = "1"
 tempfile.workspace = true
 tar = "0.4"
 flate2 = "1"
+url = "2"
 
 [dev-dependencies]
 tempfile.workspace = true

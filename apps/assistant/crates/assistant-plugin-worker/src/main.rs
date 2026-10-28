@@ -23,6 +23,7 @@ fn group(name: &str) -> &str {
         "files" => "files",
         "git" => "git",
         "terminal" => "terminal",
+        "diagnostics" => "diagnostics",
         "apps" => "apps",
         "windows" | "workspaces" | "monitors" => "windows",
         "services" => "services",

@@ -20,6 +20,7 @@ fn bench_dir() -> PathBuf {
 }
 
 fn notify(text: &str) {
+    if !assistant_core::Config::load().is_ok_and(|c|c.events.desktop_notifications){return;}
     let _ = std::process::Command::new("notify-send").args(["-t", "4000", "Computer bench", text]).status();
 }
 

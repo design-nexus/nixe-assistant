@@ -17,12 +17,11 @@ power-off refusal.
 stay loaded), `intent_allowed` via `assistant-tools`, capture-start and
 playback-cancel traces.
 
-First-phrase audio still waits on Kokoro for that phrase (Kokoro synthesizes a whole
-phrase per call; it can't stream inside one); later phrases already overlap LLM tokens.
-Since 2026-10-17 the first phrase ends at a comma after two words or after five words, so
-Kokoro starts sooner and has less to say; the second may run to ten words and later ones
-to twenty. Cuts happen only between whole words, and "3.5" or "10:30" never split.
-Not yet measured live (`perf`, `bench duplex`).
+First-phrase audio waits on Kokoro for a whole sentence; later sentences can be
+synthesized while earlier audio plays. Sentences stay together for more natural
+prosody. Unusually long unpunctuated text is capped at 40 words, preferring a clause
+boundary, and sentence endings receive a minimum pause when their audio lacks one.
+This favors natural speech at the cost of a longer wait for the first sentence.
 
 ## Phase 2 — AEC (done)
 
