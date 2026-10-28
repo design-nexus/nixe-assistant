@@ -27,6 +27,7 @@ pub struct AudioEngine {
     cmd: pw::channel::Sender<PwCmd>,
     samples_rx: Mutex<Option<mpsc::Receiver<Vec<i16>>>>,
     levels: watch::Receiver<f32>,
+    playback_levels: watch::Receiver<f32>,
     aec_levels: Option<watch::Receiver<f32>>,
     aec_samples_rx: Mutex<Option<mpsc::Receiver<Vec<i16>>>>,
     queued: Arc<AtomicUsize>,
@@ -89,6 +90,7 @@ impl AudioEngine {
         let aec = echo_module.is_some();
         let (samples_tx, samples_rx) = mpsc::channel::<Vec<i16>>(32);
         let (level_tx, level_rx) = watch::channel(0.0f32);
+        let (play_level_tx, play_level_rx) = watch::channel(0.0f32);
         let (aec_level_tx, aec_level_rx) = if aec {
             let (tx, rx) = watch::channel(0.0f32);
             (Some(tx), Some(rx))
@@ -121,6 +123,7 @@ impl AudioEngine {
                     audio_cfg,
                     samples_tx,
                     level_tx,
+                    play_level_tx,
                     aec_level_tx,
                     aec_samples_tx,
                     play_thread,
@@ -141,6 +144,7 @@ impl AudioEngine {
             cmd,
             samples_rx: Mutex::new(Some(samples_rx)),
             levels: level_rx,
+            playback_levels: play_level_rx,
             aec_levels: aec_level_rx,
             aec_samples_rx: Mutex::new(aec_samples_rx),
             queued,
@@ -158,6 +162,10 @@ impl AudioEngine {
 
     pub fn levels(&self) -> watch::Receiver<f32> {
         self.levels.clone()
+    }
+
+    pub fn playback_levels(&self) -> watch::Receiver<f32> {
+        self.playback_levels.clone()
     }
 
     pub fn aec_levels(&self) -> Option<watch::Receiver<f32>> {
@@ -489,6 +497,7 @@ fn pw_thread(
     audio: assistant_core::config::AudioCfg,
     samples_tx: mpsc::Sender<Vec<i16>>,
     level_tx: watch::Sender<f32>,
+    play_level_tx: watch::Sender<f32>,
     aec_level_tx: Option<watch::Sender<f32>>,
     aec_samples_tx: Option<mpsc::Sender<Vec<i16>>>,
     play: Arc<Mutex<PlayState>>,
@@ -690,6 +699,8 @@ fn pw_thread(
             };
             let mut samples = vec![0.0f32; n];
             st.queue.pull(&mut samples);
+            let power = samples.iter().map(|s| s * s).sum::<f32>() / samples.len().max(1) as f32;
+            let _ = play_level_tx.send(power.sqrt());
             st.queued.store(st.queue.queued(), Ordering::Relaxed);
             if let Some(bytes) = data.data() {
                 for (i, s) in samples.iter().enumerate() {

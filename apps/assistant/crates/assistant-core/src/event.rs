@@ -95,6 +95,9 @@ pub enum Event {
     Level {
         rms: f32,
     },
+    PlaybackLevel {
+        rms: f32,
+    },
     Timing {
         stages: Vec<TimingStage>,
         total_ms: u64,

@@ -191,6 +191,7 @@ pub async fn run(cfg: Config) -> Result<()> {
                     _ = tick.tick() => {
                         app.hold_tick().await;
                         app.emit_level_if_listening();
+                        app.emit_playback_level_if_speaking();
                     }
                     _ = shutdown.changed() => {
                         if *shutdown.borrow() {
@@ -936,6 +937,13 @@ impl App {
         }
         let rms = *self.audio.levels().borrow();
         self.emit(Event::Level { rms });
+    }
+
+    fn emit_playback_level_if_speaking(&self) {
+        let speaking = self.state.try_lock().map(|s| s.current() == AssistantState::Speaking).unwrap_or(false);
+        if speaking {
+            self.emit(Event::PlaybackLevel { rms: *self.audio.playback_levels().borrow() });
+        }
     }
 
     async fn reset_cancel(&self) -> CancellationToken {

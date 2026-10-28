@@ -141,11 +141,18 @@ strip_tails = ["please", "now", "right now", "for me"]
 
 [ui]
 enabled = true
-aura_style = "edge-flow" # "edge-flow" or "full"
-aura_visibility = "activity" # "activity" or "persistent"
-aura_intensity = 0.65
-aura_thickness = 5.0
-aura_monitors = [] # empty means all displays; otherwise list connector names
+aura_enabled = true
+aura_style = "full" # "full" or "edge-flow"
+aura_visibility = "persistent" # "persistent" or "activity"
+aura_intensity = 0.4
+aura_thickness = 3.0
+aura_speed = 1.0
+aura_segment_length = 0.14
+aura_audio_reactive = true
+aura_persona_colors = true
+aura_reduce_motion = "system" # "system", "on", or "off"
+aura_monitor_mode = "active" # "active", "primary", or "all"
+aura_monitors = [] # optional connector allowlist
 canvas_enabled = true
 
 # Each rule is "allow", "confirm" (or "ask") or "deny". A deny always wins over an allow,

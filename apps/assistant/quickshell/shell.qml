@@ -37,6 +37,8 @@ ShellRoot {
     property string taskPlan: ""
     property bool connected: false
     property bool holdVisible: false
+    property string contextMessage: ""
+    property bool contextError: false
     property var theme: ({})
     property int fontBase: 12
 
@@ -112,6 +114,12 @@ ShellRoot {
         return Math.max(0, Math.min(1, (db - gdb) / (-12 - gdb)));
     }
 
+    function showContext(message, error) {
+        root.contextMessage = String(message || "").substring(0, 240);
+        root.contextError = error === true;
+        contextTimer.restart();
+    }
+
     function applyShellFonts() {
         let user = 0;
         let themeSz = 0;
@@ -164,6 +172,8 @@ ShellRoot {
                 const request = t.request.length > 60 ? t.request.substring(0, 60) + "…" : t.request;
                 root.taskLine = running ? request + " · step " + Math.min(t.calls + 1, t.max_calls) + " of " + t.max_calls + (t.state === "waiting_for_approval" ? " · waiting for you" : "") : "";
                 root.taskPlan = running && t.plan && t.plan.length > 0 ? t.plan.map((s, i) => (i + 1) + ". " + s).join("\n") : "";
+                if (t.state === "completed") root.showContext("Action completed", false);
+                else if (t.state === "failed") root.showContext("Action failed. See Activity for details.", true);
             }
             if (obj.event && obj.event.type === "calibration") {
                 root.errorText = "Calibration: " + obj.event.phase + " for five seconds";
@@ -230,12 +240,15 @@ ShellRoot {
             break;
         case "error":
             root.errorText = obj.message || "error";
+            root.showContext(root.errorText, true);
             root.daemonState = "error";
             root.holdVisible = true;
             hideTimer.restart();
             break;
         }
     }
+
+    Timer { id: contextTimer; interval: 4000; repeat: false; onTriggered: root.contextMessage = "" }
 
     FileView {
         id: themeFile
@@ -345,6 +358,40 @@ ShellRoot {
         onTriggered: {
             if (!listener.running)
                 listener.running = true;
+        }
+    }
+
+    PanelWindow {
+        visible: root.hudEnabled && root.connected && root.contextMessage.length > 0 && root.approvalId.length === 0
+        color: "transparent"
+        anchors { top: true; left: true; right: true }
+        implicitHeight: 76
+        exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.namespace: "nyx-assistant-context"
+        WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+        mask: Region { item: contextNoInput }
+        Item { id: contextNoInput; width: 0; height: 0 }
+        Rectangle {
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.top: parent.top
+            anchors.topMargin: 12
+            width: Math.min(500, contextText.implicitWidth + 32)
+            height: contextText.implicitHeight + 22
+            radius: 12
+            color: root.cBg
+            border.width: 1
+            border.color: root.contextError ? root.cRed : root.cAccent
+            Text {
+                id: contextText
+                anchors.centerIn: parent
+                width: Math.min(468, implicitWidth)
+                text: root.contextMessage
+                color: root.cFg
+                font.family: root.hudFont
+                font.pixelSize: root.fontName
+                wrapMode: Text.Wrap
+            }
         }
     }
 

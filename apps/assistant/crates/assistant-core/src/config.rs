@@ -718,10 +718,17 @@ fn normalize_ask(text: &str) -> String {
 #[serde(default)]
 pub struct UiCfg {
     pub enabled: bool,
+    pub aura_enabled: bool,
     pub aura_style: String,
     pub aura_visibility: String,
     pub aura_intensity: f64,
     pub aura_thickness: f64,
+    pub aura_speed: f64,
+    pub aura_segment_length: f64,
+    pub aura_audio_reactive: bool,
+    pub aura_persona_colors: bool,
+    pub aura_reduce_motion: String,
+    pub aura_monitor_mode: String,
     pub aura_monitors: Vec<String>,
     pub canvas_enabled: bool,
 }
@@ -730,10 +737,17 @@ impl Default for UiCfg {
     fn default() -> Self {
         Self {
             enabled: true,
-            aura_style: "edge-flow".into(),
-            aura_visibility: "activity".into(),
-            aura_intensity: 0.65,
-            aura_thickness: 5.0,
+            aura_enabled: true,
+            aura_style: "full".into(),
+            aura_visibility: "persistent".into(),
+            aura_intensity: 0.4,
+            aura_thickness: 3.0,
+            aura_speed: 1.0,
+            aura_segment_length: 0.14,
+            aura_audio_reactive: true,
+            aura_persona_colors: true,
+            aura_reduce_motion: "system".into(),
+            aura_monitor_mode: "active".into(),
             aura_monitors: Vec::new(),
             canvas_enabled: true,
         }
@@ -1074,6 +1088,10 @@ impl Config {
             || !["activity", "persistent"].contains(&self.ui.aura_visibility.as_str())
             || !(0.0..=1.0).contains(&self.ui.aura_intensity)
             || !(1.0..=24.0).contains(&self.ui.aura_thickness)
+            || !(0.25..=3.0).contains(&self.ui.aura_speed)
+            || !(0.04..=0.4).contains(&self.ui.aura_segment_length)
+            || !["system", "on", "off"].contains(&self.ui.aura_reduce_motion.as_str())
+            || !["active", "primary", "all"].contains(&self.ui.aura_monitor_mode.as_str())
         {
             return fail("invalid Aura settings");
         }
