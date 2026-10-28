@@ -123,6 +123,7 @@ pub enum Control {
         #[serde(default)]
         scope: ApprovalScope,
     },
+    TaskResume { task_id: String },
     TaskCancel {
         task_id: String,
     },

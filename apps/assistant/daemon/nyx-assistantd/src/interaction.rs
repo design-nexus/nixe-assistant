@@ -301,7 +301,7 @@ impl App {
             return Ok((false, false));
         }
         self.audio.play(pcm)?;
-        tokio::select! {_=cancel.cancelled()=>return Ok((false, false)),_=self.audio.wait_playback()=>{}}
+        tokio::select! {_=cancel.cancelled()=>return Ok((false, false)),result=self.audio.wait_playback()=>{result?;}}
         // A cough or a click is heard past.
         loop {
             if !self.pending.contains(id) || Instant::now() >= deadline {
@@ -445,7 +445,7 @@ impl App {
             let first = AtomicBool::new(true);
             let cancel = self.cancel.lock().await.clone();
             self.speak_phrase(&self.tts, &spoken, &phase, &first, &cancel).await?;
-            tokio::select! {_=cancel.cancelled()=>{let _=self.audio.cancel_playback();},_=self.audio.wait_playback()=>{}}
+            tokio::select! {_=cancel.cancelled()=>{let _=self.audio.cancel_playback();},result=self.audio.wait_playback()=>{result?;}}
             self.emit_state(AssistantState::Idle).await;
             // Acknowledgments must not re-arm a stopped conversation.
             self.emit(Event::AssistantText { text: format!("{kind} {action}"), done: true, silent: false });

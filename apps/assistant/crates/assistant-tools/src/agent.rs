@@ -42,11 +42,11 @@ pub fn agent(id: &str) -> Option<&'static Agent> {
 
 /// The config id for a name or id; unknown names fall back to Antigravity, as before.
 pub fn normalize_agent_name(name: &str) -> &'static str {
-    agent(name).map_or("agy", |a| a.id)
+    agent(name).map_or("", |a| a.id)
 }
 
 pub fn spoken_agent_name(name: &str) -> &'static str {
-    agent(normalize_agent_name(name)).map_or("Antigravity", |a| a.name)
+    agent(normalize_agent_name(name)).map_or("Unknown coding agent", |a| a.name)
 }
 
 /// Whether `program` is an executable on PATH.
@@ -94,7 +94,7 @@ pub fn agent_args(id: &str, prompt: &str) -> Vec<String> {
         }
         "ori" => v(&if has { vec!["ori", "code", "--interactive", "--prompt"] } else { vec!["ori", "code"] }),
         "openclaw" => v(&if has { vec!["omarchy-launch-openclaw", "--tui", "--message"] } else { vec!["omarchy-launch-openclaw", "--tui"] }),
-        _ => v(&["agy"]),
+        _ => Vec::new(),
     };
     if has && !matches!(normalize_agent_name(id), "claude" | "codex" | "grok" | "muse" | "omp") {
         args.push(p.to_string());
@@ -122,9 +122,16 @@ pub fn build_launch_cmd(agent: &str, prompt: &str, terminal: &str) -> (String, S
     (cmd, spoken)
 }
 
+pub fn validate_provider(id: &str) -> Result<()> {
+    let provider = agent(id).ok_or_else(|| anyhow::anyhow!("Unknown coding-agent provider: {id}"))?;
+    anyhow::ensure!(on_path(provider.program), "{} is not installed", provider.name);
+    Ok(())
+}
+
 pub async fn launch_coding_agent(agent: &str, prompt: &str, terminal: &str) -> Result<String> {
+    validate_provider(agent)?;
     let (cmd, spoken) = build_launch_cmd(agent, prompt, terminal);
-    tracing::info!(%cmd, %spoken, "dispatching coding agent handoff");
+    tracing::info!("dispatching coding agent handoff");
     assistant_omarchy::hypr_exec(&cmd).await?;
     Ok(spoken)
 }
@@ -144,7 +151,7 @@ mod tests {
         assert_eq!(normalize_agent_name("muse code"), "muse");
         assert_eq!(normalize_agent_name("open code"), "opencode");
         assert_eq!(normalize_agent_name("cursor agent"), "cursor-agent");
-        assert_eq!(normalize_agent_name("nonsense"), "agy");
+        assert_eq!(normalize_agent_name("nonsense"), "");
         assert_eq!(spoken_agent_name("copilot"), "GitHub Copilot");
     }
 

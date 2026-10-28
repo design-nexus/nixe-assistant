@@ -111,3 +111,31 @@ pub const NAME_GUESS_GRAMMAR: &str = r#"root ::= ws "{" ws "\"steps\"" ws ":" ws
 step ::= "\"" [^"\\\x00-\x1F]{1,80} "\""
 ws ::= [ \t\n\r]*
 "#;
+
+/// Conservative evidence gates for requested output and explicit mutations.
+pub fn request_fulfilled(ask:&str,results:&[Value],computer:bool)->bool {
+    let lower=ask.to_lowercase();
+    let successful:Vec<_>=results.iter().filter(|r|r["result"]["isError"]!=true && r["tool"]!="tools.discover" && !r["tool"].as_str().unwrap_or("").ends_with("_requested")).collect();
+    let visual=["show","display","draw","plot","make","create","open","update","convert"].iter().any(|w|lower.split_whitespace().any(|t|t==*w))
+        && ["canvas","map","chart","graph","table","gallery","image","pdf"].iter().any(|n|lower.contains(n));
+    if visual && (!computer || lower.contains("canvas")){return successful.iter().any(|r|r["tool"]=="canvas.show");}
+    let mutation=["create ","add ","delete ","remove ","save ","write ","move ","send ","play ","pause ","restart ","install ","rename "] .iter().any(|v|lower.starts_with(v));
+    if mutation{return successful.iter().any(|r| !assistant_policy::Capability::of(r["tool"].as_str().unwrap_or("")).passive(r["tool"].as_str().unwrap_or("")));}
+    !successful.is_empty()
+}
+#[cfg(test)]
+mod fulfillment_tests {
+    use super::*;
+    #[test]
+    fn paraphrases_need_real_output() {
+        let discovery=json!({"tool":"tools.discover","result":{"isError":false}});
+        let location=json!({"tool":"location.search","result":{"isError":false}});
+        let canvas=json!({"tool":"canvas.show","result":{"isError":false}});
+        for ask in ["Show a map of Huntsville", "Display a chart of expenses", "Create a table in Canvas"] {
+            assert!(!request_fulfilled(ask,&[discovery.clone(),location.clone()],false));
+            assert!(request_fulfilled(ask,&[canvas.clone()],false));
+        }
+        assert!(!request_fulfilled("Create a note",&[discovery],false));
+        assert!(request_fulfilled("Find the current location",&[location],false));
+    }
+}

@@ -98,13 +98,13 @@ impl Verification {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Budget {
     pub max_calls: usize,
     pub max_active_ms: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Step {
     pub index: usize,
     pub tool: String,
@@ -114,7 +114,7 @@ pub struct Step {
     pub summary: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
     pub id: String,
     pub turn: String,
@@ -184,6 +184,12 @@ impl Task {
         }
     }
 
+    /// Checkpoints restore evidence but never restore grants or trust flags optimistically.
+    pub fn prepare_resume(&mut self, budget:Budget) {
+        self.state=TaskState::Paused;self.budget=budget;self.calls=0;self.active_ms=0;
+        self.approvals.clear();self.read_private=true;self.read_untrusted=true;self.detail=None;
+    }
+
     /// Keep a plan: up to `MAX_PLAN` non-empty steps of up to 160 characters.
     pub fn set_plan(&mut self, steps: &[String]) {
         self.plan = steps
@@ -242,9 +248,10 @@ impl Task {
 
     /// The final state from the steps: everything confirmed, some of it, or nothing.
     pub fn outcome(&self) -> TaskState {
-        let changes: Vec<_> = self.steps.iter().filter(|s| s.verification != Verification::NotNeeded).collect();
-        let succeeded = self.steps.iter().any(|s| s.verification != Verification::Failed);
-        if changes.iter().all(|s| s.verification == Verification::Verified) && (succeeded || self.steps.is_empty()) {
+        let meaningful: Vec<_> = self.steps.iter().filter(|s| s.tool != "tools.discover").collect();
+        let changes: Vec<_> = meaningful.iter().filter(|s| s.verification != Verification::NotNeeded).collect();
+        let succeeded = meaningful.iter().any(|s| s.verification != Verification::Failed);
+        if changes.iter().all(|s| s.verification == Verification::Verified) && succeeded {
             TaskState::Completed
         } else if succeeded {
             TaskState::PartiallyCompleted
@@ -351,7 +358,9 @@ mod tests {
     fn budget_and_outcomes() {
         let mut t = task();
         assert!(t.within_budget().is_ok());
-        assert_eq!(t.outcome(), Completed, "nothing to do is done");
+        assert_eq!(t.outcome(), Failed, "no evidence is not completion");
+        t.push_step("tools.discover", "metadata".into(), Verification::NotNeeded, String::new());
+        assert_eq!(t.outcome(), Failed, "discovery is not fulfillment");
         t.push_step("notes.list", "a".into(), Verification::NotNeeded, String::new());
         t.push_step("notes.create", "b".into(), Verification::Verified, String::new());
         t.calls = 2;

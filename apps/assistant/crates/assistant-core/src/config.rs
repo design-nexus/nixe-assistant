@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct Config {
+    pub privacy: PrivacyCfg,
     pub assistant: AssistantCfg,
     pub stt: SttCfg,
     pub llm: LlmCfg,
@@ -31,6 +32,17 @@ pub struct Config {
     pub location: crate::location::LocationCfg,
     pub terminal: TerminalCfg,
     pub system: SystemCfg,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PrivacyCfg {
+    pub retention_days: u32,
+    pub backup_limit_mb: u32,
+    pub save_history: bool,
+}
+impl Default for PrivacyCfg {
+    fn default() -> Self { Self { retention_days: 30, backup_limit_mb: 256, save_history: false } }
 }
 
 /// Optional model server transport, owned by Assistant rather than individual apps.
@@ -731,6 +743,7 @@ pub struct UiCfg {
     pub aura_persona_colors: bool,
     pub aura_reduce_motion: String,
     pub aura_monitor_mode: String,
+    pub aura_primary_monitor: String,
     pub aura_monitors: Vec<String>,
     pub canvas_enabled: bool,
 }
@@ -750,6 +763,7 @@ impl Default for UiCfg {
             aura_persona_colors: true,
             aura_reduce_motion: "system".into(),
             aura_monitor_mode: "active".into(),
+            aura_primary_monitor: String::new(),
             aura_monitors: Vec::new(),
             canvas_enabled: true,
         }
@@ -1085,6 +1099,7 @@ impl Config {
     }
 
     pub fn validate(&self) -> crate::Result<()> {
+        if !(1..=3650).contains(&self.privacy.retention_days) || !(16..=16384).contains(&self.privacy.backup_limit_mb) { return Err(crate::Error::msg("invalid privacy retention limits")); }
         let fail = |s: &str| Err(crate::Error::msg(s));
         if !["full", "edge-flow"].contains(&self.ui.aura_style.as_str())
             || !["activity", "persistent"].contains(&self.ui.aura_visibility.as_str())

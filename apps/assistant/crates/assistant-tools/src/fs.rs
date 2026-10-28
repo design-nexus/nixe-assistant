@@ -250,6 +250,14 @@ fn new_backup_id() -> String {
 /// Record the files a change will touch: copies of those that exist, a note of those that
 /// don't (so undo removes what the change created). Returns the backup ID.
 fn back_up(home: &Path, paths: &[&Path]) -> Result<String> {
+    // Enforce configured retention during normal use, not only on daemon startup.
+    if std::env::var_os("HOME").map(PathBuf::from).as_deref()==Some(home) {
+        if let Ok(cfg)=assistant_core::Config::load() {
+            let reserved=paths.iter().filter_map(|p|p.metadata().ok()).filter(|m|m.is_file()).map(|m|m.len()).sum::<u64>();
+            ensure!(reserved<=cfg.privacy.backup_limit_mb as u64*1024*1024,"This change needs more undo storage than the configured limit");
+            assistant_core::privacy::prune_backups_reserved(&cfg,false,reserved)?;
+        }
+    }
     let id = new_backup_id();
     let dir = backups(home).join(&id);
     std::fs::create_dir_all(&dir)?;
@@ -257,7 +265,7 @@ fn back_up(home: &Path, paths: &[&Path]) -> Result<String> {
     for (i, path) in paths.iter().enumerate() {
         let existed = path.is_file();
         if existed {
-            std::fs::write(dir.join(i.to_string()), read_nofollow(path)?)?;
+            let mut source=open_nofollow(path)?;let mut target=std::fs::File::create(dir.join(i.to_string()))?;std::io::copy(&mut source,&mut target)?;
         }
         entries.push(json!({"original": path, "stored": i.to_string(), "existed": existed}));
     }

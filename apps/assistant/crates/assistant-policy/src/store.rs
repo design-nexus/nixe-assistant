@@ -635,3 +635,29 @@ pub fn remove_dictionary_word(path: &Path, word: &str, context: &str) -> Result<
     let conn=connect(path)?;
     conn.execute("DELETE FROM word_corrections WHERE corrected = ?1 COLLATE NOCASE AND context=?2",params![word,context])?;Ok(())
 }
+
+/// Prune finalized task/audit history; never remove active tasks, approvals or vocabulary.
+pub fn prune(path: &Path, days:u32, clear:bool) -> Result<Value> {
+    let mut conn=connect(path)?;
+    let cutoff=if clear {i64::MAX} else {crate::grant::now_ms().saturating_sub(days as u64*86_400_000) as i64};
+    let tx=conn.transaction()?;
+    let audit=tx.execute("DELETE FROM audit WHERE at_ms < ?1",[cutoff])?;
+    tx.execute("DELETE FROM task_steps WHERE task IN (SELECT id FROM tasks WHERE updated_ms < ?1 AND state IN ('completed','failed','cancelled','partially_completed'))",[cutoff])?;
+    let tasks=tx.execute("DELETE FROM tasks WHERE updated_ms < ?1 AND state IN ('completed','failed','cancelled','partially_completed')",[cutoff])?;
+    tx.commit()?;Ok(serde_json::json!({"audit_removed":audit,"tasks_removed":tasks}))
+}
+
+#[cfg(test)]
+mod retention_tests {
+    use super::*;
+    #[test]
+    fn retention_removes_old_records_but_preserves_vocabulary() {
+        let temp=tempfile::tempdir().unwrap();let path=temp.path().join("agent.db");
+        let conn=connect(&path).unwrap();let mut record=Record::new("call","notes.list",&serde_json::json!({}));record.at_ms=1;insert(&conn,&record).unwrap();
+        let task=Task::new("test","example",crate::Budget{max_calls:4,max_active_ms:1000});
+        let mut row=TaskRow::from(&task);row.state="completed".into();row.updated_ms=1;upsert_task(&conn,&row).unwrap();
+        add_dictionary_word(&path,"Calera",Some("Kalera"),"place").unwrap();
+        let result=prune(&path,30,false).unwrap();assert_eq!(result["audit_removed"],1);assert_eq!(result["tasks_removed"],1);
+        assert!(!corrections(&path).unwrap().is_empty());
+    }
+}

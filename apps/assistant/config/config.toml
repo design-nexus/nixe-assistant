@@ -237,3 +237,10 @@ enabled = true
 city = "" # Set a city/address to override automatic detection.
 cache_minutes = 60
 # Optional manually supplied coordinates require both latitude and longitude.
+
+# Local storage. Spoken content is excluded from normal logs. Enable temporary content
+# diagnostics explicitly with `nyx-assistant privacy diagnostics on` (expires in 10 min).
+[privacy]
+retention_days = 30
+backup_limit_mb = 256
+save_history = false

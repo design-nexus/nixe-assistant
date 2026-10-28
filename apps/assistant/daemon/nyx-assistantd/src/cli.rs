@@ -19,6 +19,19 @@ async fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
     let cmd = args.next().unwrap_or_else(|| "help".into());
     match cmd.as_str() {
+        "privacy" => {
+            let cfg=assistant_core::Config::load()?;
+            match args.next().as_deref().unwrap_or("status") {
+                "status"=>println!("{}",assistant_core::privacy::summary()),
+                "failure"=>println!("{}",std::fs::read_to_string(assistant_core::paths::state_dir().join("last-failure.json")).unwrap_or_else(|_|"{}".into())),
+                "prune"=>println!("{}",assistant_core::privacy::maintenance(&cfg,false)?),
+                "clear"=>println!("{}",assistant_core::privacy::maintenance(&cfg,true)?),
+                "diagnostics"=>{assistant_core::privacy::diagnostics(args.next().as_deref()==Some("on"))?;println!("Content logging {}", "is enabled for at most ten minutes when requested; off otherwise");},
+                _=>anyhow::bail!("privacy status|prune|clear|diagnostics on|off"),
+            }
+        }
+        "history" => {let query=args.collect::<Vec<_>>().join(" ");println!("{}",serde_json::to_string(&assistant_core::privacy::history(&query))?);}
+
         "dictionary" => {
             let path=assistant_policy::store::default_path(&assistant_core::paths::state_dir());
             let action=args.next().unwrap_or_else(||"list".into());let rest:Vec<_>=args.collect();
@@ -420,6 +433,10 @@ async fn main() -> anyhow::Result<()> {
                     .unwrap_or_default()
             };
             match rest.first().map(String::as_str) {
+                Some("resume") => {
+                    let task_id=rest.get(1).context("task ID required")?.clone();
+                    println!("{}",request(Control::TaskResume { task_id },5000).await?);
+                }
                 Some("cancel") => {
                     let task_id = rest.get(1).context("task ID required")?.clone();
                     println!("{}", request(Control::TaskCancel { task_id }, 5000).await?);

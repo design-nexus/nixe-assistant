@@ -247,19 +247,25 @@ impl AudioEngine {
         Ok(())
     }
 
-    pub async fn wait_playback(&self) {
+    pub async fn wait_playback(&self) -> Result<()> {
         // QueuePlay is asynchronous: queued can still be zero until PipeWire accepts it.
         // A barrier keeps follow-up listening from starting during the question itself.
         let (ready, received) = tokio::sync::oneshot::channel();
-        if self.cmd.send(PwCmd::PlaybackBarrier(ready)).is_err() { return; }
-        if tokio::time::timeout(tokio::time::Duration::from_secs(2), received).await.is_err() { return; }
-        let start = tokio::time::Instant::now();
-        while self.queued.load(Ordering::Relaxed) > 0 {
-            if start.elapsed() > tokio::time::Duration::from_secs(30) {
-                break;
+        self.cmd.send(PwCmd::PlaybackBarrier(ready)).map_err(|_| anyhow::anyhow!("audio output unavailable"))?;
+        tokio::time::timeout(tokio::time::Duration::from_secs(2), received).await.context("audio output did not acknowledge playback")??;
+        let mut progress = tokio::time::Instant::now();
+        let mut previous = self.queued.load(Ordering::Relaxed);
+        while previous > 0 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+            let remaining = self.queued.load(Ordering::Relaxed);
+            if remaining != previous || self.play_state().queue.is_paused() { progress = tokio::time::Instant::now(); }
+            if progress.elapsed() > tokio::time::Duration::from_secs(5) {
+                let _ = self.cancel_playback();
+                anyhow::bail!("audio output stalled");
             }
-            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            previous = remaining;
         }
+        Ok(())
     }
 }
 

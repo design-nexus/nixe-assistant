@@ -12,6 +12,8 @@ mod interaction;
 #[path = "proactive.rs"]
 #[allow(dead_code)]
 mod proactive;
+#[path = "checkpoint.rs"]
+mod checkpoint;
 use crate::session::{classify, Mode, RequestKind, Session};
 use anyhow::{Context, Result};
 use assistant_agent::{is_filler, route_with, strip_wake, Intent, KokoroProvider, PhraseChunker};
@@ -39,8 +41,27 @@ use tokio_util::sync::CancellationToken;
 tokio::task_local! {static TURN_ID: u64;}
 tokio::task_local! {static SILENT_TURN: bool;}
 
+/// Owns every speech side task; an early return cannot leave a microphone watcher alive.
+struct SpeechCleanup<'a> {
+    audio: &'a AudioEngine,
+    cancel: CancellationToken,
+    generation: Arc<AtomicBool>,
+    tasks: Vec<tokio::task::AbortHandle>,
+    finished: bool,
+}
+impl Drop for SpeechCleanup<'_> {
+    fn drop(&mut self) {
+        self.generation.store(true, Ordering::Relaxed);
+        for task in &self.tasks { task.abort(); }
+        if !self.finished {
+            self.cancel.cancel();
+            let _ = self.audio.cancel_playback();
+        }
+    }
+}
+
 pub async fn run(cfg: Config) -> Result<()> {
-    tracing::info!(prompt = %cfg.assistant.prompt, "loaded config.toml");
+    tracing::info!("loaded config.toml");
     let ipc = assistant_ipc::bind().await.context("ipc bind")?;
     let Ipc { mut commands, command_tx, events } = ipc;
     let audio = tokio::task::spawn_blocking({
@@ -77,6 +98,8 @@ pub async fn run(cfg: Config) -> Result<()> {
         tracing::warn!(%err, path = %audit_path.display(), "audit journal unavailable");
         assistant_policy::store::AuditLog::disabled()
     });
+    let retention=cfg.clone();
+    tokio::task::spawn_blocking(move || {if let Err(error)=assistant_core::privacy::maintenance(&retention,false){tracing::warn!(%error,"retention maintenance failed");}});
     let registry = Registry::load(&cfg).await.with_audit(audit);
     let app = Arc::new(App {
         registry,
@@ -362,6 +385,13 @@ impl App {
         TURN_ID.try_with(|id| *id).unwrap_or_else(|_| self.turn_gen.load(Ordering::SeqCst))
     }
     fn emit(&self, ev: Event) {
+        if let Event::Error{message}=&ev {
+            let lower=message.to_lowercase();
+            let category=["permission","denied","timeout","timed out","audio","tts","model","tool","busy","cancel"].into_iter().find(|word|lower.contains(word)).unwrap_or("turn_error");
+            let tools=self.current_task.try_lock().ok().and_then(|task|task.as_ref().and_then(|task|task.try_lock().ok().map(|task|task.steps.iter().rev().take(6).map(|step|step.tool.clone()).collect::<Vec<_>>()))).unwrap_or_default();
+            let failure=json!({"at_ms":now_ms(),"turn_id":self.turn_id(),"stage":self.state.try_lock().map(|s|s.current()).ok(),"last_completed_timing":self.last_timing.lock().unwrap().clone(),"selected_tools":tools,"registered_tools":self.registry.catalog(&self.cfg()).as_array().map(Vec::len),"category":category});
+            tokio::task::spawn_blocking(move || {let _=assistant_core::config::atomic_write(&assistant_core::paths::state_dir().join("last-failure.json"),failure.to_string().as_bytes());});
+        }
         if matches!(ev, Event::Timing { .. }) {
             // The reply has finished playing: what gaps it had between phrases.
             let generation = self.reply.lock().unwrap().generation;
@@ -443,6 +473,7 @@ impl App {
         let state = self.state.try_lock().map(|s| s.current()).unwrap_or(AssistantState::Idle);
         serde_json::json!({
             "ok": true,
+            "snapshot_at_ms":now_ms(),
             "running_settings": self.cfg(),
             "restart_required": *self.restart_required.lock().unwrap(),
             "hud_enabled":self.cfg().ui.enabled,
@@ -452,6 +483,10 @@ impl App {
             "activity":*self.parts.lock().unwrap(),
             "mcp_tools":self.registry.catalog(&self.cfg()),
             "mcp_errors":self.registry.errors,
+            "capability_health":self.registry.catalog(&self.cfg()).as_array().into_iter().flatten().map(|tool|{
+                let name=tool["name"].as_str().unwrap_or("");let cfg=self.cfg();let verdict=self.registry.verdict(name,&cfg);
+                json!({"name":name,"permission":verdict.decision().as_str(),"reason":verdict.rule()})
+            }).collect::<Vec<_>>(),
             "plugins":self.registry.plugins.as_ref().map(|p|p.inspect()),
             "state": state,
             "name": self.cfg().assistant.name,
@@ -609,6 +644,7 @@ impl App {
                 let for_task = self.pending.answer(&approval_id, allow, scope == assistant_ipc::ApprovalScope::Task)?;
                 Ok(json!({"approved":allow,"scope":if for_task {"task"} else {"once"}}))
             }
+            Control::TaskResume { task_id } => self.resume_checkpoint(&task_id).await,
             Control::TaskCancel { task_id } => {
                 let running = self.current_task.lock().unwrap().as_ref().is_some_and(|t| t.lock().unwrap().id == task_id);
                 let paused = self.paused_task.lock().unwrap().as_ref().is_some_and(|(t, _)| t.id == task_id);
@@ -646,7 +682,7 @@ impl App {
         })
         .await??;
         self.audio.play(pcm)?;
-        self.audio.wait_playback().await;
+        self.audio.wait_playback().await?;
         Ok(json!({"played":true}))
     }
 
@@ -861,6 +897,7 @@ impl App {
             cancel_watch.cancelled().await;
             gc.store(true, Ordering::Relaxed);
         });
+        let mut cleanup = SpeechCleanup { audio: &self.audio, cancel:cancel.clone(),generation:gen_cancel.clone(),tasks:vec![cancel_task.abort_handle()],finished:false };
         let mut tokens = self
             .llm
             .generate(
@@ -896,6 +933,7 @@ impl App {
         // Free the turn before the timing line, so a follow-up `speak` is not answered with "busy".
         self.finish_turn(gen);
         self.emit(Event::from_timing(&TurnTiming::new()));
+        cleanup.finished=true;
         Ok(())
     }
 
@@ -1104,7 +1142,7 @@ impl App {
         let cancel = self.cancel.lock().await.clone();
         let tr = self.stt.finish(&pcm, cancel.clone()).await?;
         timing.stt_done = Some(Instant::now());
-        tracing::info!(transcript = %tr.text, "heard");
+        assistant_core::privacy::log_content("heard", &tr.text);
         self.emit(Event::Transcript { text: tr.text.clone() });
         if tr.text.trim().is_empty() {
             tracing::info!("empty transcript");
@@ -1128,7 +1166,7 @@ impl App {
         self.emit_state(AssistantState::Transcribing).await;
         let tr = self.stt.transcribe(&pcm, cancel).await?;
         timing.stt_done = Some(Instant::now());
-        tracing::info!(transcript = %tr.text, "demo voxtype");
+        tracing::info!("demo voxtype");
         self.emit(Event::Transcript { text: tr.text.clone() });
         if tr.text.trim().is_empty() {
             anyhow::bail!("demo: voxtype returned empty transcript");
@@ -1137,6 +1175,8 @@ impl App {
     }
 
     async fn remember(&self, user: &str, assistant: &str) {
+        let (user_copy, assistant_copy, cfg)=(user.to_string(),assistant.to_string(),self.cfg());
+        tokio::task::spawn_blocking(move || { if let Err(error)=assistant_core::privacy::remember(&user_copy,&assistant_copy,&cfg) {tracing::warn!(%error,"conversation history write failed");} });
         let mut hist = self.history.lock().await;
         hist.push((user.to_string(), assistant.to_string()));
         const KEEP: usize = 100;
@@ -1389,7 +1429,7 @@ impl App {
         let apps = self.apps.lock().await.app.clone();
         let cmds = self.commands.lock().await.clone();
         let intent = answer_intent(&ask, user_text, tool_request, &apps, &cmds);
-        tracing::info!(?intent, "routed");
+        tracing::info!("request routed");
         match intent {
             Intent::Forget => {
                 timing.route_done = Some(Instant::now());
@@ -1407,7 +1447,7 @@ impl App {
         }
 
         if is_filler(user_text) && self.history.lock().await.is_empty() {
-            tracing::info!(transcript = %user_text, "ignoring filler");
+            tracing::info!("ignoring filler");
             self.emit_state(AssistantState::Idle).await;
             return Ok(());
         }
@@ -1425,6 +1465,7 @@ impl App {
             gc.store(true, Ordering::Relaxed);
         });
 
+        let mut cleanup = SpeechCleanup { audio: &self.audio, cancel: cancel.clone(), generation: gen_cancel.clone(), tasks: vec![cancel_task.abort_handle()], finished: false };
         let mut tokens = self
             .llm
             .generate(&self.registry.system_prompt(&cfg), &history, user_text, cfg.llm.n_predict, cfg.llm.temperature, gen_cancel)
@@ -1436,6 +1477,7 @@ impl App {
         let mut spoken = String::new();
         let tts = Arc::clone(&self.tts);
         let barge = self.spawn_barge_in(cancel.clone());
+        cleanup.tasks.push(barge.abort_handle());
         let timing = Arc::new(Mutex::new(timing));
         let first_audio = Arc::new(AtomicBool::new(true));
         let (phrase_tx, mut phrase_rx) = mpsc::channel::<String>(8);
@@ -1454,6 +1496,7 @@ impl App {
             Ok::<(), anyhow::Error>(())
         });
 
+        cleanup.tasks.push(tts_worker.abort_handle());
         let mut generation_error = None;
         while let Some(tok) = tokens.recv().await {
             let tok = match tok {
@@ -1489,14 +1532,14 @@ impl App {
             let _ = self.audio.cancel_playback();
         } else {
             tts_worker.await.context("tts worker join")??;
-            self.audio.wait_playback().await;
+            self.audio.wait_playback().await?;
         }
         barge.abort();
         cancel_task.abort();
         if let Some(err) = generation_error {
             return Err(err);
         }
-        tracing::info!(reply = %spoken, "spoken reply");
+        assistant_core::privacy::log_content("reply", &spoken);
         let interrupted = self.interrupted.lock().unwrap().take().filter(|_| cancel.is_cancelled());
         // The history keeps what was asked, never the retrieved pages or tool results the
         // model answered from: those are untrusted, and later turns would read them as the
@@ -1506,7 +1549,7 @@ impl App {
         } else if let Some(heard) = interrupted {
             // Cut off by the listener: keep what they actually heard, marked as interrupted.
             let note = duplex::interrupted_note(&heard);
-            tracing::info!(heard = %note, "interrupted reply");
+            tracing::info!("interrupted reply");
             self.remember(&ask, &note).await;
         }
         self.emit(Event::AssistantText { text: spoken, done: true, silent: false });
@@ -1514,7 +1557,9 @@ impl App {
         tracing::info!("{}", timing.format_trace());
         self.emit(Event::from_timing(&timing));
         drop(timing);
-        self.finish_speech(&cancel).await
+        let result = self.finish_speech(&cancel).await;
+        cleanup.finished = result.is_ok();
+        result
     }
 
     async fn speak_reply(self: &Arc<Self>, spoken: &str, timing: TurnTiming) -> Result<()> {
@@ -1524,19 +1569,22 @@ impl App {
         let first_audio = AtomicBool::new(true);
         let cancel = self.cancel.lock().await.clone();
         let barge = self.spawn_barge_in(cancel.clone());
+        let mut cleanup = SpeechCleanup { audio: &self.audio, cancel: cancel.clone(), generation: Arc::new(AtomicBool::new(false)), tasks: vec![barge.abort_handle()], finished: false };
         let timing = Mutex::new(timing);
         self.speak_phrase(&tts, spoken, &timing, &first_audio, &cancel).await?;
         if cancel.is_cancelled() {
             let _ = self.audio.cancel_playback();
         } else {
-            self.audio.wait_playback().await;
+            self.audio.wait_playback().await?;
         }
         barge.abort();
         self.emit(Event::AssistantText { text: spoken.to_string(), done: true, silent: false });
         let timing = timing.into_inner();
         tracing::info!("{}", timing.format_trace());
         self.emit(Event::from_timing(&timing));
-        self.finish_speech(&cancel).await
+        let result = self.finish_speech(&cancel).await;
+        cleanup.finished = result.is_ok();
+        result
     }
 
     async fn speak_phrase(
@@ -1937,22 +1985,22 @@ impl App {
         let mut tr = self.stt.finish(&pcm, cancel.clone()).await?;
         let mut rest = strip_wake(&tr.text, &name, &prefixes, &phrases);
         if rest.is_none() && pcm.len() >= min_n {
-            tracing::info!(live = %tr.text, "wake not matched on live transcript; retrying full pre-roll pcm");
+            tracing::info!("wake not matched on live transcript; retrying full pre-roll pcm");
             if let Ok(t2) = self.stt.transcribe(&pcm, cancel).await {
                 let r2 = strip_wake(&t2.text, &name, &prefixes, &phrases);
                 if r2.is_some() {
-                    tracing::info!(recovered = %t2.text, "wake successfully matched from pre-roll pcm");
+                    tracing::info!("wake successfully matched from pre-roll pcm");
                     rest = r2;
                     tr = t2;
                 }
             }
         }
         let Some(rest) = rest else {
-            tracing::info!(transcript = %tr.text, "wake ignored");
+            tracing::info!("wake ignored");
             self.hush_wake(cfg.wake_word.hush_ms / 3).await;
             return Ok(());
         };
-        tracing::info!(transcript = %tr.text, rest = %rest, "wake");
+        tracing::info!("wake");
         self.emit(Event::Transcript { text: tr.text.clone() });
         if rest.trim().is_empty() {
             if let Err(err) = self.stt.begin().await {
@@ -2045,7 +2093,14 @@ impl App {
         *self.current_task.lock().unwrap() = None;
         let next = match &end {
             Ok(TaskEnd::Paused) => None,
-            Ok(TaskEnd::Finished) => Some((task.lock().unwrap().outcome(), None)),
+            Ok(TaskEnd::Unfulfilled(why)) => {
+                let outcome=task.lock().unwrap().outcome();
+                Some((if outcome==TaskState::Failed{TaskState::Failed}else{TaskState::PartiallyCompleted},Some((*why).into())))
+            },
+            Ok(TaskEnd::Finished) => {
+                let outcome = task.lock().unwrap().outcome();
+                Some((outcome, (outcome == TaskState::Failed).then(|| "No fulfilled action or useful result was verified.".into())))
+            },
             Ok(TaskEnd::Budget(why)) => {
                 let outcome = task.lock().unwrap().outcome();
                 let state = if outcome == TaskState::Completed && task.lock().unwrap().steps.is_empty() {
@@ -2068,6 +2123,7 @@ impl App {
             self.task_move(&task, state)?;
         }
         let snapshot = task.lock().unwrap().clone();
+        if snapshot.state == TaskState::Completed {let _=std::fs::remove_file(checkpoint::path());}
         if matches!(end, Ok(TaskEnd::Paused)) {
             *self.pending_browser.lock().unwrap() = Some(ask.into());
             *self.paused_task.lock().unwrap() = Some((snapshot.clone(), results.clone()));
@@ -2135,6 +2191,7 @@ impl App {
         cancel: &CancellationToken,
     ) -> Result<TaskEnd> {
         let mut discovered:Option<Vec<Value>>=None;
+        let mut discoveries = 0usize;
         loop {
             let active_start = Instant::now();
             if let Err(why) = task.lock().unwrap().within_budget() {
@@ -2178,7 +2235,8 @@ impl App {
                     let found=self.registry.call_allowed("tools.discover",arguments.clone(),cfg,cancel).await?;
                     let definitions=found["structuredContent"]["tools"].as_array().cloned().unwrap_or_default();
                     let names:Vec<_>=definitions.iter().map(|t|t["name"].clone()).collect();discovered=Some(definitions);
-                    {let mut t=task.lock().unwrap();t.calls+=1;t.active_ms+=active_start.elapsed().as_millis() as u64;}
+                    {let mut t=task.lock().unwrap();t.active_ms+=active_start.elapsed().as_millis() as u64;}
+                    discoveries += 1;
                     results.push(json!({"tool":"tools.discover","arguments":arguments,"result":{"isError":false,"data":{"discovered_tools":names}}}));
                     continue;
                 }
@@ -2207,9 +2265,21 @@ impl App {
                     results.push(json!({"tool":"finish_refused","arguments":{},"result":{"isError":true,"text":"Not done: nothing has been typed, pressed or clicked in the app yet. Do the action the request asks for."}}));
                     continue;
                 }
+                if classify(ask)==RequestKind::Computer && !acted {return Ok(TaskEnd::Unfulfilled("No requested action in the application was verified"));}
+                if !crate::planner::request_fulfilled(ask,results,classify(ask)==RequestKind::Computer) {
+                    if !results.iter().any(|r|r["tool"]=="fulfillment_requested") {
+                        results.push(json!({"tool":"fulfillment_requested","result":{"isError":true,"text":"The requested output or action has not been performed. Discovery or an intermediate read does not fulfill this request. Perform the requested action using registered tools, or finish with a specific explanation of what remains."}}));
+                        continue;
+                    }
+                    return Ok(TaskEnd::Unfulfilled("Requested action or visual output was not verified"));
+                }
                 return Ok(TaskEnd::Finished);
             }
             let name = plan["tool"].as_str().context("missing tool name")?;
+            if name == "tools.discover" {
+                discoveries += 1;
+                if discoveries > 3 { return Ok(TaskEnd::Budget("discovery limit reached")); }
+            }
             let mut args = self.registry.normalize_args(name, plan["arguments"].clone());
             // The request names the app ("In Write, …"); a small planner often leaves it out.
             if ["ui.", "screen.", "input."].iter().any(|p| name.starts_with(p))
@@ -2232,6 +2302,7 @@ impl App {
             }
             self.task_move(task, TaskState::Running)?;
             let calls = task.lock().unwrap().calls;
+            self.save_checkpoint(task,results,true)?;
             let result = match self
                 .dispatch_in_task(name, args.clone(), cancel, 0, budget.max_calls.saturating_sub(calls), Some(task))
                 .await
@@ -2259,7 +2330,7 @@ impl App {
             let summary: String = assistant_policy::store::redact(&planning_result).to_string().chars().take(300).collect();
             let step = {
                 let mut t = task.lock().unwrap();
-                t.calls += result["structuredContent"]["completed"].as_array().map_or(1, |a| a.len().max(1));
+                if name != "tools.discover" { t.calls += result["structuredContent"]["completed"].as_array().map_or(1, |a| a.len().max(1)); }
                 t.active_ms += (call_start.elapsed().saturating_sub(approval_time)
                     + active_start.elapsed().saturating_sub(call_start.elapsed()))
                 .as_millis() as u64;
@@ -2270,6 +2341,7 @@ impl App {
                 self.registry.audit.step(&t, &step);
             }
             results.push(json!({"tool":name,"arguments":args,"result":planning_result,"verification":verification.as_str()}));
+            self.save_checkpoint(task,results,result["isError"]==true && !assistant_policy::Capability::of(name).passive(name))?;
             if needs_takeover && name.starts_with("browser.") {
                 self.task_move(task, TaskState::Paused)?;
                 return Ok(TaskEnd::Paused);
@@ -2310,6 +2382,7 @@ impl App {
 }
 
 enum TaskEnd {
+    Unfulfilled(&'static str),
     /// The planner said the request is done.
     Finished,
     /// A budget ran out (the reason).

@@ -22,12 +22,12 @@ pub async fn hyprctl(args: &[&str]) -> Result<String> {
 pub async fn omarchy(args: &[&str]) -> Result<String> {
     if args.first() == Some(&"exec") {
         let cmd = shell_join(&args[1..]);
-        tracing::info!(%cmd, "exec via hypr");
+        tracing::info!("exec via hypr");
         return hypr_exec(&cmd).await;
     }
     if should_hypr_exec(args) {
         let cmd = format!("omarchy {}", shell_join(args));
-        tracing::info!(%cmd, "omarchy via hypr exec");
+        tracing::info!("omarchy via hypr exec");
         return hypr_exec(&cmd).await;
     }
     let out = Command::new("omarchy")

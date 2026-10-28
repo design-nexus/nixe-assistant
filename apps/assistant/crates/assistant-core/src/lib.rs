@@ -50,4 +50,5 @@ impl Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 pub mod diagnostics;
+pub mod privacy;
 pub mod routing;

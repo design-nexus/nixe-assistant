@@ -99,6 +99,8 @@ impl PlayQueue {
     }
 
     /// Hold playback in place: silence goes out and nothing queued is used up.
+    pub fn is_paused(&self) -> bool { self.paused }
+
     pub fn set_paused(&mut self, paused: bool) {
         self.paused = paused;
     }

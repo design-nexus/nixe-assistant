@@ -74,15 +74,21 @@ fn word_count(s: &str) -> usize {
 /// yet. Sentence marks count only when whitespace follows, so "3.5", "e.g." mid-word and
 /// "10:30" don't split; one at the very end waits for the next token.
 fn find_boundary(s: &str) -> Option<usize> {
-    let mut chars = s.char_indices().peekable();
-    while let Some((i, c)) = chars.next() {
-        let next = chars.peek().map(|(_, n)| *n);
-        let end = i + c.len_utf8();
-        let followed_by_space = next.is_some_and(char::is_whitespace);
-        match c {
-            '.' | '?' | '!' if followed_by_space => return Some(end),
-            _ => {}
+    for (i, c) in s.char_indices() {
+        if !matches!(c, '.' | '?' | '!') { continue; }
+        if c == '.' {
+            let word = s[..=i].split_whitespace().last().unwrap_or("").trim_start_matches(|c:char| !c.is_alphanumeric());
+            let lower = word.to_ascii_lowercase();
+            if ["mr.","mrs.","ms.","dr.","prof.","sr.","jr.","st.","vs.","etc.","e.g.","i.e."].contains(&lower.as_str()) { continue; }
+            // Initials and dotted initialisms belong with their following name/noun.
+            let parts:Vec<_> = word.trim_end_matches('.').split('.').collect();
+            if !parts.is_empty() && parts.iter().all(|p| p.chars().count()==1 && p.chars().all(char::is_uppercase)) { continue; }
         }
+        let mut end = i + c.len_utf8();
+        for ch in s[end..].chars() {
+            if matches!(ch, '\"' | '\'' | '”' | '’' | ')' | ']' | '}') { end += ch.len_utf8(); } else { break; }
+        }
+        if s[end..].chars().next().is_some_and(char::is_whitespace) { return Some(end); }
     }
     None
 }
@@ -135,5 +141,22 @@ mod tests {
     fn numbers_and_times_stay_whole() {
         assert_eq!(all(&["It", " uses", " 3", ".", "5 GB", " now."]), ["It uses 3.5 GB now."]);
         assert_eq!(all(&["Meet", " at", " 10", ":", "30 today."]), ["Meet at 10:30 today."]);
+    }
+}
+
+#[cfg(test)]
+mod sentence_regressions {
+    use super::*;
+    #[test]
+    fn abbreviations_quotes_and_streaming() {
+        for (input, expected) in [
+            ("Ask Dr. Smith tomorrow. Then call me.", vec!["Ask Dr. Smith tomorrow.","Then call me."]),
+            ("The U.S. office is open. Come in.", vec!["The U.S. office is open.","Come in."]),
+            ("She said \"hello.\" Then left.", vec!["She said \"hello.\"","Then left."]),
+        ] {
+            let mut c=PhraseChunker::new(); let mut out=Vec::new();
+            for ch in input.chars() { if let Some(p)=c.push(&ch.to_string()) {out.push(p);} }
+            out.extend(c.flush());assert_eq!(out,expected);
+        }
     }
 }

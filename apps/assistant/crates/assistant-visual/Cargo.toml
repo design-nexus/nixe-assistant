@@ -11,6 +11,9 @@ path = "src/main.rs"
 
 [dependencies]
 assistant-core.workspace = true
+assistant-omarchy.workspace = true
+tokio.workspace = true
+tempfile.workspace = true
 gtk = { version = "0.11", package = "gtk4", features = ["v4_18"] }
 gtk4-layer-shell = "0.8"
 nyx-theme = { git = "https://github.com/design-nexus/nyx-design.git", rev = "3483dacac5336148d400b97757377cc3b5074f47" }
@@ -20,3 +23,5 @@ libshumate = { version = "0.8.1", features = ["gtk_v4_18", "v1_7"] }
 nyx-playback = { git = "https://github.com/design-nexus/nyx-design.git", rev = "3483dacac5336148d400b97757377cc3b5074f47" }
 plotters = { version = "0.3.7", default-features = false, features = ["line_series", "ttf"] }
 plotters-cairo = "0.9"
+
+libc = "0.2"

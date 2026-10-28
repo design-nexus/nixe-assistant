@@ -369,7 +369,7 @@ impl App {
                 };
                 verdict = classifier.classify(&text, true, onset.elapsed().as_millis() as u64, &speaking());
             }
-            tracing::info!(?verdict, text = %text, ms = onset.elapsed().as_millis() as u64, rms = rms(&heard_pcm), "duplex decided");
+            tracing::info!(?verdict, ms = onset.elapsed().as_millis() as u64, rms = rms(&heard_pcm), "duplex decided");
             dump_clip(&heard_pcm);
             self.emit(Event::Interruption {
                 verdict: format!("{verdict:?}").to_lowercase(),
@@ -500,7 +500,7 @@ impl App {
         while self.turn_busy.load(Ordering::SeqCst) && Instant::now() < until {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        tracing::info!(text = %text, "duplex redirect: next request");
+        tracing::info!("duplex redirect: next request");
         self.start_text_turn(text).await;
     }
 }

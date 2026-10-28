@@ -252,7 +252,7 @@ impl Registry {
                 "longitude":{"type":"number","minimum":-180,"maximum":180},
                 "zoom":{"type":"number","minimum":1,"maximum":19},
                 "paths":{"type":"array","minItems":1,"maxItems":12,"items":{"type":"string","maxLength":4096}},
-                "items":{"type":"array","minItems":1,"maxItems":50,"items":{"type":"object","additionalProperties":false,"properties":{"label":{"type":"string","maxLength":200},"value":{"type":"number","minimum":0,"maximum":1_000_000_000_000_u64}},"required":["label","value"]}},
+                "items":{"type":"array","minItems":1,"maxItems":50,"items":{"type":"object","additionalProperties":false,"properties":{"label":{"type":"string","maxLength":200},"value":{"type":"number","minimum":-1_000_000_000_000_i64,"maximum":1_000_000_000_000_u64}},"required":["label","value"]}},
                 "points":{"type":"array","minItems":2,"maxItems":200,"items":{"type":"object","additionalProperties":false,"properties":{"x":{"type":"number","minimum":-1e12,"maximum":1e12},"y":{"type":"number","minimum":-1e12,"maximum":1e12}},"required":["x","y"]}},
                 "links":{"type":"array","minItems":1,"maxItems":20,"items":{"type":"object","additionalProperties":false,"properties":{"label":{"type":"string","maxLength":200},"url":{"type":"string","maxLength":2048}},"required":["label","url"]}},
                 "columns":{"type":"array","maxItems":12,"items":{"type":"string","maxLength":200}},
@@ -648,6 +648,7 @@ impl Registry {
         } else if name == "agent.handoff" {
             anyhow::ensure!(cfg.agent.enabled, "agent handoff is disabled");
             let agent = args["agent"].as_str().unwrap_or(&cfg.agent.default_agent);
+            crate::agent::validate_provider(agent)?;
             let prompt = args["prompt"].as_str().unwrap_or("");
             let home = dirs_home();
             let cwd = crate::typed::home_path(args["cwd"].as_str().unwrap_or(&home))?;

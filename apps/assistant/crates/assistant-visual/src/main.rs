@@ -6,7 +6,8 @@ use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 use serde_json::Value;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::sync::{Arc, Mutex};
 use std::os::unix::net::UnixStream;
 use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver};
@@ -50,10 +51,13 @@ struct Aura {
     last_level: Cell<Instant>,
     color: Cell<(f64, f64, f64)>,
     last_frame: Cell<Instant>,
+    last_tick: Cell<i64>,
+    last_state_ms:Cell<u64>,
     selected: RefCell<Vec<String>>,
+    monitor_snapshot:RefCell<Option<MonitorSnapshot>>,
     bar_heights: RefCell<HashMap<String, f64>>,
     fullscreen: RefCell<Vec<String>>,
-    system_reduce_motion: bool,
+    system_reduce_motion: Cell<bool>,
 }
 
 impl Aura {
@@ -74,38 +78,44 @@ impl Aura {
             last_level: Cell::new(Instant::now()),
             color: Cell::new((0.5, 0.7, 0.8)),
             last_frame: Cell::new(Instant::now()),
+            last_tick: Cell::new(0),
+            last_state_ms:Cell::new(0),
             selected: RefCell::new(Vec::new()),
+            monitor_snapshot:RefCell::new(None),
             bar_heights: RefCell::new(HashMap::new()),
             fullscreen: RefCell::new(Vec::new()),
-            system_reduce_motion,
+            system_reduce_motion: Cell::new(system_reduce_motion),
         })
     }
 
     fn apply_config(self: &Rc<Self>, app: &gtk::Application, cfg: assistant_core::config::UiCfg) {
         *self.cfg.borrow_mut() = cfg;
+        let snapshot=self.monitor_snapshot.borrow().clone();
+        if let Some(snapshot)=snapshot {self.refresh_monitors(app,snapshot);}
         self.rebuild(app);
         self.redraw();
     }
 
-    fn monitor_state() -> Option<MonitorSnapshot> {
-        let output = std::process::Command::new("hyprctl").args(["-j", "monitors"]).output();
-        let state = output.ok().filter(|o| o.status.success())
-            .and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok())
-            .and_then(|v| v.as_array().cloned())?;
-        let workspaces = std::process::Command::new("hyprctl").args(["-j", "workspaces"]).output().ok()
-            .filter(|o| o.status.success())
-            .and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok())
-            .and_then(|v| v.as_array().cloned())?;
-        let layers = std::process::Command::new("hyprctl").args(["-j", "layers"]).output().ok()
-            .filter(|o| o.status.success())
-            .and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok())
-            .and_then(|v| v.as_object().cloned())?;
-        Some(Self::snapshot_from(&state, &workspaces, &layers))
+    fn monitor_state(runtime: &tokio::runtime::Runtime) -> Option<MonitorSnapshot> {
+        runtime.block_on(async {
+            let state=assistant_omarchy::hypr::json("monitors").await.ok()?;
+            let workspaces=assistant_omarchy::hypr::json("workspaces").await.ok()?;
+            let layers=assistant_omarchy::hypr::json("layers").await.ok()?;
+            Some(Self::snapshot_from(state.as_array()?,workspaces.as_array()?,layers.as_object()?))
+        })
     }
 
     fn snapshot_from(state: &[Value], workspaces: &[Value], layers: &serde_json::Map<String, Value>) -> MonitorSnapshot {
-        let monitors = state.iter()
+        let mut monitors: Vec<String> = state.iter()
             .filter_map(|m| m["name"].as_str().filter(|n| !n.starts_with("HEADLESS-")).map(str::to_string)).collect();
+        // Wayland has no universal primary monitor. Prefer the configured output, then
+        // the layout origin, then an internal panel, and finally a stable connector name.
+        let preferred=Config::load().ok().map(|c|c.ui.aura_primary_monitor).unwrap_or_default();
+        monitors.sort_by_key(|name| {
+            let m=state.iter().find(|m|m["name"].as_str()==Some(name.as_str()));
+            let origin=m.is_some_and(|m|m["x"]==0 && m["y"]==0);
+            (if !preferred.is_empty() && *name==preferred {0} else if origin {1} else if name.starts_with("eDP") {2} else {3},name.clone())
+        });
         let focused = state.iter()
             .find(|m| m["focused"] == true).and_then(|m| m["name"].as_str().map(str::to_string));
         let fullscreen = state.iter().filter_map(|monitor| {
@@ -131,6 +141,7 @@ impl Aura {
     }
 
     fn refresh_monitors(self: &Rc<Self>, app: &gtk::Application, snapshot: MonitorSnapshot) {
+        *self.monitor_snapshot.borrow_mut()=Some(snapshot.clone());
         let (physical, focused, fullscreen, bar_heights) = snapshot;
         if *self.fullscreen.borrow() != fullscreen {
             *self.fullscreen.borrow_mut() = fullscreen;
@@ -142,7 +153,7 @@ impl Aura {
         } else if cfg.aura_monitor_mode == "all" {
             physical
         } else if cfg.aura_monitor_mode == "primary" {
-            physical.into_iter().take(1).collect()
+            if physical.contains(&cfg.aura_primary_monitor){vec![cfg.aura_primary_monitor.clone()]}else{physical.into_iter().take(1).collect()}
         } else {
             focused.filter(|name| physical.contains(name)).or_else(|| physical.first().cloned()).into_iter().collect()
         };
@@ -199,7 +210,7 @@ impl Aura {
             });
             let aura = self.clone();
             area.add_tick_callback(move |widget, _| {
-                if aura.tick() { widget.queue_draw(); } else { widget.set_visible(false); }
+                if aura.tick_frame(widget.frame_clock().map(|c|c.frame_time()).unwrap_or(0)) { widget.queue_draw(); } else { widget.set_visible(false); }
                 glib::ControlFlow::Continue
             });
             let redraw = area.clone();
@@ -267,8 +278,15 @@ impl Aura {
 
     fn reduced_motion(&self) -> bool {
         match self.cfg.borrow().aura_reduce_motion.as_str() {
-            "on" => true, "off" => false, _ => self.system_reduce_motion,
+            "on" => true, "off" => false, _ => self.system_reduce_motion.get(),
         }
+    }
+
+    fn tick_frame(&self, frame: i64) -> bool {
+        if frame > 0 && self.last_tick.replace(frame) == frame { return self.visible() || self.opacity.get()>0.01; }
+        // Different outputs may have distinct clocks; don't advance twice for the same instant.
+        if self.last_frame.get().elapsed()<Duration::from_millis(2) { return self.visible() || self.opacity.get()>0.01; }
+        self.tick()
     }
 
     fn tick(&self) -> bool {
@@ -687,53 +705,12 @@ impl Canvas {
         body
     }
 
-    fn show_results(&self, title: &str, results: &[Value]) {
-        if !self.window.is_maximized() && !self.window.is_fullscreen() {
-            let (w, h) = self.fit_size(720, (180 + results.len().min(6) as i32 * 110).clamp(400, 760));
-            self.requested_size.set((w, h));
-            self.window.set_default_size(w, h);
-        }
-        let body = self.prepare(title);
-        let heading = gtk::Label::new(Some(title));
-        heading.add_css_class("canvas-title");
-        heading.set_xalign(0.0);
-        body.append(&heading);
-        for item in results.iter().take(30) {
-            let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
-            card.add_css_class("canvas-card");
-            let name = item["title"].as_str().or_else(|| item["name"].as_str()).unwrap_or("Result");
-            let label = gtk::Label::new(Some(name));
-            label.set_xalign(0.0);
-            label.set_wrap(true);
-            label.add_css_class("heading");
-            card.append(&label);
-            if let Some(url) = item["url"].as_str().filter(|u| u.starts_with("https://") || u.starts_with("http://")) {
-                let link = gtk::LinkButton::with_label(url, url);
-                link.set_halign(gtk::Align::Start);
-                card.append(&link);
-            }
-            if let Some(text) = item["snippet"].as_str().or_else(|| item["text"].as_str()) {
-                let snippet = gtk::Label::new(Some(&text.chars().take(2000).collect::<String>()));
-                snippet.set_xalign(0.0);
-                snippet.set_wrap(true);
-                snippet.set_selectable(true);
-                snippet.add_css_class("canvas-muted");
-                card.append(&snippet);
-            }
-            body.append(&card);
-        }
-        if !self.window.is_visible() {
-            self.window.set_visible(true);
-        }
-    }
-
     fn show_content(&self, content: &Value) {
         if !self.render_content(content) { return; }
         if !self.window.is_maximized() && !self.window.is_fullscreen() {
             let (width, height) = match content["kind"].as_str().unwrap_or("") {
                 "pdf" | "document" => (760, 800),
-                "image" => content["path"].as_str().and_then(gtk::gdk_pixbuf::Pixbuf::file_info)
-                    .map(|(_, w, h)| image_window_size(w, h, self.monitor_size())).unwrap_or((760, 600)),
+                "image" => (760, 600),
                 "gallery" | "video" => (900, 650),
                 "map" | "chart" | "line_chart" | "table" => (820, 620),
                 "text" => (680, (160 + content["text"].as_str().unwrap_or("").len().min(2400) as i32 / 2).clamp(280, 650)),
@@ -817,7 +794,15 @@ impl Canvas {
                 body.append(&scroll);
             }
             "image" => if let Some(path) = content["path"].as_str() {
-                let image = gtk::Picture::for_filename(path);
+                let image = image_view(path);image.set_widget_name("canvas-image");
+                let window=self.window.downgrade();let requested=self.requested_size.clone();let monitor=self.monitor_size();
+                image.connect_paintable_notify(move |picture| {
+                    if let (Some(window),Some(paintable))=(window.upgrade(),picture.paintable()) {
+                        if !window.is_maximized()&&!window.is_fullscreen() && picture.root().is_some() {
+                            let size=image_window_size(paintable.intrinsic_width(),paintable.intrinsic_height(),monitor);requested.set(size);window.set_default_size(size.0,size.1);
+                        }
+                    }
+                });
                 image.set_can_shrink(true);
                 image.set_content_fit(gtk::ContentFit::Contain);
                 image.set_size_request(320, 320);
@@ -830,7 +815,7 @@ impl Canvas {
                 grid.set_row_spacing(12);
                 grid.set_column_spacing(12);
                 for path in paths.iter().take(12).filter_map(Value::as_str) {
-                    let image = gtk::Picture::for_filename(path);
+                    let image = image_view(path);
                     image.set_can_shrink(true);
                     image.set_content_fit(gtk::ContentFit::Contain);
                     image.set_size_request(200, 160);
@@ -839,22 +824,7 @@ impl Canvas {
                 body.append(&grid);
             },
             "chart" => if let Some(items) = content["items"].as_array() {
-                let max = items.iter().filter_map(|item| item["value"].as_f64()).fold(0.0f64, f64::max).max(1.0);
-                for item in items.iter().take(50) {
-                    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-                    let label = gtk::Label::new(item["label"].as_str());
-                    label.set_width_chars(16);
-                    label.set_xalign(0.0);
-                    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-                    row.append(&label);
-                    let bar = gtk::LevelBar::for_interval(0.0, max);
-                    bar.set_hexpand(true);
-                    let value = item["value"].as_f64().unwrap_or(0.0).clamp(0.0, max);
-                    bar.set_value(value);
-                    row.append(&bar);
-                    row.append(&gtk::Label::new(Some(&value.to_string())));
-                    body.append(&row);
-                }
+                body.append(&bar_chart(items));
             },
             "line_chart" => if let Some(points) = content["points"].as_array() {
                 let points = points.iter().filter_map(|p| Some((p["x"].as_f64()?, p["y"].as_f64()?))).collect::<Vec<_>>();
@@ -866,7 +836,15 @@ impl Canvas {
                 view.set_editable(false);
                 view.set_cursor_visible(false);
                 view.set_wrap_mode(gtk::WrapMode::WordChar);
-                view.buffer().set_text(&std::fs::read_to_string(path).unwrap_or_else(|_| "Unable to read this text document.".into()));
+                view.buffer().set_text("Loading document…");
+                let buffer=view.buffer();let path=path.to_string();
+                glib::spawn_future_local(async move {
+                    let text=gtk::gio::spawn_blocking(move || {
+                        let file=std::fs::File::open(path).ok()?;let mut bytes=Vec::new();file.take(1024*1024+1).read_to_end(&mut bytes).ok()?;
+                        if bytes.len()>1024*1024{return None;}String::from_utf8(bytes).ok()
+                    }).await.ok().flatten().unwrap_or_else(||"Unable to read this text document.".into());
+                    buffer.set_text(&text);
+                });
                 body.append(&view);
             },
             "map" => if let (Some(lat), Some(lon)) = (content["latitude"].as_f64(), content["longitude"].as_f64()) {
@@ -1163,65 +1141,162 @@ fn map_view(lat: f64, lon: f64, zoom: f64) -> gtk::Widget {
     outer.upcast()
 }
 
-fn pdf_view(path: &str) -> gtk::Widget {
-    let uri = gtk::gio::File::for_path(path).uri();
-    let document = match poppler::Document::from_file(&uri, None) {
-        Ok(doc) if doc.n_pages() > 0 => doc,
-        Ok(_) => return gtk::Label::new(Some("This PDF has no pages.")).upcast(),
-        Err(_) => return gtk::Label::new(Some("Unable to open this PDF. It may be damaged or password protected.")).upcast(),
-    };
-    let count = document.n_pages();
-    let page_index = Rc::new(Cell::new(0i32));
-    let outer = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    let previous = gtk::Button::from_icon_name("go-previous-symbolic");
-    previous.set_tooltip_text(Some("Previous page"));
-    let next = gtk::Button::from_icon_name("go-next-symbolic");
-    next.set_tooltip_text(Some("Next page"));
-    let indicator = gtk::Label::new(Some(&format!("Page 1 of {count}")));
-    controls.append(&previous);
-    controls.append(&indicator);
-    controls.append(&next);
-    outer.append(&controls);
-    let area = gtk::DrawingArea::new();
-    area.set_content_width(640);
-    area.set_content_height(820);
-    area.set_hexpand(true);
-    let current = page_index.clone();
-    area.set_draw_func(move |_, cr, w, h| {
-        if let Some(page) = document.page(current.get()) {
-            let (pw, ph) = page.size();
-            if pw <= 0.0 || ph <= 0.0 { return; }
-            let scale = (w as f64 / pw).min(h as f64 / ph);
-            let _ = cr.save();
-            cr.translate((w as f64 - pw * scale) / 2.0, 0.0);
-            cr.scale(scale, scale);
-            cr.set_source_rgb(1.0, 1.0, 1.0);
-            cr.rectangle(0.0, 0.0, pw, ph);
-            let _ = cr.fill();
-            page.render(cr);
-            let _ = cr.restore();
+fn bar_chart(items:&[Value])->gtk::DrawingArea {
+    let items:Vec<(String,f64)>=items.iter().take(50).filter_map(|v|Some((v["label"].as_str()?.to_string(),v["value"].as_f64()?))).collect();
+    let area=gtk::DrawingArea::new();area.set_content_height((items.len() as i32*34).max(100));area.set_hexpand(true);
+    area.set_draw_func(move |_,cr,w,_|{
+        let min=items.iter().map(|i|i.1).fold(0.0,f64::min);let max=items.iter().map(|i|i.1).fold(0.0,f64::max);
+        let span=(max-min).max(1.0);let left=150.0;let width=(w as f64-left-90.0).max(10.0);let zero=left-min/span*width;
+        let palette=nyx_theme::palette();let foreground=rgb(&palette.text);let accent=rgb(&palette.accent);
+        cr.set_font_size(13.0);
+        for (index,(label,value)) in items.iter().enumerate(){let y=index as f64*34.0+22.0;
+            cr.set_source_rgb(foreground.0,foreground.1,foreground.2);cr.move_to(0.0,y);let _=cr.show_text(&label.chars().take(20).collect::<String>());
+            let end=left+(*value-min)/span*width;cr.set_source_rgba(accent.0,accent.1,accent.2,0.8);cr.rectangle(zero.min(end),y-15.0,(end-zero).abs().max(1.0),20.0);let _=cr.fill();
+            cr.set_source_rgb(foreground.0,foreground.1,foreground.2);cr.move_to(left+width+8.0,y);let _=cr.show_text(&value.to_string());
         }
-    });
-    for (button, delta) in [(&previous, -1), (&next, 1)] {
-        let page_index = page_index.clone();
-        let area = area.clone();
-        let indicator = indicator.clone();
-        button.connect_clicked(move |_| {
-            let page = (page_index.get() + delta).clamp(0, count - 1);
-            page_index.set(page);
-            indicator.set_text(&format!("Page {} of {count}", page + 1));
-            area.queue_draw();
-        });
-    }
-    outer.append(&area);
-    outer.upcast()
+        cr.set_source_rgba(foreground.0,foreground.1,foreground.2,0.5);cr.move_to(zero,0.0);cr.line_to(zero,items.len() as f64*34.0+6.0);let _=cr.stroke();
+    });area
 }
 
-fn listen(tx: mpsc::Sender<Value>) {
+struct MediaFrame {w:i32,h:i32,stride:usize,count:u32,bytes:Vec<u8>}
+impl MediaFrame {
+    fn texture(self)->gdk::MemoryTexture {
+        gdk::MemoryTexture::new(self.w,self.h,gdk::MemoryFormat::B8g8r8a8Premultiplied,&glib::Bytes::from_owned(self.bytes),self.stride)
+    }
+}
+static MEDIA_SLOTS: Mutex<usize> = Mutex::new(0);
+static MEDIA_READY: std::sync::Condvar = std::sync::Condvar::new();
+struct MediaSlot;
+impl Drop for MediaSlot {fn drop(&mut self){let mut slots=MEDIA_SLOTS.lock().unwrap_or_else(|e|e.into_inner());*slots=slots.saturating_sub(1);MEDIA_READY.notify_one();}}
+fn media_job(path:&str,kind:&str,page:u32)->Result<MediaFrame,String> {
+    let mut slots=MEDIA_SLOTS.lock().unwrap_or_else(|e|e.into_inner());
+    while *slots>=2 {slots=MEDIA_READY.wait(slots).unwrap_or_else(|e|e.into_inner());}
+    *slots+=1;drop(slots);let _slot=MediaSlot;
+    // Rendering runs outside GTK and is killed on timeout; output is owner-only and bounded.
+    let output=tempfile::NamedTempFile::new().map_err(|e|e.to_string())?;
+    let mut child=std::process::Command::new(std::env::current_exe().map_err(|e|e.to_string())?)
+        .args(["--canvas-media",kind,path,&page.to_string()]).arg(output.path())
+        .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+        .spawn().map_err(|e|e.to_string())?;
+    let start=Instant::now();
+    loop {
+        match child.try_wait(){Ok(Some(status)) if status.success()=>break,Ok(Some(_))=>return Err("Media could not be loaded".into()),Err(e)=>{let _=child.kill();let _=child.wait();return Err(e.to_string())},_=>{}}
+        if start.elapsed()>Duration::from_secs(10){let _=child.kill();let _=child.wait();return Err("Media loading timed out".into());}
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let file=std::fs::File::open(output.path()).map_err(|e|e.to_string())?;
+    let mut reader=BufReader::new(file);let mut header=String::new();reader.by_ref().take(1024).read_line(&mut header).map_err(|e|e.to_string())?;
+    let v:Value=serde_json::from_str(&header).map_err(|e|e.to_string())?;
+    let w=v["w"].as_i64().ok_or("width")? as i32;let h=v["h"].as_i64().ok_or("height")? as i32;
+    if w<=0||h<=0||w>1600||h>1600{return Err("Media dimensions exceed limits".into());}
+    let stride=v["stride"].as_u64().ok_or("stride")? as usize;
+    if stride<w as usize*4||stride>w as usize*4+64{return Err("Media stride exceeds limits".into());}
+    let mut bytes=Vec::new();reader.take((stride*h as usize+1) as u64).read_to_end(&mut bytes).map_err(|e|e.to_string())?;
+    if bytes.len()!=stride*h as usize{return Err("Media frame malformed".into());}
+    Ok(MediaFrame{w,h,stride,count:v["count"].as_u64().unwrap_or(1) as u32,bytes})
+}
+fn media_child(args:&[String])->Result<(),Box<dyn std::error::Error>> {
+    if args.len()!=6{return Err("Invalid media arguments".into());}
+    // Keep malformed media from exhausting the assistant or desktop.
+    unsafe {
+        let memory=libc::rlimit{rlim_cur:2*1024*1024*1024,rlim_max:2*1024*1024*1024};libc::setrlimit(libc::RLIMIT_AS,&memory);
+        let cpu=libc::rlimit{rlim_cur:8,rlim_max:8};libc::setrlimit(libc::RLIMIT_CPU,&cpu);
+        let file=libc::rlimit{rlim_cur:16*1024*1024,rlim_max:16*1024*1024};libc::setrlimit(libc::RLIMIT_FSIZE,&file);
+    }
+    let kind=&args[2];let path=&args[3];let index:u32=args[4].parse()?;
+    let (w,h,stride,count,bytes)=if kind=="pdf" {
+        let uri=gtk::gio::File::for_path(path).uri();let doc=poppler::Document::from_file(&uri,None)?;
+        let page=doc.page(index as i32).ok_or("No such PDF page")?;let (pw,ph)=page.size();
+        if !pw.is_finite()||!ph.is_finite()||pw<=0.0||ph<=0.0{return Err("Invalid page size".into());}
+        let scale=(1200.0/pw).min(1500.0/ph);let w=(pw*scale).ceil().max(1.0) as i32;let h=(ph*scale).ceil().max(1.0) as i32;
+        let mut surface=gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32,w,h)?;
+        {let cr=gtk::cairo::Context::new(&surface)?;cr.set_source_rgb(1.0,1.0,1.0);cr.paint()?;cr.scale(scale,scale);page.render(&cr);}
+        surface.flush();let stride=surface.stride() as usize;let bytes=surface.data()?.to_vec();(w,h,stride,doc.n_pages() as u32,bytes)
+    }else{
+        let (_,w,h)=gtk::gdk_pixbuf::Pixbuf::file_info(path).ok_or("Invalid image")?;
+        if w<=0||h<=0||w as u64*h as u64>40_000_000{return Err("Image exceeds 40 megapixels".into());}
+        let pixbuf=gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(path,1200,1200,true)?;
+        let (w,h)=(pixbuf.width(),pixbuf.height());let channels=pixbuf.n_channels() as usize;let stride=pixbuf.rowstride() as usize;
+        let pixels=pixbuf.read_pixel_bytes();let input=pixels.as_ref();let mut bytes=Vec::with_capacity(w as usize*h as usize*4);
+        for y in 0..h as usize {for x in 0..w as usize {let i=y*stride+x*channels;let alpha=if channels==4{input[i+3]}else{255};for c in [2,1,0]{bytes.push((input[i+c] as u16*alpha as u16/255) as u8);}bytes.push(alpha);}}
+        (w,h,w as usize*4,1,bytes)
+    };
+    let mut file=std::fs::OpenOptions::new().write(true).truncate(true).open(&args[5])?;
+    writeln!(file,"{}",serde_json::json!({"w":w,"h":h,"stride":stride,"count":count}))?;file.write_all(&bytes)?;Ok(())
+}
+fn image_view(path:&str)->gtk::Picture {
+    let picture=gtk::Picture::new();let path=path.to_string();let weak=picture.downgrade();
+    glib::spawn_future_local(async move {
+        let result=gtk::gio::spawn_blocking(move ||media_job(&path,"image",0)).await;
+        if let Some(picture)=weak.upgrade(){match result.ok().and_then(Result::ok){Some(frame)=>{
+                picture.set_paintable(Some(&frame.texture()));
+            },None=>picture.set_tooltip_text(Some("Unable to load image within the resource limits."))}}
+    });picture
+}
+
+fn pdf_view(path:&str)->gtk::Widget {
+    let outer=gtk::Box::new(gtk::Orientation::Vertical,8);
+    let controls=gtk::Box::new(gtk::Orientation::Horizontal,12);
+    let previous=gtk::Button::from_icon_name("go-previous-symbolic");let next=gtk::Button::from_icon_name("go-next-symbolic");
+    let status=gtk::Label::new(Some("Loading PDF…"));let picture=gtk::Picture::new();picture.set_can_shrink(true);picture.set_vexpand(true);
+    controls.append(&previous);controls.append(&status);controls.append(&next);outer.append(&controls);outer.append(&picture);
+    let page=Rc::new(Cell::new(0u32));let epoch=Rc::new(Cell::new(0u64));
+    let cache:Rc<RefCell<HashMap<u32,(gdk::MemoryTexture,u32)>>>=Rc::new(RefCell::new(HashMap::new()));
+    let load:Rc<dyn Fn(u32)>=Rc::new({let path=path.to_string();let picture=picture.clone();let status=status.clone();let previous=previous.clone();let next=next.clone();move |index| {
+        let token=epoch.get().wrapping_add(1);epoch.set(token);previous.set_sensitive(false);next.set_sensitive(false);
+        if let Some((texture,count))=cache.borrow().get(&index){picture.set_paintable(Some(texture));status.set_text(&format!("Page {} of {count}",index+1));previous.set_sensitive(index>0);next.set_sensitive(index+1<*count);return;}
+        status.set_text("Loading PDF…");
+        let (path,picture,status,previous,next,epoch,cache)=(path.clone(),picture.clone(),status.clone(),previous.clone(),next.clone(),epoch.clone(),cache.clone());
+        glib::spawn_future_local(async move {
+            let result=gtk::gio::spawn_blocking(move || media_job(&path,"pdf",index)).await;
+            if epoch.get()!=token{return;}
+            match result.ok().and_then(Result::ok) {
+                Some(frame)=>{let count=frame.count;let texture=frame.texture();picture.set_paintable(Some(&texture));status.set_text(&format!("Page {} of {count}",index+1));previous.set_sensitive(index>0);next.set_sensitive(index+1<count);
+                    // Keep a small rendered-page cache, not the full document in GTK.
+                    let mut cached=cache.borrow_mut();if cached.len()>=3 {cached.clear();}cached.insert(index,(texture,count));},
+                None=>status.set_text("Unable to render PDF within the resource limits."),
+            }
+        });
+    }});
+    for (button,delta) in [(&previous,-1i32),(&next,1i32)] {let page=page.clone();let load=load.clone();button.connect_clicked(move |_|{let index=(page.get() as i32+delta).max(0) as u32;page.set(index);load(index);});}
+    load(0);outer.upcast()
+}
+
+#[derive(Clone)]
+struct EventSink {tx:mpsc::SyncSender<Value>,wake:Arc<Mutex<UnixStream>>}
+impl EventSink {
+    fn send(&self,event:Value)->Result<(),()> {
+        self.tx.send(event).map_err(|_|())?;
+        let _=self.wake.lock().unwrap().write(&[1]);Ok(())
+    }
+}
+fn monitor_events(sink:EventSink) {
+    std::thread::spawn(move || {
+        let runtime=tokio::runtime::Builder::new_current_thread().enable_all().build().expect("monitor runtime");
+        loop {
+            if let Some(snapshot)=Aura::monitor_state(&runtime) {if sink.send(serde_json::json!({"type":"monitor_snapshot","snapshot":snapshot})).is_err(){break;}}
+            let stream=assistant_omarchy::hypr::socket_path().ok().and_then(|p|UnixStream::connect(p.with_file_name(".socket2.sock")).ok());
+            let Some(stream)=stream else {std::thread::sleep(Duration::from_secs(5));continue;};
+            let _=stream.set_read_timeout(Some(Duration::from_secs(60)));let mut reader=BufReader::new(stream);
+            loop {
+                let mut line=String::new();let read=reader.read_line(&mut line);
+                if matches!(&read,Ok(0)){break;}
+                let reconcile=read.as_ref().err().is_some_and(|e|matches!(e.kind(),std::io::ErrorKind::WouldBlock|std::io::ErrorKind::TimedOut));
+                if read.is_err() && !reconcile{break;}
+                if reconcile || ["focusedmon>>","monitoradded","monitorremoved","fullscreen>>","workspace>>","moveworkspace","openlayer>>","closelayer>>","configreloaded>>"].iter().any(|p|line.starts_with(p)) {
+                    if let Some(snapshot)=Aura::monitor_state(&runtime){if sink.send(serde_json::json!({"type":"monitor_snapshot","snapshot":snapshot})).is_err(){return;}}
+                }
+            }
+        }
+    });
+}
+
+
+fn listen(tx: EventSink) {
     std::thread::spawn(move || loop {
         let socket = assistant_core::paths::socket_path();
-        if let Ok(stream) = UnixStream::connect(&socket) {
+        if let Ok(mut stream) = UnixStream::connect(&socket) {
+            let _=stream.write_all(b"{\"type\":\"request\",\"request_id\":\"visual-sync\",\"action\":{\"type\":\"status\"}}\n");
             for line in BufReader::new(stream).lines() {
                 let Ok(line) = line else { break };
                 if let Ok(value) = serde_json::from_str(&line) {
@@ -1238,8 +1313,25 @@ fn listen(tx: mpsc::Sender<Value>) {
 }
 
 fn handle_event(event: Value, aura: &Rc<Aura>, canvas: &Canvas, app: &gtk::Application) {
+    if event["type"]=="result" && event["request_id"]=="visual-sync" && event["ok"]==true {
+        let snapshot=&event["data"];
+        handle_event(serde_json::json!({"type":"settings","running":snapshot["running_settings"]}),aura,canvas,app);
+        handle_event(serde_json::json!({"type":"state","state":snapshot["state"],"at_ms":snapshot["snapshot_at_ms"]}),aura,canvas,app);
+        handle_event(serde_json::json!({"type":"session","mode":snapshot["session"]["mode"],"remaining_secs":snapshot["session"]["remaining_secs"]}),aura,canvas,app);
+        if snapshot["pending_approvals"].as_object().is_some_and(|a|!a.is_empty()) {aura.set_state(State::Attention);}
+        return;
+    }
+    if event["type"]=="monitor_snapshot" {
+        if let Ok(snapshot)=serde_json::from_value::<MonitorSnapshot>(event["snapshot"].clone()) {
+            *canvas.active_monitor.borrow_mut()=snapshot.1.clone();aura.refresh_monitors(app,snapshot);
+        }
+        return;
+    }
     match event["type"].as_str().unwrap_or("") {
         "state" => {
+            let at=event["at_ms"].as_u64().unwrap_or(0);
+            if at>0 && at<aura.last_state_ms.get(){return;}
+            if at>0 {aura.last_state_ms.set(at);}
             let state = match event["state"].as_str().unwrap_or("") {
                 "listening" | "transcribing" => State::Listening,
                 "thinking" | "executing" => State::Thinking,
@@ -1276,8 +1368,6 @@ fn handle_event(event: Value, aura: &Rc<Aura>, canvas: &Canvas, app: &gtk::Appli
             let data = &event["event"]["result"]["structuredContent"];
             if tool == "canvas.show" && event["event"]["result"]["isError"] == false {
                 canvas.show_content(&data["canvas"]);
-            } else if (tool == "web.search" || tool.ends_with(".search")) && data["results"].as_array().is_some_and(|r| !r.is_empty()) {
-                canvas.show_results("Search results", data["results"].as_array().unwrap());
             }
         }
         "assistant_text" if event["done"] == true => aura.set_state(State::Done),
@@ -1286,12 +1376,16 @@ fn handle_event(event: Value, aura: &Rc<Aura>, canvas: &Canvas, app: &gtk::Appli
 }
 
 fn poll_events(rx: &Receiver<Value>, aura: &Rc<Aura>, canvas: &Canvas, app: &gtk::Application) {
-    for event in rx.try_iter().take(200) {
+    for event in rx.try_iter() {
         handle_event(event, aura, canvas, app);
     }
 }
 
 fn main() {
+    let args:Vec<_>=std::env::args().collect();
+    if args.get(1).is_some_and(|s|s=="--canvas-media") {
+        if media_child(&args).is_err(){std::process::exit(1);}return;
+    }
     let config = Config::load().unwrap_or_default();
     let app = gtk::Application::new(Some("io.github.design_nexus.nyx.assistant.visual"), Default::default());
     app.connect_activate(move |app| {
@@ -1318,27 +1412,30 @@ fn main() {
         let hold = app.hold();
         let aura = Aura::new(config.ui.clone(), system_reduce_motion);
         aura.set_persona(&config.assistant.persona_id);
-        let (monitor_tx, monitor_rx) = mpsc::sync_channel(1);
-        std::thread::spawn(move || loop {
-            if let Some(snapshot) = Aura::monitor_state() {
-                if matches!(monitor_tx.try_send(snapshot), Err(mpsc::TrySendError::Disconnected(_))) { break; }
-            }
-            std::thread::sleep(Duration::from_millis(600));
-        });
+        if let Some(settings)=gtk::Settings::default() {
+            let weak=Rc::downgrade(&aura);
+            settings.connect_gtk_enable_animations_notify(move |settings| {
+                if let Some(aura)=weak.upgrade(){aura.system_reduce_motion.set(!settings.is_gtk_enable_animations());aura.redraw();}
+            });
+        }
         let canvas = Canvas::new(app);
-        let (tx, rx) = mpsc::channel();
-        listen(tx);
-        let aura_for_tick = aura.clone();
-        let app_for_tick = app.clone();
-        glib::timeout_add_local(Duration::from_millis(40), move || {
-            let _ = &hold;
-            poll_events(&rx, &aura_for_tick, &canvas, &app_for_tick);
-            if let Ok(snapshot) = monitor_rx.try_recv() {
-                *canvas.active_monitor.borrow_mut() = snapshot.1.clone();
-                aura_for_tick.refresh_monitors(&app_for_tick, snapshot);
-            }
+        let (wake_read,wake_write)=UnixStream::pair().expect("visual wake socket");
+        wake_read.set_nonblocking(true).expect("nonblocking visual wake");
+        wake_write.set_nonblocking(true).expect("nonblocking visual wake");
+        let (tx,rx)=mpsc::sync_channel(512);
+        let sink=EventSink{tx,wake:Arc::new(Mutex::new(wake_write))};
+        listen(sink.clone());
+        monitor_events(sink);
+        let aura_for_tick=aura.clone(); let app_for_tick=app.clone();
+        let wake_socket=gtk::gio::Socket::from_fd(wake_read.into()).expect("visual wake socket");
+        wake_socket.set_blocking(false);
+        let source=gtk::gio::prelude::SocketExtManual::create_source(&wake_socket,glib::IOCondition::IN,None::<&gtk::gio::Cancellable>,Some("assistant-events"),glib::Priority::DEFAULT,move |socket,_|{
+            let _=&hold;
+            let mut bytes=[0u8;512];while socket.receive(&mut bytes,None::<&gtk::gio::Cancellable>).is_ok_and(|n|n>0){}
+            poll_events(&rx,&aura_for_tick,&canvas,&app_for_tick);
             glib::ControlFlow::Continue
         });
+        source.attach(None);
         if let Some(display) = gdk::Display::default() {
             let aura = aura.clone();
             let app = app.clone();

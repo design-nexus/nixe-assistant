@@ -331,8 +331,10 @@ name = "assistant-visual"
 version = "0.1.0"
 dependencies = [
  "assistant-core",
+ "assistant-omarchy",
  "gtk4",
  "gtk4-layer-shell",
+ "libc",
  "libshumate",
  "nyx-playback",
  "nyx-theme",
@@ -340,6 +342,8 @@ dependencies = [
  "plotters-cairo",
  "poppler-rs",
  "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
